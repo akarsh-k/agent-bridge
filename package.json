@@ -1,0 +1,27 @@
+{
+  "name": "agent-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Agent Bridge monorepo",
+  "scripts": {
+    "preflight": "node scripts/dev.mjs --preflight-only",
+    "dev": "node scripts/dev.mjs",
+    "stop": "docker compose down",
+    "stop:clean": "docker compose down -v",
+    "build": "pnpm -r run build",
+    "typecheck": "pnpm -r run typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint": "pnpm -r run lint"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "devDependencies": {
+    "prettier": "^3.8.3"
+  }
+}
