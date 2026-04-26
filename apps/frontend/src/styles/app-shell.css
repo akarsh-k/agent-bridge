@@ -1,0 +1,47 @@
+/* ---------------------------------------------------------------------------
+   App shell. The outermost layout grid that wraps top bar, canvas, and rail.
+--------------------------------------------------------------------------- */
+
+.shell {
+  display: grid;
+  grid-template-columns: 1fr;
+  grid-template-rows: 100svh;
+  overflow: hidden;
+}
+
+.shell-main {
+  display: grid;
+  grid-template-rows: var(--topbar-h) 1fr;
+  grid-template-columns: 1fr auto;
+  grid-template-areas:
+    'topbar rail'
+    'canvas rail';
+  overflow: hidden;
+  min-width: 0;
+}
+
+.shell-main > .topbar {
+  grid-area: topbar;
+}
+.shell-main > .main-area {
+  grid-area: canvas;
+  overflow: hidden;
+  position: relative;
+}
+.shell-main > .right-rail {
+  grid-area: rail;
+}
+
+.main-area {
+  background: var(--bg-canvas);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+.main-area-canvas {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}

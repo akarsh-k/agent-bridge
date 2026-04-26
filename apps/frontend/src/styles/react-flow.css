@@ -1,0 +1,113 @@
+/* ---------------------------------------------------------------------------
+   React Flow surface + chrome overrides. Tuned to match the dark violet
+   theme; handles, edges, controls, minimap, and attribution all routed
+   through the token system.
+--------------------------------------------------------------------------- */
+
+.canvas {
+  width: 100%;
+  height: 100%;
+}
+
+.react-flow {
+  background-color: var(--bg-canvas);
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    var(--bg-grid) 1.2px,
+    transparent 0
+  );
+  background-size: 22px 22px;
+  background-position: -1px -1px;
+}
+
+.react-flow__controls {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-1);
+  overflow: hidden;
+}
+
+.react-flow__controls-button {
+  background: transparent;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  width: 32px;
+  height: 32px;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+.react-flow__attribution {
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.react-flow__minimap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.react-flow__edge-path {
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+}
+
+.react-flow__edge.edge-repo .react-flow__edge-path {
+  stroke: var(--warn);
+  stroke-dasharray: 4 4;
+}
+
+.react-flow__edge.edge-dimmed .react-flow__edge-path {
+  opacity: 0.25;
+}
+
+.react-flow__edge-text {
+  fill: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.react-flow__edge.edge-dimmed .react-flow__edge-text {
+  opacity: 0.3;
+}
+
+.react-flow__edge.selected .react-flow__edge-path,
+.react-flow__edge:focus .react-flow__edge-path {
+  stroke: var(--accent-400);
+}
+
+.react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: var(--accent-500);
+  border: 2px solid var(--surface);
+  border-radius: var(--radius-pill);
+}
+
+/* React Flow reserves four type names (`input`, `default`, `output`,
+   `group`) and bakes default chrome into them via `.react-flow__node-*`.
+   Our custom types use `kindGroup` to avoid the `group` collision, but
+   we also null out the legacy class defensively so any accidentally
+   named node doesn't pick up the grey swimlane backdrop. */
+.react-flow__node-input,
+.react-flow__node-default,
+.react-flow__node-output,
+.react-flow__node-group {
+  background-color: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  width: auto;
+  color: inherit;
+  box-shadow: none;
+}

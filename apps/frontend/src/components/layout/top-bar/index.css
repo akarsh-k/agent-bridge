@@ -1,0 +1,164 @@
+/* ---------------------------------------------------------------------------
+   Top bar — persistent header across the canvas. Contains brand, breadcrumb
+   (focus agent title), focus-mode indicator, and status/action buttons.
+--------------------------------------------------------------------------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  gap: 12px;
+  min-width: 0;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.topbar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: var(--radius);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  cursor: pointer;
+  letter-spacing: -0.02em;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
+}
+.topbar-brand:hover {
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+.topbar-brand-mark {
+  width: 24px;
+  height: 24px;
+  border-radius: 7px;
+  background: linear-gradient(135deg, var(--accent-400), var(--accent-600));
+  box-shadow: var(--shadow-glow);
+  display: grid;
+  place-items: center;
+  color: white;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.topbar-brand-text {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.topbar-crumb-sep {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.topbar-focus {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  min-width: 0;
+}
+
+.topbar-focus-label {
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.topbar-title {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 28ch;
+}
+
+.topbar-focus-exit {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.topbar-focus-exit:hover {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--accent-300);
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.topbar-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border);
+  margin: 0 6px;
+}
+
+.topbar-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  font-size: 12.5px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.topbar-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.topbar-btn[aria-pressed='true'] {
+  background: var(--accent-bg);
+  color: var(--text);
+  border-color: var(--accent-border);
+}
+
+.topbar-btn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+}
+
+/* `.live` uses the shared `@keyframes pulse` from primitives.css. */
+.topbar-btn-dot.live {
+  background: var(--success);
+  box-shadow: 0 0 10px var(--success);
+  animation: pulse 2.4s ease-in-out infinite;
+}

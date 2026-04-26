@@ -1,0 +1,331 @@
+/* ---------------------------------------------------------------------------
+   Quick-add — the `+` button that appears on agent-card hover and the
+   multi-page popover that follows. The popover supports creating new
+   skills/tools/repos/LLMs inline without leaving the canvas.
+--------------------------------------------------------------------------- */
+
+.node-qa-host {
+  position: absolute;
+  top: 50%;
+  right: -18px;
+  transform: translateY(-50%);
+  z-index: 10;
+}
+
+.node-qa-trigger {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: 1px solid var(--accent-border);
+  background: linear-gradient(180deg, var(--accent-500), var(--accent-600));
+  color: white;
+  font-size: 18px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  opacity: 0;
+  transform: scale(0.8);
+  box-shadow: var(--shadow-1);
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-spring),
+    filter var(--dur-1) var(--ease-out);
+  padding: 0;
+}
+
+.node-agent:hover .node-qa-trigger,
+.node-qa-host.open .node-qa-trigger {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.node-qa-trigger:hover {
+  filter: brightness(1.1);
+}
+
+.node-qa-popover {
+  position: absolute;
+  top: -12px;
+  left: calc(100% + 10px);
+  width: 290px;
+  max-height: 440px;
+  overflow-y: auto;
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-2);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  /* Nudge above arrow markers + other nodes. */
+  z-index: 20;
+  cursor: default;
+}
+
+/* Bump the entire React-Flow node above its siblings while the popover is
+   open — each `.react-flow__node` forms its own stacking context, so a
+   local z-index on the popover would still be covered by neighbouring
+   agent cards. */
+.react-flow__node:has(.node-qa-host.open) {
+  z-index: 1000 !important;
+}
+
+.qa-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 6px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 2px;
+}
+
+.qa-title {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.qa-back {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-hi);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  display: grid;
+  place-items: center;
+}
+.qa-back:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.qa-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.qa-menu-item {
+  display: grid;
+  grid-template-columns: 26px 1fr auto;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
+}
+.qa-menu-item:hover {
+  background: var(--surface-hover);
+  border-color: var(--border);
+}
+
+.qa-menu-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  font-weight: 700;
+}
+.qa-menu-icon-skill {
+  background: rgba(52, 211, 153, 0.16);
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.35);
+}
+.qa-menu-icon-tool {
+  background: rgba(56, 189, 248, 0.16);
+  color: #38bdf8;
+  border: 1px solid rgba(56, 189, 248, 0.35);
+}
+.qa-menu-icon-repo {
+  background: rgba(249, 115, 22, 0.16);
+  color: #f97316;
+  border: 1px solid rgba(249, 115, 22, 0.35);
+}
+.qa-menu-icon-llm {
+  background: rgba(251, 191, 36, 0.16);
+  color: #fbbf24;
+  border: 1px solid rgba(251, 191, 36, 0.35);
+}
+
+.qa-menu-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.qa-menu-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.qa-menu-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qa-menu-chev {
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+}
+
+.qa-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.qa-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.qa-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.qa-list-item {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--surface-hi);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out);
+}
+.qa-list-item:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  background: var(--surface-hover);
+}
+.qa-list-item.active {
+  border-color: var(--accent-500);
+  background: var(--accent-bg);
+}
+.qa-list-item:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.qa-list-primary {
+  font-weight: 600;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.qa-list-secondary {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.qa-empty {
+  padding: 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.qa-new-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12.5px;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+.qa-new-btn:hover {
+  border-color: var(--accent-border);
+  color: var(--accent-300);
+}
+
+.qa-new-plus {
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  display: grid;
+  place-items: center;
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 1;
+  color: inherit;
+}
+
+.qa-clear-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--danger);
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  align-self: flex-start;
+}
+.qa-clear-btn:hover:not(:disabled) {
+  background: var(--danger-bg);
+}
+
+/* Tight overrides for .field inside the popover — the right-rail styling
+   has more breathing room than fits a 290px popover. */
+.node-qa-popover .field {
+  gap: 4px;
+}
+.node-qa-popover .field input,
+.node-qa-popover .field textarea,
+.node-qa-popover .field select {
+  padding: 6px 9px;
+  font-size: 12.5px;
+}
+.node-qa-popover .field-label {
+  font-size: 11px;
+}
+.node-qa-popover .field-hint {
+  font-size: 10.5px;
+}
+.node-qa-popover .field-error {
+  font-size: 11px;
+}

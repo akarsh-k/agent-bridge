@@ -1,0 +1,51 @@
+/* ---------------------------------------------------------------------------
+   Agent node — the "boss" card on the canvas. Extends the shared `.node`
+   chrome with a monogrammed icon tile and slightly larger minimum width.
+--------------------------------------------------------------------------- */
+
+.node-agent {
+  min-width: 240px;
+  box-shadow: var(--shadow-2);
+  position: relative;
+}
+
+.node-agent-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.node-agent-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent-400), var(--accent-600));
+  display: grid;
+  place-items: center;
+  color: white;
+  font-weight: 700;
+  font-size: 13px;
+  flex: 0 0 auto;
+}
+
+.node-agent-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.node-agent-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-agent-slug {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 1px;
+}
