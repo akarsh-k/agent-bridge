@@ -7,6 +7,8 @@ import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { secureHeaders } from 'hono/secure-headers'
 import { z } from 'zod'
+import { onUnhandledError, httpError } from './lib/errors.js'
+import { agentsRouter } from './routes/agents.js'
 import { eventsRouter } from './routes/events.js'
 import { healthRouter } from './routes/health.js'
 
@@ -32,16 +34,22 @@ const api = new Hono()
     '*',
     bodyLimit({
       maxSize: 64 * 1024,
-      onError: (c) => c.json({ error: 'Payload too large' }, 413),
+      onError: (c) =>
+        httpError(c, {
+          code: 'validation_failed',
+          message: 'Payload too large',
+          status: 413,
+        }),
     }),
   )
   .route('/health', healthRouter)
+  .route('/agents', agentsRouter)
   .get(
     '/hello',
     zValidator('query', z.object({ name: z.string().trim().min(1).max(200) })),
     (c) => {
       const { name } = c.req.valid('query')
-      return c.json({ message: `Hello, ${name}` })
+      return c.json({ ok: true as const, message: `Hello, ${name}` })
     },
   )
   .post(
@@ -49,7 +57,7 @@ const api = new Hono()
     zValidator('json', z.object({ text: z.string().min(1).max(500) })),
     (c) => {
       const body = c.req.valid('json')
-      return c.json({ text: body.text })
+      return c.json({ ok: true as const, text: body.text })
     },
   )
   .route('/events', eventsRouter)
@@ -57,12 +65,10 @@ const api = new Hono()
 export type ApiType = typeof api
 
 const app = new Hono()
-  .onError((err, c) => {
-    console.error('[onError]', err)
-    const detail = err instanceof Error ? err.message : 'Unknown error'
-    return c.json({ error: env.isProd ? 'Internal Server Error' : detail }, 500)
-  })
-  .notFound((c) => c.json({ error: 'Not Found' }, 404))
+  .onError(onUnhandledError)
+  .notFound((c) =>
+    httpError(c, { code: 'not_found', message: 'Route not found' }),
+  )
   .use('*', secureHeaders())
   .use(
     '*',
