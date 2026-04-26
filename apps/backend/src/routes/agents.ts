@@ -23,6 +23,7 @@ import {
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
+import { isPostgresErrorWithCode, PG } from '../lib/pg-errors.js'
 
 type AgentRow = typeof schema.agents.$inferSelect
 
@@ -44,29 +45,6 @@ function toAgentResponse(row: AgentRow): AgentResponse {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   })
-}
-
-/**
- * Narrow a thrown value to a Postgres-side error code. Drizzle wraps the
- * native `postgres.PostgresError` inside a `DrizzleQueryError`, so the real
- * `code` lives on `.cause`. Walk up a few levels defensively.
- */
-function isPostgresErrorWithCode(err: unknown, code: string): boolean {
-  let current: unknown = err
-  for (let depth = 0; depth < 5 && current; depth += 1) {
-    if (
-      typeof current === 'object' &&
-      'code' in current &&
-      (current as { code?: unknown }).code === code
-    ) {
-      return true
-    }
-    current =
-      typeof current === 'object' && current && 'cause' in current
-        ? (current as { cause?: unknown }).cause
-        : null
-  }
-  return false
 }
 
 export const agentsRouter = new Hono()
@@ -105,7 +83,7 @@ export const agentsRouter = new Hono()
 
         return c.json({ ok: true as const, agent: toAgentResponse(row) }, 201)
       } catch (err) {
-        if (isPostgresErrorWithCode(err, '23505')) {
+        if (isPostgresErrorWithCode(err, PG.UNIQUE_VIOLATION)) {
           return httpError(c, {
             code: 'conflict',
             message: `slug "${body.slug}" is already in use`,
@@ -200,7 +178,7 @@ export const agentsRouter = new Hono()
 
         return c.json({ ok: true as const, agent: toAgentResponse(row) })
       } catch (err) {
-        if (isPostgresErrorWithCode(err, '23505')) {
+        if (isPostgresErrorWithCode(err, PG.UNIQUE_VIOLATION)) {
           return httpError(c, {
             code: 'conflict',
             message: `slug "${patch.slug}" is already in use`,

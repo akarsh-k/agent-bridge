@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ensureDataDirs } from './paths.js'
-import type { SecretSentinel } from './secrets-dto.js'
+import type { SecretSentinel } from './dtos/secrets.js'
 
 /**
  * AES-256-GCM envelope encryption for every user-supplied secret in the app:
@@ -134,18 +134,15 @@ export function isEncryptedEnvelope(value: unknown): value is string {
   return parts[0] === ENVELOPE_PREFIX && parts.slice(1).every(Boolean)
 }
 
+/**
+ * Cheap structural check — does not decrypt. We deliberately avoid exposing
+ * plaintext length so a list endpoint can't become an N × decrypt op or a
+ * side-channel for guessing secret lengths.
+ */
 export function describeSecret(
   envelope: string | null | undefined,
 ): SecretSentinel {
-  if (!envelope || !isEncryptedEnvelope(envelope)) {
-    return { set: false, length: 0 }
-  }
-  try {
-    const plaintext = decryptSecret(envelope)
-    return { set: true, length: plaintext.length }
-  } catch {
-    return { set: false, length: 0 }
-  }
+  return { set: Boolean(envelope) && isEncryptedEnvelope(envelope) }
 }
 
 /** Test-only — forgets the cached key so `loadOrCreateMasterKey()` re-reads. */

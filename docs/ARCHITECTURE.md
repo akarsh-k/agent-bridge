@@ -188,7 +188,9 @@ UI input  →  backend validates SecretInput DTO  →  encryptSecret()  →  DB 
 - **Algorithm**: AES-256-GCM, 12-byte IV, 16-byte tag
 - **Key location**: `<data-root>/secret.key` (mode 0600), or
   `AGENT_BRIDGE_SECRET_KEY` env override (base64url-encoded 32 bytes)
-- **API responses**: never include plaintext. `SecretSentinel = {set: true, length: 16}`
+- **API responses**: never include plaintext. `SecretSentinel = {set: true}`
+  (no length — computing it would force N-decrypts per list read and narrow an
+  attacker's guess space if the UI were screen-recorded)
 - **Logs + SSE**: last-line-of-defence `redactSecrets()` replaces any known
   plaintext substring with `«redacted»` before publishing
 

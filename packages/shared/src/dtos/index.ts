@@ -2,4 +2,7 @@
 
 export * from './common.js'
 export * from './memory.js'
+export * from './secrets.js'
 export * from './agents.js'
+export * from './llm-providers.js'
+export * from './repos.js'

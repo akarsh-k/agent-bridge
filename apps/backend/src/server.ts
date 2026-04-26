@@ -1,8 +1,20 @@
 import { serve } from '@hono/node-server'
+import {
+  getSecretKeyPath,
+  loadOrCreateMasterKey,
+} from '@agent-bridge/shared/crypto'
 import { env } from './env.js'
 import { app } from './app.js'
 import { closeDb } from './db.js'
 import { closeEventBus } from './event-bus.js'
+
+// Eagerly materialise the data-encryption key on boot so:
+//   (a) the one-time "generated new key" log appears before the first HTTP
+//       request instead of interleaved with a user action, and
+//   (b) any permission / env-var misconfiguration surfaces as a startup
+//       failure, not as a stray 500 the first time someone saves a secret.
+loadOrCreateMasterKey()
+console.info(`[server] data-encryption key ready at ${getSecretKeyPath()}`)
 
 async function closeResources(): Promise<void> {
   await Promise.allSettled([closeEventBus(), closeDb()])

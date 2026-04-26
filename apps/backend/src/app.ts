@@ -8,9 +8,13 @@ import { logger } from 'hono/logger'
 import { secureHeaders } from 'hono/secure-headers'
 import { z } from 'zod'
 import { onUnhandledError, httpError } from './lib/errors.js'
+import { agentReposRouter } from './routes/agent-repos.js'
 import { agentsRouter } from './routes/agents.js'
 import { eventsRouter } from './routes/events.js'
 import { healthRouter } from './routes/health.js'
+import { llmProvidersRouter } from './routes/llm-providers.js'
+import { repoEdgesRouter } from './routes/repo-edges.js'
+import { reposRouter } from './routes/repos.js'
 
 const corsOrigin =
   env.CORS_ORIGIN && env.CORS_ORIGIN.length > 0
@@ -44,6 +48,10 @@ const api = new Hono()
   )
   .route('/health', healthRouter)
   .route('/agents', agentsRouter)
+  .route('/agents/:agentId/repos', agentReposRouter)
+  .route('/agents/:agentId/repo-edges', repoEdgesRouter)
+  .route('/llm-providers', llmProvidersRouter)
+  .route('/repos', reposRouter)
   .get(
     '/hello',
     zValidator('query', z.object({ name: z.string().trim().min(1).max(200) })),
