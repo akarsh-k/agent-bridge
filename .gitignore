@@ -10,3 +10,28 @@ coverage
 .turbo
 .pnpm-store
 *.pem
+*.tsbuildinfo
+
+# Runtime-only data root. Contains cloned repos, GitNexus knowledge graphs,
+# generated wikis, the secrets master key (secret.key). Never commit.
+.agent-bridge-data/
+
+# Vite + ESLint caches
+.vite/
+.eslintcache
+
+# Builder-only working docs. These are personal planning/scratch notes the
+# builder keeps locally; they are NOT part of the repo contract and must not
+# be committed. Shared design docs (e.g. docs/ARCHITECTURE.md) stay tracked.
+docs/PLAN.md
+docs/**/*.local.md
+docs/private/
+docs/scratch/
+
+# Local IDE / editor state (personal, not repo-wide).
+# .cursor/rules/ is intentionally NOT ignored — those are the repo's shared
+# AI invariants (security, monorepo conventions) and must stay committed.
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -12,6 +12,7 @@ const envSchema = baseEnvSchema.extend({
   HOST: z.string().trim().min(1).default('127.0.0.1'),
   PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
   CORS_ORIGIN: commaSeparatedList.optional(),
+  REDIS_URL: z.string().trim().url().default('redis://127.0.0.1:6379'),
 })
 
 const data = parseEnv(envSchema)

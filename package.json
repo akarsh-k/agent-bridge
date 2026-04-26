@@ -12,7 +12,14 @@
     "typecheck": "pnpm -r run typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "pnpm -r run lint"
+    "lint": "pnpm -r run lint",
+    "clean:data": "node scripts/clean-data.mjs",
+    "clean:data:force": "node scripts/clean-data.mjs --force",
+    "db:generate": "pnpm --filter @agent-bridge/db run db:generate",
+    "db:migrate": "pnpm --filter @agent-bridge/db run db:migrate",
+    "db:push": "pnpm --filter @agent-bridge/db run db:push",
+    "db:studio": "pnpm --filter @agent-bridge/db run db:studio",
+    "secret:generate": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\""
   },
   "keywords": [],
   "author": "",
@@ -20,6 +27,11 @@
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=24.15.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "gitnexus": "1.6.3"
+    }
   },
   "devDependencies": {
     "prettier": "^3.8.3"

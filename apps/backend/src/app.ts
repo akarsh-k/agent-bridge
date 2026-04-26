@@ -7,6 +7,7 @@ import { cors } from 'hono/cors'
 import { logger } from 'hono/logger'
 import { secureHeaders } from 'hono/secure-headers'
 import { z } from 'zod'
+import { eventsRouter } from './routes/events.js'
 
 const corsOrigin =
   env.CORS_ORIGIN && env.CORS_ORIGIN.length > 0
@@ -50,6 +51,7 @@ const api = new Hono()
       return c.json({ text: body.text })
     },
   )
+  .route('/events', eventsRouter)
 
 export type ApiType = typeof api
 

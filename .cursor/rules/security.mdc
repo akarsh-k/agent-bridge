@@ -1,0 +1,146 @@
+---
+description: Always-on security checklist for agent-bridge. Consult before landing any change that touches input, storage, IPC, child processes, network, or file I/O.
+alwaysApply: true
+---
+
+# Security checklist — consult BEFORE landing a change
+
+Every one of these has been a real-world CVE in a comparable product. No
+exceptions without a written justification in the PR description.
+
+## 1. Input validation
+
+Every network input (HTTP body/params/headers, MCP messages, job payloads,
+SSE/publish events) is parsed through a Zod schema **before** it reaches
+business logic.
+
+```ts
+// ❌ BAD
+app.post('/run', (c) => agent.run(await c.req.json()))
+
+// ✅ GOOD
+app.post('/run', zValidator('json', runInputSchema), (c) =>
+  agent.run(c.req.valid('json')),
+)
+```
+
+No `JSON.parse` of network data without a Zod pass afterwards. No `any`-typed
+payloads crossing trust boundaries.
+
+## 2. Secrets in, secrets out
+
+- Incoming: validated via `SecretInput` DTO (`{action: 'set' | 'unchanged' | 'clear'}`).
+- Storage: `encryptSecret()` from `@agent-bridge/shared/crypto`. Never `INSERT`
+  a plaintext.
+- Outgoing (API): `describeSecret()` → `SecretSentinel`. Plaintext must never
+  appear in a response body, log line, or SSE event.
+- Outgoing (SSE/logs): pass through `redactSecrets(event, knownPlaintexts)`
+  **at the publish boundary**, not "somewhere upstream". Last line of defence.
+
+## 3. Child processes
+
+Every `spawn` / `exec` goes through `spawnSandboxed()` from
+`@agent-bridge/shared/spawn`. Never use `shell: true`. Never build commands
+via string concatenation.
+
+```ts
+// ❌ BAD
+exec(`git clone ${url} ${dir}`) // command injection + HOME leak
+
+// ✅ GOOD
+spawnSandboxed('git', ['clone', '--', url, dir], { sandbox: 'git' })
+```
+
+Use `'--'` to terminate options before user-supplied positional args.
+
+## 4. Path traversal
+
+Any path derived from user input (repo name, agent id, file name) must be
+validated AND resolved under the data root before use:
+
+```ts
+const safe = path.resolve(dirs.workspaceDir, userSegment)
+if (!safe.startsWith(dirs.workspaceDir + path.sep)) {
+  throw new Error('path escapes workspace')
+}
+```
+
+Same pattern for reads, writes, and `fs.rmSync`.
+
+## 5. SQL & ORM
+
+Drizzle parameterized queries only. No string-built SQL. No `sql.raw(userInput)`.
+For dynamic filter building, use Drizzle's operator helpers (`eq`, `and`, `inArray`).
+
+## 6. Network egress
+
+- LLM / MCP URLs from user config must be validated with Zod `.url()` **and**
+  blocked from hitting metadata IPs (`169.254.169.254`, `::ffff:169.254.*`,
+  link-local, unspecified). Write/use an `assertSafeUrl(url)` helper — do not
+  open-code the check.
+- Never log request headers without stripping `Authorization`, `Cookie`,
+  `X-Api-Key`, `X-Auth-*`.
+- Set explicit timeouts on outbound fetches.
+
+## 7. Timing-safe comparisons
+
+Compare secrets (API keys, HMAC signatures, tokens) with
+`crypto.timingSafeEqual`. `===` leaks length via early-return timing.
+
+## 8. Filesystem permissions
+
+- Dirs: `0o700` (via `ensureDataDirs`).
+- Files holding keys / ciphertexts / PATs: `0o600`.
+- Never `fs.chmodSync(path, 0o777)`, ever.
+
+## 9. Dependency hygiene
+
+- Security-critical deps pinned to exact versions (no `^`) — currently
+  `gitnexus@1.6.3`, mirrored in root `pnpm.overrides`.
+- Never `npx <pkg>@latest`. Resolve via `createRequire` from `node_modules`.
+- `engine-strict=true` in `.npmrc` + `engines.node` in root `package.json`
+  must be kept in sync with `.nvmrc`.
+
+## 10. CORS + headers
+
+- Production CORS origin list: explicit, never `*`. Backend's `env.ts` already
+  refuses `*` in production — keep it that way.
+- `secureHeaders()` middleware stays on every response.
+- SSE endpoints: set `Cache-Control: no-cache` (Hono's `streamSSE` does this).
+
+## 11. Rate limiting & abuse
+
+Any unauthenticated or pre-auth endpoint (SSE subscribe, health, login, MCP
+handshake) needs a rate limit before going to prod. Track as a Phase 5
+deliverable — don't ship a public instance without it.
+
+## 12. Error handling
+
+- Never return raw `err.message` to clients in production. Backend's
+  `onError` handler already masks to "Internal Server Error" when
+  `NODE_ENV=production` — keep that behaviour.
+- Never swallow errors in `catch {}`. Log them with structured context.
+
+## 13. Isolation invariants (never regress)
+
+- No writes outside `<data-root>/`.
+- No `HOME` access from spawned children unless user opts in per-connection.
+- No browser bundle import of a Node-only subpath (`@agent-bridge/shared/crypto` etc.).
+
+See `docs/ARCHITECTURE.md §3` for the full table — any change that touches
+these boundaries must update that table.
+
+## 14. Audit trail
+
+Run-time decisions (agent runs, tool calls, MCP invocations, secret changes)
+land in `run_events` as append-only rows. Never `UPDATE` or `DELETE` audit rows.
+
+## 15. Before asking for review
+
+- [ ] Zod at every trust boundary?
+- [ ] No plaintext secret in responses / logs / SSE?
+- [ ] No `spawn` / `exec` outside `spawnSandboxed`?
+- [ ] Path inputs resolved + clamped to data root?
+- [ ] Drizzle parameterized?
+- [ ] Timing-safe where comparing secrets?
+- [ ] New dep? → exact-pin if security-critical, `pnpm add` (never hand-edit).

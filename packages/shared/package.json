@@ -18,6 +18,36 @@
       "development": "./src/env.ts",
       "import": "./dist/env.js",
       "default": "./dist/env.js"
+    },
+    "./paths": {
+      "types": "./src/paths.ts",
+      "development": "./src/paths.ts",
+      "import": "./dist/paths.js",
+      "default": "./dist/paths.js"
+    },
+    "./crypto": {
+      "types": "./src/crypto.ts",
+      "development": "./src/crypto.ts",
+      "import": "./dist/crypto.js",
+      "default": "./dist/crypto.js"
+    },
+    "./spawn": {
+      "types": "./src/spawn.ts",
+      "development": "./src/spawn.ts",
+      "import": "./dist/spawn.js",
+      "default": "./dist/spawn.js"
+    },
+    "./gitnexus": {
+      "types": "./src/gitnexus.ts",
+      "development": "./src/gitnexus.ts",
+      "import": "./dist/gitnexus.js",
+      "default": "./dist/gitnexus.js"
+    },
+    "./event-bus": {
+      "types": "./src/event-bus.ts",
+      "development": "./src/event-bus.ts",
+      "import": "./dist/event-bus.js",
+      "default": "./dist/event-bus.js"
     }
   },
   "files": [
@@ -32,6 +62,7 @@
   },
   "dependencies": {
     "dotenv": "^17.4.2",
+    "ioredis": "^5.10.1",
     "zod": "^4.3.6"
   },
   "devDependencies": {

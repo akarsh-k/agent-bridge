@@ -1,0 +1,73 @@
+---
+description: agent-bridge monorepo conventions — shared-code rule, subpath exports, pnpm-only installs
+alwaysApply: true
+---
+
+# agent-bridge monorepo conventions
+
+This repo is a pnpm workspace (`apps/*`, `packages/*`). Follow these conventions strictly.
+
+## 1. Never hand-edit dependency blocks
+
+Always add/remove/upgrade deps via `pnpm` commands. Never edit `dependencies` / `devDependencies` / `peerDependencies` blocks in any `package.json` by hand.
+
+```bash
+# add to a specific workspace
+pnpm add <pkg> --filter <workspace-name>
+pnpm add -D <pkg> --filter <workspace-name>
+
+# add a root devDep (e.g. tooling)
+pnpm -w add -D <pkg>
+
+# workspace-to-workspace dep (e.g. backend depends on @agent-bridge/shared)
+pnpm add @agent-bridge/shared --filter <workspace-name> --workspace
+
+# remove
+pnpm remove <pkg> --filter <workspace-name>
+```
+
+`<workspace-name>` is the `name` field of the target package's `package.json`
+(e.g. `backend`, `frontend`, `worker`, `@agent-bridge/shared`, `@agent-bridge/db`).
+
+Commit the updated `pnpm-lock.yaml` together with every dep change.
+
+## 2. Shared-code rule
+
+If a type, Zod schema, constant, or utility is used by **2+ workspaces**, it lives in `packages/*`. Duplicating types between `apps/backend` and `apps/frontend` is a bug.
+
+- Zod/DTO types, enum constants, SSE event envelope types, canvas layout types → `packages/shared` (browser-safe entry, `.`).
+- Node-only helpers (env parsing, crypto, paths, spawn, gitnexus) → `packages/shared` under **subpath exports** so the browser bundle never pulls them in.
+- DB schema + queries → `packages/db` (`@agent-bridge/db`), consumed by `apps/backend` and `apps/worker`.
+- Agent builder (Mastra wiring, memory, tools) → `packages/agents` (`@agent-bridge/agents`), consumed by backend and mcp-bridge.
+
+## 3. Subpath exports for runtime boundaries
+
+`@agent-bridge/shared` is the one package that both browser and Node import. Keep them separated via `exports`:
+
+```jsonc
+// packages/shared/package.json
+{
+  "exports": {
+    ".":         { /* browser-safe: types, zod, DTO */ },
+    "./env":     { /* Node-only */ },
+    "./crypto":  { /* Node-only */ },
+    "./paths":   { /* Node-only */ },
+    "./spawn":   { /* Node-only */ },
+    "./gitnexus":{ /* Node-only */ }
+  }
+}
+```
+
+Frontend code may only import from `@agent-bridge/shared` (the `.` entry). Importing from a Node-only subpath into the browser bundle will break the build — that's intentional.
+
+## 4. New workspaces
+
+`pnpm-workspace.yaml` already globs `apps/*` and `packages/*`. Creating a new workspace is: make the folder, add `package.json` (private, workspace name), add `tsconfig.json` extending `tsconfig.base.json`. Then `pnpm install` picks it up automatically.
+
+## 5. Isolation — nothing leaks onto the user's machine
+
+All runtime writes go through `@agent-bridge/shared/paths` (`AGENT_BRIDGE_DATA_DIR`, default `<repo>/.agent-bridge-data/`). Every `gitnexus` / `git` child process goes through `@agent-bridge/shared/spawn`'s `spawnSandboxed`, which clamps `HOME` to the isolated data dir. Never spawn `gitnexus` via `npx` — use `runGitnexus()` from `@agent-bridge/shared/gitnexus` (resolved-path spawn against the pinned version).
+
+## 6. Secrets at rest
+
+Any user-supplied secret (LLM API key, MCP env var, MCP HTTP header, git PAT) is stored as an encrypted envelope via `encryptSecret()` from `@agent-bridge/shared/crypto`. Plaintext never leaves the backend — API responses return `{set: true, length}` sentinels, never the value. Before streaming anything over SSE, run it through `redactSecrets()`.
