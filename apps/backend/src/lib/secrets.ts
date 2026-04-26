@@ -23,7 +23,11 @@ import {
   describeSecret,
   encryptSecret,
 } from '@agent-bridge/shared/crypto'
-import type { SecretInput, SecretSentinel } from '@agent-bridge/shared'
+import type {
+  SecretInput,
+  SecretMapInput,
+  SecretSentinel,
+} from '@agent-bridge/shared'
 
 /**
  * Reconcile a `SecretInput` against the currently-stored envelope.
@@ -73,4 +77,32 @@ export function envelopeToSentinel(
   envelope: string | null | undefined,
 ): SecretSentinel {
   return describeSecret(envelope)
+}
+
+// ─── Map-valued secrets ──────────────────────────────────────────────────
+
+/**
+ * Same three-state contract as `applySecretInput`, but the plaintext is a
+ * `Record<string, string>` (env vars, HTTP headers). We JSON.stringify
+ * before calling `encryptSecret`, so the on-disk envelope format is
+ * identical to string secrets. Downstream consumers decrypt → `JSON.parse`.
+ *
+ * Stays the ONLY call site for `encryptSecret` alongside `applySecretInput`;
+ * keeps the ingress invariant intact.
+ */
+export function applySecretMapInput(
+  input: SecretMapInput | undefined,
+): string | null | SecretUnchanged {
+  if (!input || input.action === 'unchanged') return SECRET_UNCHANGED
+  if (input.action === 'clear') return null
+  return encryptSecret(JSON.stringify(input.plaintext))
+}
+
+export function applySecretMapInputForCreate(
+  input: SecretMapInput | undefined,
+): string | null {
+  if (!input || input.action === 'unchanged' || input.action === 'clear') {
+    return null
+  }
+  return encryptSecret(JSON.stringify(input.plaintext))
 }

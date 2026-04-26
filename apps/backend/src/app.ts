@@ -8,13 +8,17 @@ import { logger } from 'hono/logger'
 import { secureHeaders } from 'hono/secure-headers'
 import { z } from 'zod'
 import { onUnhandledError, httpError } from './lib/errors.js'
+import { agentMcpToolsRouter } from './routes/agent-mcp-tools.js'
 import { agentReposRouter } from './routes/agent-repos.js'
 import { agentsRouter } from './routes/agents.js'
 import { eventsRouter } from './routes/events.js'
 import { healthRouter } from './routes/health.js'
 import { llmProvidersRouter } from './routes/llm-providers.js'
+import { mcpConnectionsRouter } from './routes/mcp-connections.js'
 import { repoEdgesRouter } from './routes/repo-edges.js'
 import { reposRouter } from './routes/repos.js'
+import { skillsRouter } from './routes/skills.js'
+import { toolsRouter } from './routes/tools.js'
 
 const corsOrigin =
   env.CORS_ORIGIN && env.CORS_ORIGIN.length > 0
@@ -50,7 +54,11 @@ const api = new Hono()
   .route('/agents', agentsRouter)
   .route('/agents/:agentId/repos', agentReposRouter)
   .route('/agents/:agentId/repo-edges', repoEdgesRouter)
+  .route('/agents/:agentId/mcp-tools', agentMcpToolsRouter)
+  .route('/agents/:agentId/skills', skillsRouter)
+  .route('/agents/:agentId/tools', toolsRouter)
   .route('/llm-providers', llmProvidersRouter)
+  .route('/mcp-connections', mcpConnectionsRouter)
   .route('/repos', reposRouter)
   .get(
     '/hello',
