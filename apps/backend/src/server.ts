@@ -1,7 +1,12 @@
 import { serve } from '@hono/node-server'
 import { env } from './env.js'
 import { app } from './app.js'
+import { closeDb } from './db.js'
 import { closeEventBus } from './event-bus.js'
+
+async function closeResources(): Promise<void> {
+  await Promise.allSettled([closeEventBus(), closeDb()])
+}
 
 const server = serve(
   { fetch: app.fetch, port: env.PORT, hostname: env.HOST },
@@ -29,11 +34,11 @@ function shutdown(signal: NodeJS.Signals | 'uncaughtException'): void {
   server.close((err) => {
     if (err) {
       console.error('[server] error during close:', err)
-      void closeEventBus().finally(() => process.exit(1))
+      void closeResources().finally(() => process.exit(1))
       return
     }
     console.info('[server] closed cleanly')
-    void closeEventBus().finally(() => process.exit(0))
+    void closeResources().finally(() => process.exit(0))
   })
 }
 

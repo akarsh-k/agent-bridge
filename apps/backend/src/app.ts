@@ -8,6 +8,7 @@ import { logger } from 'hono/logger'
 import { secureHeaders } from 'hono/secure-headers'
 import { z } from 'zod'
 import { eventsRouter } from './routes/events.js'
+import { healthRouter } from './routes/health.js'
 
 const corsOrigin =
   env.CORS_ORIGIN && env.CORS_ORIGIN.length > 0
@@ -34,7 +35,7 @@ const api = new Hono()
       onError: (c) => c.json({ error: 'Payload too large' }, 413),
     }),
   )
-  .get('/health', (c) => c.json({ ok: true as const }))
+  .route('/health', healthRouter)
   .get(
     '/hello',
     zValidator('query', z.object({ name: z.string().trim().min(1).max(200) })),
