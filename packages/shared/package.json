@@ -48,6 +48,12 @@
       "development": "./src/event-bus.ts",
       "import": "./dist/event-bus.js",
       "default": "./dist/event-bus.js"
+    },
+    "./queues": {
+      "types": "./src/queues.ts",
+      "development": "./src/queues.ts",
+      "import": "./dist/queues.js",
+      "default": "./dist/queues.js"
     }
   },
   "files": [

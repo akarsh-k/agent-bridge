@@ -81,6 +81,10 @@ export function buildSandboxedEnv(opts: {
     base['GIT_CONFIG_GLOBAL'] = devNull()
     base['GIT_CONFIG_SYSTEM'] = devNull()
     base['GIT_TERMINAL_PROMPT'] = '0'
+    // Default askpass: a no-op that returns an empty password, so a misconfigured
+    // clone fails fast rather than hanging on a TTY prompt. Callers that need to
+    // authenticate (e.g. the clone-repo worker job) override this via `env`
+    // below — that override is intentional, not an escape hatch to widen.
     base['GIT_ASKPASS'] = process.platform === 'win32' ? 'rem' : '/bin/echo'
   }
 

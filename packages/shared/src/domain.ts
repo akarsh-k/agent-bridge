@@ -53,6 +53,32 @@ export const repoStatuses = [
 
 export type RepoStatus = (typeof repoStatuses)[number]
 
+/**
+ * Structural counts from a `gitnexus analyze` pass, mirrored from gitnexus's
+ * own `RepoMeta.stats` shape (see
+ * node_modules/gitnexus/dist/storage/repo-manager.d.ts).
+ *
+ * Every count is optional because older gitnexus versions — or edge cases
+ * like a `--skip-git` analyze of an empty directory — may omit fields.
+ * `indexedAt` + `indexedCommitSha` are derived from `meta.json`'s
+ * `indexedAt` and `lastCommit` so the UI has one self-contained payload to
+ * render.
+ *
+ * The DB layer stores the raw `meta.json` in a sibling `jsonb` column
+ * (`raw_meta_json`) so future gitnexus fields are recoverable without a
+ * schema migration.
+ */
+export interface RepoIndexSummary {
+  readonly indexedAt: string
+  readonly indexedCommitSha: string | null
+  readonly files: number | null
+  readonly nodes: number | null
+  readonly edges: number | null
+  readonly communities: number | null
+  readonly processes: number | null
+  readonly embeddings: number | null
+}
+
 // ─── MCP connections ──────────────────────────────────────────────────────
 
 export const mcpTransports = ['stdio', 'http', 'sse'] as const

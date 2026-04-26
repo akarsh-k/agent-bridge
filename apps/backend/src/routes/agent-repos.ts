@@ -25,7 +25,10 @@ import {
   attachRepoUpdateInputSchema,
   attachedRepoResponseSchema,
   type AttachedRepoResponse,
+  type RepoIndexSummary,
 } from '@agent-bridge/shared'
+import { readIndexSummary } from '@agent-bridge/shared/gitnexus'
+import { repoSourceDir } from '@agent-bridge/shared/paths'
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
@@ -38,9 +41,10 @@ type RepoRow = typeof schema.repos.$inferSelect
 function toAttachedRepoResponse(
   attach: AgentRepoRow,
   repo: RepoRow,
+  summary: RepoIndexSummary | null,
 ): AttachedRepoResponse {
   return attachedRepoResponseSchema.parse({
-    repo: toRepoResponse(repo),
+    repo: toRepoResponse(repo, summary),
     role: attach.role,
     description: attach.description,
     positionX: attach.positionX,
@@ -48,6 +52,20 @@ function toAttachedRepoResponse(
     attachedAt: attach.createdAt.toISOString(),
     attachmentUpdatedAt: attach.updatedAt.toISOString(),
   })
+}
+
+/** File-backed meta.json lookup for a single repo row. Kept private to
+ *  this module so each route handler reads through the same path. */
+async function loadIndexSummary(
+  row: RepoRow,
+): Promise<RepoIndexSummary | null> {
+  return readIndexSummary(
+    repoSourceDir({
+      id: row.id,
+      remoteUrl: row.remoteUrl,
+      branch: row.branch,
+    }),
+  )
 }
 
 async function loadAgent(agentId: string) {
@@ -88,12 +106,12 @@ export const agentReposRouter = new Hono()
         })
       }
 
-      const [repo] = await db
+      const [repoRow] = await db
         .select()
         .from(schema.repos)
         .where(eq(schema.repos.id, body.repoId))
         .limit(1)
-      if (!repo) {
+      if (!repoRow) {
         return httpError(c, {
           code: 'not_found',
           message: `repo ${body.repoId} not found`,
@@ -120,8 +138,12 @@ export const agentReposRouter = new Hono()
           })
         }
 
+        const summary = await loadIndexSummary(repoRow)
         return c.json(
-          { ok: true as const, attachment: toAttachedRepoResponse(row, repo) },
+          {
+            ok: true as const,
+            attachment: toAttachedRepoResponse(row, repoRow, summary),
+          },
           201,
         )
       } catch (err) {
@@ -174,10 +196,16 @@ export const agentReposRouter = new Hono()
         .where(eq(schema.agentRepos.agentId, agentId))
         .orderBy(asc(schema.agentRepos.createdAt))
 
+      // One meta.json read per attached repo, in parallel. See the /api/repos
+      // list route for the scale rationale.
+      const summaries = await Promise.all(
+        rows.map((r) => loadIndexSummary(r.repo)),
+      )
+
       return c.json({
         ok: true as const,
-        attachments: rows.map((r) =>
-          toAttachedRepoResponse(r.attachment, r.repo),
+        attachments: rows.map((r, i) =>
+          toAttachedRepoResponse(r.attachment, r.repo, summaries[i] ?? null),
         ),
       })
     },
@@ -222,12 +250,12 @@ export const agentReposRouter = new Hono()
         })
       }
 
-      const [repo] = await db
+      const [repoRow] = await db
         .select()
         .from(schema.repos)
         .where(eq(schema.repos.id, repoId))
         .limit(1)
-      if (!repo) {
+      if (!repoRow) {
         // Should be impossible because of the FK; surface as 500 if it ever
         // happens so we notice a schema drift rather than silently omit.
         return httpError(c, {
@@ -236,9 +264,10 @@ export const agentReposRouter = new Hono()
         })
       }
 
+      const summary = await loadIndexSummary(repoRow)
       return c.json({
         ok: true as const,
-        attachment: toAttachedRepoResponse(attach, repo),
+        attachment: toAttachedRepoResponse(attach, repoRow, summary),
       })
     },
   )

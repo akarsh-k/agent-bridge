@@ -37,6 +37,12 @@
   border-color: transparent;
 }
 
+.badge-error {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: transparent;
+}
+
 .badge-dot {
   width: 6px;
   height: 6px;

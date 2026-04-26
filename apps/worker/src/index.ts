@@ -4,8 +4,13 @@ import { assertExpectedGitnexusVersion } from '@agent-bridge/shared/gitnexus'
 import { ensureDataDirs } from '@agent-bridge/shared/paths'
 import { loadOrCreateMasterKey } from '@agent-bridge/shared/crypto'
 import { createRedisConnection } from './redis.js'
+import { closeDb } from './db.js'
+import { closeEventBus } from './event-bus.js'
 import { QUEUE_NAMES } from './queues.js'
 import { handlePingJob } from './jobs/ping.js'
+import { handleCloneRepoJob } from './jobs/clone-repo.js'
+import { handleIndexRepoJob } from './jobs/index-repo.js'
+import { closeProducerQueues } from './jobs/enqueue.js'
 
 /**
  * Worker process entry point.
@@ -67,8 +72,85 @@ async function main(): Promise<void> {
     )
   })
 
-  const workers = [pingWorker] as const
-  const queues = [pingQueue] as const
+  // ── clone-repo ────────────────────────────────────────────────────────
+  // Concurrency 1 on purpose: clones are disk/network heavy and indexing
+  // (Phase 2B) will want its own queue with its own limits. Running two
+  // clones in parallel thrashes both resources for no wall-clock win on
+  // a single-user local setup.
+  const cloneRepoQueue = new Queue(QUEUE_NAMES.cloneRepo, {
+    connection: createRedisConnection({ role: 'queue' }),
+    defaultJobOptions: {
+      // One retry on transient network errors. Three would stack onto a
+      // stale credential failure and multiply the user's confusion.
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 2_000 },
+      removeOnComplete: { age: 24 * 3_600, count: 200 },
+      removeOnFail: { age: 7 * 24 * 3_600 },
+    },
+  })
+
+  const cloneRepoWorker = new Worker(
+    QUEUE_NAMES.cloneRepo,
+    handleCloneRepoJob,
+    {
+      connection: createRedisConnection({ role: 'worker' }),
+      concurrency: 1,
+    },
+  )
+
+  cloneRepoWorker.on('ready', () => {
+    console.info(`[worker:${QUEUE_NAMES.cloneRepo}] ready (concurrency=1)`)
+  })
+  cloneRepoWorker.on('completed', (job) => {
+    console.info(`[worker:${QUEUE_NAMES.cloneRepo}] completed job ${job.id}`)
+  })
+  cloneRepoWorker.on('failed', (job, err) => {
+    console.error(
+      `[worker:${QUEUE_NAMES.cloneRepo}] job ${job?.id ?? '<unknown>'} failed: ${err.message}`,
+    )
+  })
+
+  // ── index-repo ────────────────────────────────────────────────────────
+  // Concurrency 1: `gitnexus analyze` is CPU-heavy (tree-sitter, embeddings
+  // when enabled later) and writes into a shared gitnexus-home cache
+  // directory. Running two analyzes in parallel thrashes CPU and can race
+  // on the registry file, so we serialize for now. When we scale this
+  // tier we'll shard by cache dir rather than bump concurrency.
+  const indexRepoQueue = new Queue(QUEUE_NAMES.indexRepo, {
+    connection: createRedisConnection({ role: 'queue' }),
+    defaultJobOptions: {
+      // Analyze is deterministic on its input — retries rarely flip a
+      // failure into a success and they lengthen the "stuck indexing"
+      // window. Keep it at 1.
+      attempts: 1,
+      removeOnComplete: { age: 24 * 3_600, count: 200 },
+      removeOnFail: { age: 7 * 24 * 3_600 },
+    },
+  })
+
+  const indexRepoWorker = new Worker(
+    QUEUE_NAMES.indexRepo,
+    handleIndexRepoJob,
+    {
+      connection: createRedisConnection({ role: 'worker' }),
+      concurrency: 1,
+    },
+  )
+
+  indexRepoWorker.on('ready', () => {
+    console.info(`[worker:${QUEUE_NAMES.indexRepo}] ready (concurrency=1)`)
+  })
+  indexRepoWorker.on('completed', (job) => {
+    console.info(`[worker:${QUEUE_NAMES.indexRepo}] completed job ${job.id}`)
+  })
+  indexRepoWorker.on('failed', (job, err) => {
+    console.error(
+      `[worker:${QUEUE_NAMES.indexRepo}] job ${job?.id ?? '<unknown>'} failed: ${err.message}`,
+    )
+  })
+
+  const workers = [pingWorker, cloneRepoWorker, indexRepoWorker] as const
+  const queues = [pingQueue, cloneRepoQueue, indexRepoQueue] as const
 
   await pingQueue.add(
     'boot-smoke',
@@ -92,6 +174,9 @@ async function main(): Promise<void> {
     try {
       await Promise.all(workers.map((w) => w.close()))
       await Promise.all(queues.map((q) => q.close()))
+      await closeProducerQueues()
+      await closeEventBus()
+      await closeDb()
       console.info('[worker] closed cleanly')
       process.exit(0)
     } catch (err) {

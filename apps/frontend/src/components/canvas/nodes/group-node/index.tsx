@@ -32,10 +32,29 @@ import './index.css'
 
 export type GroupKind = 'skill' | 'tool' | 'repo' | 'mcp' | 'llm'
 
+/**
+ * Opaque status token a GroupItem may carry. Only the `repo` group supplies
+ * it in Phase 2A — other kinds render without a dot. Values intentionally
+ * mirror `RepoStatus` so the canvas doesn't need to translate anything;
+ * callers pass the column through verbatim. Kept as a string union so the
+ * CSS selectors can be authored against a stable vocabulary without coupling
+ * the group-node to repo-specific types.
+ */
+export type GroupItemStatus =
+  | 'pending'
+  | 'cloning'
+  | 'cloned'
+  | 'indexing'
+  | 'ready'
+  | 'error'
+
 export interface GroupItem {
   id: string
   label: string
   sublabel?: string
+  /** Optional status dot. Rendered as a small pulsing dot for in-flight
+   *  states (`cloning`, `indexing`) and a solid dot for terminal states. */
+  status?: GroupItemStatus
 }
 
 export interface GroupNodeData extends Record<string, unknown> {
@@ -121,6 +140,13 @@ export function GroupNode({ data, selected }: NodeProps) {
                   <span className="node-group-item-sub">{item.sublabel}</span>
                 ) : null}
               </span>
+              {item.status ? (
+                <span
+                  className={`node-group-item-status status-${item.status}`}
+                  aria-label={`status: ${item.status}`}
+                  title={item.status}
+                />
+              ) : null}
             </button>
           ))}
           {overflow > 0 ? (

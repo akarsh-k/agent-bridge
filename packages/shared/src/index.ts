@@ -1,4 +1,5 @@
 export * from './redact.js'
 export * from './events.js'
 export * from './domain.js'
+export * from './queues.js'
 export * from './dtos/index.js'

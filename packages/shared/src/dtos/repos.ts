@@ -19,7 +19,7 @@
  */
 
 import { z } from 'zod'
-import { repoStatuses } from '../domain.js'
+import { repoStatuses, type RepoIndexSummary } from '../domain.js'
 import { secretInputSchema, secretSentinelSchema } from './secrets.js'
 
 // ─── Shared fragments ────────────────────────────────────────────────────
@@ -96,6 +96,22 @@ export const repoUpdateInputSchema = z
 
 export type RepoUpdateInput = z.infer<typeof repoUpdateInputSchema>
 
+/**
+ * Structural counts from the most recent successful `gitnexus analyze` pass.
+ * Mirrors `RepoIndexSummary` from ../domain.js — we redeclare here so Zod
+ * owns the wire-format shape on the HTTP boundary.
+ */
+export const repoIndexSummarySchema = z.object({
+  indexedAt: z.iso.datetime(),
+  indexedCommitSha: z.string().nullable(),
+  files: z.number().int().nullable(),
+  nodes: z.number().int().nullable(),
+  edges: z.number().int().nullable(),
+  communities: z.number().int().nullable(),
+  processes: z.number().int().nullable(),
+  embeddings: z.number().int().nullable(),
+}) satisfies z.ZodType<RepoIndexSummary>
+
 export const repoResponseSchema = z.object({
   id: z.uuid(),
   remoteUrl: z.string(),
@@ -105,6 +121,15 @@ export const repoResponseSchema = z.object({
   lastIndexedAt: z.iso.datetime().nullable(),
   lastError: z.string().nullable(),
   gitPat: secretSentinelSchema,
+  /**
+   * Summary counts from the last successful analyze, read lazily by the
+   * backend from `<source>/.gitnexus/meta.json` via
+   * `@agent-bridge/shared/gitnexus`:`readIndexSummary`. `null` when the
+   * repo has never been successfully indexed (e.g. still
+   * `pending`/`cloning`/`cloned` pre-index, or a fresh clone whose
+   * index job hasn't landed yet) or when the source tree has been wiped.
+   */
+  indexSummary: repoIndexSummarySchema.nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 })

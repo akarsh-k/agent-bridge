@@ -8,6 +8,20 @@
       "when": 1777201320933,
       "tag": "0000_solid_runaways",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1777216747916,
+      "tag": "0001_boring_iron_fist",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1777219036729,
+      "tag": "0002_big_ezekiel",
+      "breakpoints": true
     }
   ]
 }

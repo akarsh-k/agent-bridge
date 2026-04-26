@@ -1,11 +1,37 @@
 /**
- * Read-only repo inspector. Edit support arrives in Phase 1F when we add
- * the repo attach / edit flows. Today: show what the row contains so the
- * user can verify the graph matches their expectations.
+ * Repo inspector — read-only row summary + per-repo clone/index controls.
+ *
+ * Optimistic overlay: clicking Clone or Index flips the locally-rendered
+ * status to `'cloning'` or `'indexing'` while the POST is in flight. The
+ * overlay is tagged with the `updatedAt` of the row it was derived from;
+ * any worker transition bumps `updated_at` (via `set_updated_at` trigger
+ * on `repos`), so as soon as the canonical row moves at all we compare
+ * unequal and drop the overlay. Tagging with `basedOnStatus` instead —
+ * an earlier approach — missed the very common case where a fast
+ * clone+auto-index round-trips `ready → cloning → cloned → indexing →
+ * ready` before the first refreshRepo() lands; the new canonical status
+ * matched the old one and the overlay (and the disabled button) stuck.
+ *
+ * Log pane + summary:
+ *   - `RepoLog` tails `repo:<id>` and covers both clone and index events.
+ *   - `IndexSummary` shows the count chips once the repo has ever been
+ *     indexed. It reads the `indexSummary` field baked into the canonical
+ *     RepoResponse, so a successful `refreshRepo` auto-updates it too.
  */
 
-import type { AttachedRepoResponse, RepoResponse } from '@agent-bridge/shared'
+import { useState } from 'react'
+import type {
+  AttachedRepoResponse,
+  RepoResponse,
+  RepoStatus,
+} from '@agent-bridge/shared'
 import type { WorkspaceContextValue } from '../../../lib/workspace-context'
+import { CloneButton } from './clone-button'
+import { IndexButton } from './index-button'
+import { IndexSummary } from './index-summary'
+import { RepoLog } from './repo-log'
+
+import './index.css'
 
 export function RepoInspector({
   repo,
@@ -14,6 +40,18 @@ export function RepoInspector({
   repo: RepoResponse
   workspace: WorkspaceContextValue
 }) {
+  const [statusOverlay, setStatusOverlay] = useState<{
+    status: RepoStatus
+    basedOnUpdatedAt: string
+  } | null>(null)
+
+  const overlayLive =
+    statusOverlay !== null && statusOverlay.basedOnUpdatedAt === repo.updatedAt
+  const effective: RepoResponse =
+    overlayLive && statusOverlay
+      ? { ...repo, status: statusOverlay.status }
+      : repo
+
   const attachments: Array<{
     agentName: string
     agentSlug: string
@@ -33,30 +71,86 @@ export function RepoInspector({
     }
   }
 
+  // Show the log pane once a clone/index has been requested or finished;
+  // `pending` is the only state with nothing to show.
+  const showLog = effective.status !== 'pending'
+
   return (
     <div className="inspector">
       <section className="inspector-section">
         <div className="inspector-section-title">
           <span>Repository</span>
+          <span className={`badge ${statusBadgeClass(effective.status)}`}>
+            <span className="badge-dot" />
+            {effective.status}
+          </span>
         </div>
         <div className="read-row">
           <span className="read-label">Remote</span>
-          <span className="read-value mono">{repo.remoteUrl}</span>
+          <span className="read-value mono">{effective.remoteUrl}</span>
         </div>
         <div className="read-row">
           <span className="read-label">Branch</span>
-          <span className="read-value mono">{repo.branch}</span>
+          <span className="read-value mono">{effective.branch}</span>
         </div>
         <div className="read-row">
-          <span className="read-label">Status</span>
-          <span className="read-value">{repo.status}</span>
+          <span className="read-label">Local path</span>
+          <span className="read-value mono">
+            {effective.localPath ?? '—'}
+          </span>
         </div>
         <div className="read-row">
           <span className="read-label">PAT</span>
           <span className="read-value">
-            {repo.gitPat.set ? 'configured' : '—'}
+            {effective.gitPat.set ? 'configured' : '—'}
           </span>
         </div>
+        {effective.lastError ? (
+          <div className="read-row">
+            <span className="read-label">Last error</span>
+            <span className="read-value" style={{ color: 'var(--danger)' }}>
+              {effective.lastError}
+            </span>
+          </div>
+        ) : null}
+      </section>
+
+      {effective.indexSummary ? (
+        <section className="inspector-section">
+          <div className="inspector-section-title">
+            <span>Index summary</span>
+          </div>
+          <IndexSummary summary={effective.indexSummary} />
+        </section>
+      ) : null}
+
+      <section className="inspector-section">
+        <div className="inspector-section-title">
+          <span>Pipeline</span>
+        </div>
+        <div className="inspector-action-row">
+          <CloneButton
+            repo={effective}
+            onOptimistic={() =>
+              setStatusOverlay({
+                status: 'cloning',
+                basedOnUpdatedAt: repo.updatedAt,
+              })
+            }
+            onRevert={() => setStatusOverlay(null)}
+          />
+          <IndexButton
+            repo={effective}
+            onOptimistic={() =>
+              setStatusOverlay({
+                status: 'indexing',
+                basedOnUpdatedAt: repo.updatedAt,
+              })
+            }
+            onRevert={() => setStatusOverlay(null)}
+          />
+        </div>
+        {showLog ? <RepoLog repo={repo} workspace={workspace} /> : null}
       </section>
 
       <section className="inspector-section">
@@ -67,7 +161,7 @@ export function RepoInspector({
           <div className="rail-empty">
             <div className="rail-empty-title">No attachments yet</div>
             <div className="rail-empty-hint">
-              Connect this repo to an agent from the Inspector (Phase 1F).
+              Connect this repo to an agent from the Inspector.
             </div>
           </div>
         ) : (
@@ -93,10 +187,22 @@ export function RepoInspector({
           </ul>
         )}
       </section>
-
-      <p className="muted" style={{ fontSize: 12 }}>
-        Editing moves to this inspector in Phase 1F.
-      </p>
     </div>
   )
+}
+
+function statusBadgeClass(status: RepoStatus): string {
+  switch (status) {
+    case 'cloned':
+    case 'ready':
+      return 'badge-success'
+    case 'cloning':
+    case 'indexing':
+      return 'badge-accent'
+    case 'error':
+      return 'badge-error'
+    case 'pending':
+    default:
+      return ''
+  }
 }

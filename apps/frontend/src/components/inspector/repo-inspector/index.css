@@ -1,0 +1,214 @@
+/* ---------------------------------------------------------------------------
+   Repo inspector — clone/index actions, live log pane, index summary chips.
+
+   The log pane mimics a terminal (dense monospace rows, auto-scroll to
+   bottom) but keeps the surface chrome consistent with the rest of the
+   right rail. Index summary lives directly under the repo header so the
+   operator sees last-run counts without scrolling past the log.
+--------------------------------------------------------------------------- */
+
+/* Generic "action button + inline error" group. Shared by clone + index
+   actions so the two sit flush in a column or side-by-side row. */
+.inspector-repo-action {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.inspector-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* ─── Live log pane ────────────────────────────────────────────────────── */
+
+.repo-log {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-hi);
+  overflow: hidden;
+}
+
+.repo-log-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  background: var(--surface);
+}
+
+.repo-log-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+}
+.repo-log-dot.live {
+  background: var(--success);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.repo-log-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-log-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  font-size: 12px;
+  background: var(--bg-canvas);
+}
+
+.repo-log-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 8px 4px;
+}
+
+.repo-log-row {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 2px 4px;
+  border-radius: 4px;
+  line-height: 1.45;
+  min-width: 0;
+}
+
+.repo-log-row.mono {
+  font-family: var(--font-mono);
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+/* Banner rows are visually bolder than the line-by-line git/gitnexus
+   output so the operator can skim for state changes. */
+.repo-log-row.banner {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 12px;
+  margin: 2px 0;
+}
+.repo-log-row.banner.ok {
+  background: var(--success-bg);
+  color: var(--success);
+  border-color: transparent;
+}
+.repo-log-row.banner.err {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border-color: transparent;
+}
+
+.repo-log-kind {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hi);
+  color: var(--text-dim);
+}
+.repo-log-kind.ok {
+  background: rgba(52, 211, 153, 0.18);
+  color: var(--success);
+}
+.repo-log-kind.err {
+  background: rgba(251, 113, 133, 0.18);
+  color: var(--danger);
+}
+
+.repo-log-line {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  flex: 1;
+}
+
+/* ─── Index summary (count chips) ──────────────────────────────────────── */
+
+.index-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.index-summary-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+.index-summary-ago {
+  color: var(--text-dim);
+}
+
+.index-summary-sha {
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hi);
+  color: var(--text-dim);
+  font-size: 10.5px;
+}
+
+.index-summary-chips {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px;
+}
+
+.index-summary-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  min-width: 0;
+}
+
+.index-summary-chip-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.index-summary-chip-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.index-summary-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+}

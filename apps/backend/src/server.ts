@@ -7,6 +7,7 @@ import { env } from './env.js'
 import { app } from './app.js'
 import { closeDb } from './db.js'
 import { closeEventBus } from './event-bus.js'
+import { closeQueues } from './lib/queues.js'
 
 // Eagerly materialise the data-encryption key on boot so:
 //   (a) the one-time "generated new key" log appears before the first HTTP
@@ -17,7 +18,7 @@ loadOrCreateMasterKey()
 console.info(`[server] data-encryption key ready at ${getSecretKeyPath()}`)
 
 async function closeResources(): Promise<void> {
-  await Promise.allSettled([closeEventBus(), closeDb()])
+  await Promise.allSettled([closeEventBus(), closeQueues(), closeDb()])
 }
 
 const server = serve(

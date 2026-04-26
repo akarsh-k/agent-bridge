@@ -1,16 +1,10 @@
 /**
- * Canonical queue names for the worker. Keep this list tiny — each new queue
- * is a separate BullMQ `Worker` instance below. When the backend starts
- * enqueueing real jobs (Phase 1+), these names should move to
- * `@agent-bridge/shared` so producer and consumer stay in sync.
+ * Thin re-export of the canonical queue-name map from `@agent-bridge/shared`.
  *
- * Naming convention: `agent-bridge.<queue>`. BullMQ v5 disallows `:` in queue
- * names (reserved for its internal key structure), so we use `.` as the
- * namespace separator.
+ * Producer (backend) and consumer (worker) share a single source of truth
+ * for queue names so a rename can't split them apart. Local callers in the
+ * worker keep importing from `./queues` so the import sites don't change
+ * when new queues get added.
  */
 
-export const QUEUE_NAMES = {
-  ping: 'agent-bridge.ping',
-} as const
-
-export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES]
+export { QUEUE_NAMES, type QueueName } from '@agent-bridge/shared/queues'

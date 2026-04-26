@@ -29,12 +29,18 @@ importers:
       '@hono/zod-validator':
         specifier: ^0.7.6
         version: 0.7.6(hono@4.12.15)(zod@4.3.6)
+      bullmq:
+        specifier: ^5.76.2
+        version: 5.76.2
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(postgres@3.4.9)
       hono:
         specifier: ^4.12.15
         version: 4.12.15
+      ioredis:
+        specifier: ^5.10.1
+        version: 5.10.1
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -112,6 +118,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@agent-bridge/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@agent-bridge/shared':
         specifier: workspace:*
         version: link:../../packages/shared

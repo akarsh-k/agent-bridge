@@ -16,6 +16,7 @@ import { healthRouter } from './routes/health.js'
 import { llmProvidersRouter } from './routes/llm-providers.js'
 import { mcpConnectionsRouter } from './routes/mcp-connections.js'
 import { repoEdgesRouter } from './routes/repo-edges.js'
+import { repoJobsRouter } from './routes/repo-jobs.js'
 import { reposRouter } from './routes/repos.js'
 import { skillsRouter } from './routes/skills.js'
 import { toolsRouter } from './routes/tools.js'
@@ -60,6 +61,7 @@ const api = new Hono()
   .route('/llm-providers', llmProvidersRouter)
   .route('/mcp-connections', mcpConnectionsRouter)
   .route('/repos', reposRouter)
+  .route('/repos', repoJobsRouter)
   .get(
     '/hello',
     zValidator('query', z.object({ name: z.string().trim().min(1).max(200) })),

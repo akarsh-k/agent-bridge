@@ -72,7 +72,9 @@
   appearance: none;
   -webkit-appearance: none;
   display: grid;
-  grid-template-columns: 28px 1fr;
+  /* 3rd column is `auto` so the status dot (when present) takes only the
+     space it needs; rows without a dot naturally collapse the column width. */
+  grid-template-columns: 28px 1fr auto;
   align-items: center;
   gap: 10px;
   width: 100%;
@@ -161,6 +163,42 @@
   border: 1px dashed var(--border);
   border-radius: var(--radius);
   font-style: italic;
+}
+
+/* ---------- Status dot ----------
+   Only repo group items supply a `status` prop in Phase 2A. The dot is
+   small (8px) so it doesn't compete with the text, and uses the same
+   colour vocabulary as `.badge` variants for consistency with the right
+   rail. In-flight states (`cloning`, `indexing`) pulse via @keyframes
+   pulse (from tokens.css) so a user glancing at the canvas can tell
+   something is happening without needing to open the inspector. */
+.node-group-item-status {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  background: var(--text-muted);
+  flex-shrink: 0;
+  /* Tiny inset shadow for a bit of depth, not enough to read as a ring. */
+  box-shadow: 0 0 0 2px color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.node-group-item-status.status-pending {
+  background: var(--text-muted);
+}
+
+.node-group-item-status.status-cloning,
+.node-group-item-status.status-indexing {
+  background: var(--accent-400);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+.node-group-item-status.status-cloned,
+.node-group-item-status.status-ready {
+  background: var(--success);
+}
+
+.node-group-item-status.status-error {
+  background: var(--danger);
 }
 
 /* Per-kind left-border tint for quick canvas skim — subtle, not overwhelming. */

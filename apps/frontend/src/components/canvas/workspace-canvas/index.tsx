@@ -251,6 +251,10 @@ function buildGraph(
           sublabel: att.role?.trim()
             ? att.role
             : (shareSublabel(repoShareCount.get(r.id) ?? 0) ?? r.branch),
+          // Surface the clone/index status as a small dot. Values map 1:1
+          // to GroupItemStatus; we pass the column through verbatim so the
+          // canvas doesn't need to know about RepoStatus semantics.
+          status: r.status,
         }
       })
       .filter((x): x is GroupItem => x !== null)

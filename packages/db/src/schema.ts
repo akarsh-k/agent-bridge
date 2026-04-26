@@ -173,6 +173,15 @@ export const repos = pgTable(
   (t) => [uniqueIndex('repos_url_branch_uq').on(t.remoteUrl, t.branch)],
 )
 
+// ─── index summary (file-backed, no table) ───────────────────────────────
+//
+// Historical note: an earlier iteration (Phase 2B as initially landed)
+// duplicated `gitnexus analyze` counts into a `repo_index_summary` table.
+// We dropped it in favour of reading `<source>/.gitnexus/meta.json` lazily
+// on repo-read endpoints — gitnexus already persists the same data there,
+// and a second copy in Postgres only invites drift between the two.
+// See `@agent-bridge/shared/gitnexus`:`readIndexSummary(sourceDir)`.
+
 // ─── agent_repos (join) ───────────────────────────────────────────────────
 // Per-agent attachment. Connector/description for the *repo's role within
 // this agent* lives here. Connector edges between two repos live in

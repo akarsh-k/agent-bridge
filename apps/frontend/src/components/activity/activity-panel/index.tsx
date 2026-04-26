@@ -31,12 +31,32 @@ const KIND_ICON: Record<RunEventKind, string> = {
   'worker.log': '…',
   'worker.finished': '✓',
   'worker.error': '✕',
+  'repo.clone.started': '▶',
+  'repo.clone.progress': '↻',
+  'repo.clone.ok': '✓',
+  'repo.clone.fail': '✕',
+  'repo.index.started': '▶',
+  'repo.index.progress': '↻',
+  'repo.index.ok': '✓',
+  'repo.index.fail': '✕',
   ping: '·',
 }
 
 function iconClass(kind: RunEventKind): string {
-  if (kind === 'run.error' || kind === 'worker.error') return 'activity-icon err'
-  if (kind === 'run.finished' || kind === 'worker.finished' || kind === 'run.step.finished')
+  if (
+    kind === 'run.error' ||
+    kind === 'worker.error' ||
+    kind === 'repo.clone.fail' ||
+    kind === 'repo.index.fail'
+  )
+    return 'activity-icon err'
+  if (
+    kind === 'run.finished' ||
+    kind === 'worker.finished' ||
+    kind === 'run.step.finished' ||
+    kind === 'repo.clone.ok' ||
+    kind === 'repo.index.ok'
+  )
     return 'activity-icon ok'
   return 'activity-icon'
 }

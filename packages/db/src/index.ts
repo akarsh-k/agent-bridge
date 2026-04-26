@@ -1,2 +1,3 @@
 export * from './client.js'
 export * as schema from './schema.js'
+export * as reposRepo from './repos-repo.js'

@@ -33,8 +33,11 @@ import {
   repoIdParamSchema,
   repoResponseSchema,
   repoUpdateInputSchema,
+  type RepoIndexSummary,
   type RepoResponse,
 } from '@agent-bridge/shared'
+import { readIndexSummary } from '@agent-bridge/shared/gitnexus'
+import { repoSourceDir } from '@agent-bridge/shared/paths'
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
@@ -47,7 +50,18 @@ import {
 
 type RepoRow = typeof schema.repos.$inferSelect
 
-export function toRepoResponse(row: RepoRow): RepoResponse {
+/**
+ * Build the HTTP-shaped repo response. `summary` is the lazily-read
+ * `<source>/.gitnexus/meta.json` blob (see `readIndexSummary`) — `null`
+ * when the repo has never been indexed or the source tree was wiped.
+ * Passing `undefined` is equivalent to `null`; we keep the param optional
+ * so the POST-create path (where the repo hasn't been cloned yet, let
+ * alone indexed) doesn't have to manufacture a no-op `null`.
+ */
+export function toRepoResponse(
+  row: RepoRow,
+  summary?: RepoIndexSummary | null,
+): RepoResponse {
   return repoResponseSchema.parse({
     id: row.id,
     remoteUrl: row.remoteUrl,
@@ -57,9 +71,27 @@ export function toRepoResponse(row: RepoRow): RepoResponse {
     lastIndexedAt: row.lastIndexedAt ? row.lastIndexedAt.toISOString() : null,
     lastError: row.lastError,
     gitPat: envelopeToSentinel(row.gitPatEnvelope),
+    indexSummary: summary ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   })
+}
+
+/**
+ * Read `meta.json` for a single repo row, tolerating the common "never
+ * indexed yet" case (returns `null`). Centralised so route handlers don't
+ * duplicate the `repoSourceDir(descriptor)` plumbing.
+ */
+async function loadIndexSummary(
+  row: RepoRow,
+): Promise<RepoIndexSummary | null> {
+  return readIndexSummary(
+    repoSourceDir({
+      id: row.id,
+      remoteUrl: row.remoteUrl,
+      branch: row.branch,
+    }),
+  )
 }
 
 const DEFAULT_BRANCH = 'main'
@@ -82,6 +114,8 @@ export const reposRouter = new Hono()
       // the caller sent — that path is reserved for PATCH. Checking first
       // avoids spending encrypt CPU on a secret we're about to discard, and
       // keeps the "PAT ignored on existing" contract obvious in the code.
+      // The index summary (if any) is read lazily from `meta.json` so a
+      // re-resolve to an already-indexed repo carries its counts through.
       const [existing] = await db
         .select()
         .from(schema.repos)
@@ -94,11 +128,12 @@ export const reposRouter = new Hono()
         .limit(1)
 
       if (existing) {
+        const summary = await loadIndexSummary(existing)
         return c.json(
           {
             ok: true as const,
             existed: true,
-            repo: toRepoResponse(existing),
+            repo: toRepoResponse(existing, summary),
           },
           200,
         )
@@ -140,9 +175,16 @@ export const reposRouter = new Hono()
       .from(schema.repos)
       .orderBy(asc(schema.repos.createdAt))
 
+    // Read `meta.json` for every repo in parallel. Each call is one small
+    // file read and tolerates a missing file as `null`, so for the
+    // expected single-operator scale (tens of repos) this is cheap. If we
+    // ever get into the hundreds this becomes the obvious hotspot and a
+    // batched registry.json lookup can replace it.
+    const summaries = await Promise.all(rows.map((r) => loadIndexSummary(r)))
+
     return c.json({
       ok: true as const,
-      repos: rows.map(toRepoResponse),
+      repos: rows.map((row, i) => toRepoResponse(row, summaries[i])),
     })
   })
   // ─── GET /api/repos/:id ──────────────────────────────────────────────────
@@ -169,7 +211,11 @@ export const reposRouter = new Hono()
         })
       }
 
-      return c.json({ ok: true as const, repo: toRepoResponse(row) })
+      const summary = await loadIndexSummary(row)
+      return c.json({
+        ok: true as const,
+        repo: toRepoResponse(row, summary),
+      })
     },
   )
   // ─── PATCH /api/repos/:id ────────────────────────────────────────────────
@@ -214,7 +260,16 @@ export const reposRouter = new Hono()
         })
       }
 
-      return c.json({ ok: true as const, repo: toRepoResponse(row) })
+      // A PATCH can't affect meta.json (only gitPat moves here), but we
+      // still include the summary so response parity with GET holds —
+      // clients that echo PATCH into their store don't accidentally wipe
+      // the summary they had a moment ago.
+      const summary = await loadIndexSummary(row)
+
+      return c.json({
+        ok: true as const,
+        repo: toRepoResponse(row, summary),
+      })
     },
   )
   // ─── DELETE /api/repos/:id ───────────────────────────────────────────────

@@ -91,6 +91,16 @@ export interface WorkspaceContextValue {
   createLlmProvider: (
     input: LlmProviderCreateInput,
   ) => Promise<LlmProviderResponse>
+
+  /**
+   * Refetch a single repo row from the server and patch it into both the
+   * top-level `repos[]` list and every `agentResources[*].attachedRepos`
+   * entry that references it. Used by the clone/index inspectors to
+   * replace an optimistic in-flight state ("cloning") with the canonical
+   * server truth ("cloned" / "error") after a terminal SSE event arrives,
+   * without triggering a full workspace refetch.
+   */
+  refreshRepo: (repoId: string) => Promise<RepoResponse | null>
 }
 
 export const WorkspaceContext = createContext<WorkspaceContextValue | null>(

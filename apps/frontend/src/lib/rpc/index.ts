@@ -45,7 +45,14 @@ function resolveBaseUrl(): string {
   }
 }
 
-export const rpc = hc<AppType>(resolveBaseUrl())
+/**
+ * Origin + base path for the backend HTTP API. Exposed so the handful of
+ * call sites that can't use `hc<AppType>` (sub-routers mounted twice, SSE,
+ * etc.) share the same resolution as `rpc`.
+ */
+export const apiBaseUrl: string = resolveBaseUrl()
+
+export const rpc = hc<AppType>(apiBaseUrl)
 
 /**
  * Thrown by `callApi` on non-2xx responses. Carries the backend's structured
@@ -139,4 +146,41 @@ export async function callApi<T extends { ok: true }>(
   }
 
   return envelope as T
+}
+
+// ─── Repo job helpers ────────────────────────────────────────────────────
+//
+// `POST /api/repos/:id/clone` and `POST /api/repos/:id/index` are mounted
+// on a secondary sub-router (`repoJobsRouter`). Hono's `hc<AppType>` infers
+// only the last `.route(...)` call for a given mount-point, so these paths
+// aren't reachable through the typed client. These helpers go through
+// `callApi` for error handling while still using raw `fetch` for the URL.
+
+export interface RepoJobStartResponse {
+  readonly jobId: string
+  readonly streamId: string
+}
+
+export async function cloneRepo(
+  repoId: string,
+): Promise<RepoJobStartResponse> {
+  const res = await callApi<{ ok: true } & RepoJobStartResponse>(
+    fetch(`${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/clone`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+  return { jobId: res.jobId, streamId: res.streamId }
+}
+
+export async function indexRepo(
+  repoId: string,
+): Promise<RepoJobStartResponse> {
+  const res = await callApi<{ ok: true } & RepoJobStartResponse>(
+    fetch(`${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/index`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+  return { jobId: res.jobId, streamId: res.streamId }
 }

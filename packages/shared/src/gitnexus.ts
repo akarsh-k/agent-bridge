@@ -1,7 +1,9 @@
+import { promises as fs } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { spawnSandboxed } from './spawn.js'
 import type { ChildProcess } from 'node:child_process'
+import type { RepoIndexSummary } from './domain.js'
 
 /**
  * Invariants:
@@ -135,4 +137,97 @@ export async function runGitnexusToCompletion(
       resolve({ code: code ?? -1, stdout, stderr })
     })
   })
+}
+
+// ─── meta.json reader ────────────────────────────────────────────────────
+//
+// gitnexus writes `<sourceDir>/.gitnexus/meta.json` on every successful
+// `analyze` pass. It is the single source of truth for "did this repo get
+// indexed, and if so what did it find?" — we do NOT duplicate these counts
+// into Postgres. Two callers consume it:
+//
+//   1. The worker's index-repo job — expects the file to exist post-analyze
+//      and treats `null` as a bug (analyze exited 0 but wrote nothing).
+//   2. Every backend repo-read endpoint — treats `null` as the normal
+//      "not indexed yet / source tree wiped" state and renders nothing.
+//
+// The helper returns `null` for any read or parse failure and never throws,
+// so List endpoints iterating over N repos can't have one bad meta.json
+// blow up the whole response. Callers that need strict semantics
+// (the worker) check the return value and throw locally.
+
+const META_RELATIVE_PATH = ['.gitnexus', 'meta.json'] as const
+
+/** Absolute path to the `meta.json` written by `gitnexus analyze` for a
+ *  repo whose cloned source tree lives at `sourceDir`. */
+export function repoMetaJsonPath(sourceDir: string): string {
+  return path.join(sourceDir, ...META_RELATIVE_PATH)
+}
+
+/**
+ * Lazily read + parse `<sourceDir>/.gitnexus/meta.json` into a
+ * `RepoIndexSummary`. Returns `null` if the file is missing, unreadable,
+ * malformed, or doesn't carry the fields we care about. Never throws.
+ *
+ * This is the SINGLE place that knows meta.json's on-disk shape. If
+ * gitnexus renames a field or adds a new stat, update here and every
+ * caller (worker job, backend read path) picks it up in one commit.
+ */
+export async function readIndexSummary(
+  sourceDir: string,
+): Promise<RepoIndexSummary | null> {
+  const metaPath = repoMetaJsonPath(sourceDir)
+
+  let contents: string
+  try {
+    contents = await fs.readFile(metaPath, 'utf8')
+  } catch {
+    return null
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(contents)
+  } catch {
+    return null
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null
+  }
+
+  const raw = parsed as Record<string, unknown>
+  const indexedAt =
+    typeof raw['indexedAt'] === 'string' ? raw['indexedAt'] : null
+  if (!indexedAt) return null
+
+  const lastCommitRaw = raw['lastCommit']
+  const indexedCommitSha =
+    typeof lastCommitRaw === 'string' && lastCommitRaw.length > 0
+      ? lastCommitRaw
+      : null
+
+  const statsRaw = raw['stats']
+  const stats =
+    statsRaw && typeof statsRaw === 'object' && !Array.isArray(statsRaw)
+      ? (statsRaw as Record<string, unknown>)
+      : {}
+
+  return {
+    indexedAt,
+    indexedCommitSha,
+    files: pickInt(stats['files']),
+    nodes: pickInt(stats['nodes']),
+    edges: pickInt(stats['edges']),
+    communities: pickInt(stats['communities']),
+    processes: pickInt(stats['processes']),
+    embeddings: pickInt(stats['embeddings']),
+  }
+}
+
+function pickInt(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value)
+  }
+  return null
 }

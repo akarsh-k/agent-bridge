@@ -385,6 +385,53 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [],
   )
 
+  // Single-row refresh. Patches both `repos[]` and any `attachedRepos`
+  // entries in place — the latter matter because `RepoInspector` and the
+  // repo group node both read the embedded copy. Used after a terminal
+  // clone event arrives so the UI swaps the optimistic "cloning" state
+  // for the authoritative server value without a full workspace refetch.
+  const refreshRepo = useCallback(
+    async (repoId: string): Promise<RepoResponse | null> => {
+      try {
+        const { repo } = await callApi<{ ok: true; repo: RepoResponse }>(
+          rpc.api.repos[':id'].$get({ param: { id: repoId } }),
+        )
+        setTopLevel((prev) => ({
+          ...prev,
+          repos: prev.repos.map((r) => (r.id === repoId ? repo : r)),
+        }))
+        setAgentResources((prev) => {
+          let changed = false
+          const next: Record<string, AgentResources> = {}
+          for (const [agentId, bundle] of Object.entries(prev)) {
+            const hit = bundle.attachedRepos.some(
+              (a) => a.repo.id === repoId,
+            )
+            if (!hit) {
+              next[agentId] = bundle
+              continue
+            }
+            changed = true
+            next[agentId] = {
+              ...bundle,
+              attachedRepos: bundle.attachedRepos.map((a) =>
+                a.repo.id === repoId ? { ...a, repo } : a,
+              ),
+            }
+          }
+          return changed ? next : prev
+        })
+        return repo
+      } catch (err) {
+        // A 404 is a normal outcome if the repo was deleted mid-clone.
+        // Surface it to the console but don't tear the store.
+        console.warn(`[workspace] refreshRepo(${repoId}) failed:`, err)
+        return null
+      }
+    },
+    [],
+  )
+
   const value = useMemo<WorkspaceContextValue>(
     () => ({
       status,
@@ -404,6 +451,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       attachRepo,
       createRepo,
       createLlmProvider,
+      refreshRepo,
     }),
     [
       status,
@@ -420,6 +468,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       attachRepo,
       createRepo,
       createLlmProvider,
+      refreshRepo,
     ],
   )
 
