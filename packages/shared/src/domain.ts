@@ -10,10 +10,20 @@
 
 // ─── LLM providers ────────────────────────────────────────────────────────
 
+/**
+ * All supported providers speak the OpenAI HTTP API
+ * (`/v1/chat/completions`, `/v1/models`). This is deliberate: Anthropic
+ * and Gemini require their own request/response envelopes, auth
+ * schemes, and model-list quirks, and the value of supporting them
+ * natively (two extra SDKs, two extra connector files, two extra error
+ * taxonomies) is low compared to running them behind a compat proxy
+ * (LiteLLM, vLLM, etc.) and configuring them as `openai_compatible`.
+ *
+ * Kind acts as a UI/UX hint (default base URL, form labels, icons);
+ * the connector code is the same for all four.
+ */
 export const llmProviderKinds = [
   'openai',
-  'anthropic',
-  'gemini',
   'llama_cpp',
   'ollama',
   'openai_compatible',

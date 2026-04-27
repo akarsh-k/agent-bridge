@@ -26,12 +26,14 @@ import {
   llmProviderCreateInputSchema,
   llmProviderIdParamSchema,
   llmProviderResponseSchema,
+  llmProviderTestInputSchema,
   llmProviderUpdateInputSchema,
   type LlmProviderResponse,
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
+import { testProvider } from '../lib/llm-providers/index.js'
 import { isPostgresErrorWithCode, PG } from '../lib/pg-errors.js'
 import {
   applySecretInput,
@@ -199,6 +201,63 @@ export const llmProvidersRouter = new Hono()
         }
         throw err
       }
+    },
+  )
+  // ─── POST /api/llm-providers/:id/test ────────────────────────────────────
+  //
+  // Live smoke check against the saved row. Optional body lets the caller
+  // override any of `baseUrl`, `apiKey`, or `defaultModel` for this one
+  // call — used by future "edit draft" flows so the user can verify
+  // changes before persisting. Omitted fields fall through to the stored
+  // values; `apiKey: { action: 'unchanged' }` and a missing `apiKey`
+  // behave identically (use the saved envelope).
+  //
+  // Decrypt happens inside `testProvider` — this handler never touches
+  // plaintext. 2xx always carries a `LlmProviderTestResponse`; 4xx/5xx
+  // are reserved for envelope-level errors (404, validation). A failed
+  // *smoke test* against a reachable-but-broken provider is still 200
+  // with `{ ok: false, code, message }`, so clients have a single
+  // success-path parser and only the transport-level errors to handle
+  // via `ApiError`.
+  .post(
+    '/:id/test',
+    zValidator('param', llmProviderIdParamSchema, (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    }),
+    zValidator('json', llmProviderTestInputSchema, (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param')
+      const body = c.req.valid('json')
+      const { db } = getDb()
+
+      const [row] = await db
+        .select()
+        .from(schema.llmProviders)
+        .where(eq(schema.llmProviders.id, id))
+        .limit(1)
+
+      if (!row) {
+        return httpError(c, {
+          code: 'not_found',
+          message: `llm provider ${id} not found`,
+        })
+      }
+
+      const result = await testProvider(
+        {
+          kind: row.kind,
+          baseUrl: row.baseUrl,
+          defaultModel: row.defaultModel,
+          apiKeyEnvelope: row.apiKeyEnvelope,
+        },
+        body,
+      )
+
+      return c.json({ ok: true as const, result })
     },
   )
   // ─── DELETE /api/llm-providers/:id ───────────────────────────────────────

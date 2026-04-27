@@ -12,7 +12,7 @@
     "typecheck": "pnpm -r run typecheck",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "lint": "pnpm -r run lint",
+    "lint": "eslint . && pnpm -r run lint",
     "clean:data": "node scripts/clean-data.mjs",
     "clean:data:force": "node scripts/clean-data.mjs --force",
     "db:generate": "pnpm --filter @agent-bridge/db run db:generate",
@@ -37,6 +37,10 @@
     ]
   },
   "devDependencies": {
-    "prettier": "^3.8.3"
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.2.1",
+    "globals": "^17.5.0",
+    "prettier": "^3.8.3",
+    "typescript-eslint": "^8.59.0"
   }
 }

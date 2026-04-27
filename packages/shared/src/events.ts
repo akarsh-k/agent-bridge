@@ -10,7 +10,14 @@ import type { RepoIndexSummary } from './domain.js'
 
 export const runEventKinds = [
   'run.started',
+  /**
+   * `run.token` is a SSE-only frame — high-frequency, not persisted. The
+   * audit log receives `run.token.batch` rows instead (one per ~200ms
+   * flush window) so `run_events` stays O(5-50 rows/run) instead of
+   * O(1k+/run). See `docs/PLAN.md` §3d for the trade-off.
+   */
   'run.token',
+  'run.token.batch',
   'run.step.started',
   'run.step.finished',
   'run.tool.called',
@@ -127,4 +134,184 @@ export interface RepoIndexFailPayload {
 /** Build the SSE `streamId` for per-repo clone + index progress. */
 export function repoStreamId(repoId: string): string {
   return `repo:${repoId}`
+}
+
+// ─── `run.*` payload shapes (Phase 3d) ───────────────────────────────────
+//
+// Typed payloads for every `run.*` event the `POST /agents/:id/runs`
+// dispatcher can emit. Like the `repo.*` payloads above, these are NOT
+// part of the wire schema (`runEventSchema.data` stays `unknown`); they
+// exist so the producer (`apps/backend/src/lib/run-dispatcher.ts`) and
+// consumer (frontend chat UI in 3e) both type-check against the same
+// shape, with drift caught by TypeScript rather than at runtime.
+//
+// Stream ID convention: `run:<runId>`, matching the `repo:<repoId>`
+// style used by the clone+index pipeline. See `runStreamId()` at the
+// bottom of this section.
+
+/**
+ * Emitted once, right after the `runs` row flips to `running`. Carries
+ * the minimum metadata the UI needs to render the run card without a
+ * second fetch (agent + model + mount summary).
+ */
+export interface RunStartedPayload {
+  readonly runId: string
+  readonly agentId: string
+  readonly agentName: string
+  readonly providerKind: string
+  readonly modelId: string
+  /**
+   * `true` iff the run has a `gitnexus mcp` subprocess attached. Lets
+   * the UI decide whether to render the "tools" column on the timeline.
+   */
+  readonly gitnexusMounted: boolean
+  /** Count of Mastra tools wired into the Agent (gitnexus + future MCPs). */
+  readonly toolCount: number
+  /**
+   * Mastra thread id this run writes to — mirrors the value persisted
+   * on `runs.mastra_thread_id`. `null` when the agent has
+   * `memoryEnabled=false`, in which case Mastra never creates a
+   * thread and there is nothing to link to. Populated in Phase 3g.
+   */
+  readonly mastraThreadId: string | null
+  /**
+   * Mastra resource id this run writes to. `null` on memory-disabled
+   * agents (same rule as `mastraThreadId`). Defaults to
+   * `agent:<agentId>` server-side when the client doesn't supply one.
+   */
+  readonly mastraResourceId: string | null
+}
+
+/**
+ * Per-token SSE frame. One per Mastra `text-delta` chunk. NOT persisted
+ * individually — see `RunTokenBatchPayload` for the audit row shape.
+ * `index` is monotonic within a run so a client that missed earlier
+ * frames can detect the gap and fall back to the batch rows.
+ */
+export interface RunTokenPayload {
+  readonly runId: string
+  readonly index: number
+  readonly text: string
+}
+
+/**
+ * Batched token row, written to `run_events` every ~200ms (or on
+ * `run.finished`/`run.error`, whichever comes first). `startIndex` and
+ * `endIndex` are the monotonic `RunTokenPayload.index` bounds this
+ * batch covers, so a replay endpoint can reconstruct the full token
+ * sequence by concatenating the batches in order.
+ *
+ * This event IS also published to SSE so late-joining subscribers can
+ * "catch up" without the backend having to re-stream the whole history.
+ * UI should treat it as a fallback for token frames it already rendered
+ * (dedupe by `index`).
+ */
+export interface RunTokenBatchPayload {
+  readonly runId: string
+  readonly startIndex: number
+  readonly endIndex: number
+  readonly text: string
+  /** Wall-clock ms between the first and last token in this batch. */
+  readonly durationMs: number
+}
+
+/**
+ * Mastra `step-start` chunk. A "step" is one LLM call in a multi-step
+ * run (e.g. the model asks for a tool, gets a result, then finishes —
+ * that's 2 steps). `stepIndex` is zero-based; Mastra's own `runId` is
+ * per-chunk and opaque, so we don't forward it.
+ */
+export interface RunStepStartedPayload {
+  readonly runId: string
+  readonly stepIndex: number
+  readonly messageId: string
+}
+
+/**
+ * Mastra `step-finish` chunk. `finishReason` values come from
+ * `LanguageModelV2FinishReason` (e.g. `stop`, `tool-calls`, `length`,
+ * `content-filter`). `usage` is optional because some providers omit
+ * it when streaming.
+ */
+export interface RunStepFinishedPayload {
+  readonly runId: string
+  readonly stepIndex: number
+  readonly messageId: string
+  readonly finishReason: string | null
+  readonly usage?: {
+    readonly inputTokens: number | null
+    readonly outputTokens: number | null
+    readonly totalTokens: number | null
+  }
+}
+
+/**
+ * Mastra `tool-call` chunk. `input` is the JSON-deserialised arguments
+ * object the LLM sent. Providers emit these as arg-name/value pairs;
+ * Mastra buffers the streaming deltas so we only see completed calls
+ * here, not partials.
+ */
+export interface RunToolCalledPayload {
+  readonly runId: string
+  readonly stepIndex: number
+  readonly toolCallId: string
+  readonly toolName: string
+  readonly input: unknown
+}
+
+/**
+ * Mastra `tool-result` OR `tool-error` chunk. The error path folds into
+ * the same event (with `error` set) so the frontend only needs one
+ * timeline row per tool invocation. `output` is whatever the tool's
+ * `execute()` returned — for gitnexus tools that's typically the raw
+ * MCP response payload (Mastra passes it through).
+ */
+export interface RunToolResultPayload {
+  readonly runId: string
+  readonly stepIndex: number
+  readonly toolCallId: string
+  readonly toolName: string
+  readonly output?: unknown
+  readonly error?: string
+}
+
+/**
+ * Fatal run error. Published once, right before the `runs` row lands in
+ * `status='error'`. `message` is already redacted by the dispatcher (we
+ * strip any plaintext API keys the provider might have echoed back).
+ */
+export interface RunErrorPayload {
+  readonly runId: string
+  readonly message: string
+  /**
+   * Coarse classifier the UI maps to icons:
+   *   - `auth`        — 401/403 from the LLM provider.
+   *   - `upstream`    — other provider errors (5xx, rate limit, model not found).
+   *   - `tool`        — a tool handler threw outside `tool-error` (rare).
+   *   - `internal`    — anything else (spawn failure, DB error, etc.).
+   */
+  readonly kind: 'auth' | 'upstream' | 'tool' | 'internal'
+}
+
+/**
+ * Mastra `finish` chunk. Closes out the run — the audit row captures
+ * usage + finishReason + text length so the UI can render a compact
+ * summary without reading the full message list.
+ */
+export interface RunFinishedPayload {
+  readonly runId: string
+  readonly finishReason: string | null
+  readonly outputTextLength: number
+  readonly stepCount: number
+  readonly durationMs: number
+  readonly usage?: {
+    readonly inputTokens: number | null
+    readonly outputTokens: number | null
+    readonly totalTokens: number | null
+  }
+}
+
+/** Build the SSE `streamId` for per-run agent output. */
+export function runStreamId(runId: string): string {
+  return `run:${runId}`
 }

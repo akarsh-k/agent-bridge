@@ -1,8 +1,8 @@
 {
-  "name": "@agent-bridge/db",
+  "name": "@agent-bridge/agents",
   "version": "1.0.0",
   "private": true,
-  "description": "Drizzle schema + queries for Agent Bridge (Postgres + pgvector).",
+  "description": "Mastra-backed agent factory. Builds a configured Agent from a DB row (system prompt, model, memory, tools) so apps/backend + apps/worker can run it without touching Mastra directly. This is the ONLY package allowed to import @mastra/* (enforced by the root ESLint guard rail).",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./src/index.ts",
@@ -12,12 +12,6 @@
       "development": "./src/index.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
-    },
-    "./schema": {
-      "types": "./src/schema.ts",
-      "development": "./src/schema.ts",
-      "import": "./dist/schema.js",
-      "default": "./dist/schema.js"
     }
   },
   "files": [
@@ -29,21 +23,24 @@
     "dev": "tsc --watch --preserveWatchOutput",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "db:generate": "drizzle-kit generate",
-    "db:migrate": "drizzle-kit migrate",
-    "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "smoke": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke.ts"
   },
   "packageManager": "pnpm@10.33.0",
   "dependencies": {
+    "@agent-bridge/db": "workspace:*",
     "@agent-bridge/shared": "workspace:*",
+    "@mastra/core": "^1.28.0",
+    "@mastra/mcp": "^1.5.2",
+    "@mastra/memory": "^1.17.1",
+    "@mastra/pg": "^1.9.2",
     "drizzle-orm": "^0.45.2",
+    "gitnexus": "1.6.3",
     "pg": "^8.20.0"
   },
   "devDependencies": {
     "@types/node": "^24.12.2",
     "@types/pg": "^8.20.0",
-    "drizzle-kit": "^0.31.10",
+    "tsx": "^4.21.0",
     "typescript": "^6.0.3"
   }
 }

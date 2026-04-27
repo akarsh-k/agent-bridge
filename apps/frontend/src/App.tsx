@@ -25,6 +25,7 @@ import { matchAgentDetail, navigate, usePathname } from './lib/router'
 import { useSSE } from './lib/use-sse'
 import { TopBar } from './components/layout/top-bar'
 import { RightRail } from './components/layout/right-rail'
+import { ChatPanel } from './components/chat/chat-panel'
 import {
   WorkspaceCanvas,
   type WorkspaceSelection,
@@ -223,6 +224,15 @@ function Workspace() {
               />
             ) : null}
           </div>
+
+          {focusedAgent ? (
+            <aside
+              className="main-area-chat"
+              aria-label={`Chat with ${focusedAgent.name}`}
+            >
+              <ChatPanel agent={focusedAgent} />
+            </aside>
+          ) : null}
         </div>
 
         <RightRail

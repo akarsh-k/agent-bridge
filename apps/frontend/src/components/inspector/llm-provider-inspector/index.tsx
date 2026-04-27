@@ -1,9 +1,16 @@
 /**
  * Read-only LLM provider inspector.
+ *
+ * Plus a "Test connection" panel (Phase 3a) that runs a live smoke
+ * check against the provider's endpoint using the saved row. Result is
+ * ephemeral — it lives in the panel's local state only.
  */
 
 import type { LlmProviderResponse } from '@agent-bridge/shared'
 import type { WorkspaceContextValue } from '../../../lib/workspace-context'
+import { TestConnection } from './test-connection'
+
+import './index.css'
 
 export function LlmProviderInspector({
   provider,
@@ -46,6 +53,13 @@ export function LlmProviderInspector({
             {provider.apiKey.set ? 'configured' : '—'}
           </span>
         </div>
+      </section>
+
+      <section className="inspector-section">
+        <div className="inspector-section-title">
+          <span>Connection</span>
+        </div>
+        <TestConnection providerId={provider.id} />
       </section>
 
       <section className="inspector-section">

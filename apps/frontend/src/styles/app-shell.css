@@ -35,13 +35,27 @@
 .main-area {
   background: var(--bg-canvas);
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   overflow: hidden;
   min-width: 0;
 }
 
 .main-area-canvas {
-  flex: 1;
+  flex: 1 1 0;
   position: relative;
   overflow: hidden;
+  min-width: 0;
+}
+
+/* Chat dock — only mounted when an agent is focused. Width is a
+   clamp so narrow windows keep the canvas usable but wide monitors
+   don't burn all the horizontal space on chat. */
+.main-area-chat {
+  flex: 0 0 clamp(380px, 40vw, 560px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--surface);
+  min-width: 0;
 }

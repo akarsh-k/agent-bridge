@@ -17,7 +17,11 @@
 
 import { hc } from 'hono/client'
 import type { AppType } from 'backend'
-import type { ErrorCode } from '@agent-bridge/shared'
+import type {
+  ErrorCode,
+  LlmProviderTestInput,
+  LlmProviderTestResponse,
+} from '@agent-bridge/shared'
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:3001'
 
@@ -183,4 +187,26 @@ export async function indexRepo(
     }),
   )
   return { jobId: res.jobId, streamId: res.streamId }
+}
+
+// ─── LLM provider helpers ────────────────────────────────────────────────
+
+/**
+ * Kick off a live smoke test of an LLM provider. `overrides` is optional
+ * — the saved row is used by default. When present, any subset of
+ * `baseUrl` / `defaultModel` / `apiKey` overrides that field for this one
+ * call (not persisted). Used by both the read-only inspector (no
+ * overrides) and the future edit-draft flow.
+ */
+export async function testLlmProvider(
+  id: string,
+  overrides: LlmProviderTestInput = {},
+): Promise<LlmProviderTestResponse> {
+  const res = await callApi<{ ok: true; result: LlmProviderTestResponse }>(
+    rpc.api['llm-providers'][':id'].test.$post({
+      param: { id },
+      json: overrides,
+    }),
+  )
+  return res.result
 }

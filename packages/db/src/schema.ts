@@ -303,6 +303,24 @@ export const runs = pgTable(
     inputPrompt: text('input_prompt').notNull(),
     outputSummary: text('output_summary'),
     errorMessage: text('error_message'),
+    /**
+     * Soft link to `mastra.threads(id)`. Populated only when the agent
+     * has `memoryEnabled=true` and a thread was resolved at dispatch
+     * time (user-supplied or defaulted to `runId`). Nullable so one-off
+     * agents without memory don't carry a phantom thread id. No FK —
+     * the target table lives in the `mastra` schema which Drizzle
+     * doesn't manage; cross-schema FKs are legal but would couple our
+     * migration lifecycle to Mastra's auto-init ordering.
+     */
+    mastraThreadId: text('mastra_thread_id'),
+    /**
+     * Soft link to `mastra.resources(id)`. Same story as
+     * `mastra_thread_id`; populated only when memory is enabled.
+     * Defaults to `agent:<agentId>` so multiple users aren't needed to
+     * scope things in the single-operator local-first MVP — Phase 5
+     * multi-user auth will stamp real user ids here.
+     */
+    mastraResourceId: text('mastra_resource_id'),
     startedAt: timestamp('started_at', {
       withTimezone: true,
       mode: 'date',
@@ -319,6 +337,12 @@ export const runs = pgTable(
   (t) => [
     uniqueIndex('runs_stream_id_uq').on(t.streamId),
     index('runs_agent_started_idx').on(t.agentId, t.startedAt),
+    // Chat-history replay: "give me all runs for this Mastra thread,
+    // newest first". Partial index skips the NULL rows that dominate
+    // for memory-disabled agents so the index stays cheap.
+    index('runs_mastra_thread_idx')
+      .on(t.mastraThreadId, t.startedAt)
+      .where(sql`${t.mastraThreadId} IS NOT NULL`),
   ],
 )
 

@@ -18,7 +18,10 @@ flowchart LR
     CLONE[clone-repo job]
     IDX[index-repo job]
     WIKI[generate-wiki job]
-    RUN[run-agent job]
+  end
+
+  subgraph Dispatcher["apps/backend/lib/run-dispatcher (in-process)"]
+    RUN[agent.stream&nbsp;➜&nbsp;SSE + run_events]
   end
 
   subgraph Shared["packages/shared (subpath exports)"]
@@ -49,7 +52,7 @@ flowchart LR
   subgraph External["External MCPs (sandboxed)"]
     Notion[Notion MCP]
     DD[Datadog MCP]
-    GitNexusMCP[gitnexus mcp per repo]
+    GitNexusMCP[gitnexus mcp — one per agent, multiplexed across repos]
   end
 
   UI -->|REST| API
@@ -57,7 +60,11 @@ flowchart LR
   API -->|enqueue| Redis
   Worker -->|dequeue| Redis
   Worker -->|publish RunEvent| Redis
+  API -->|publish RunEvent| Redis
   Backend -->|subscribe| Redis
+  API --> Dispatcher
+  Dispatcher --> DB
+  Dispatcher -->|spawnSandboxed| GitNexusMCP
   API --> DB
   Worker --> DB
   Worker --> Shared
@@ -86,8 +93,11 @@ by design.
 - SSE endpoint tails per-stream events from Redis pub/sub
 - Never returns decrypted secret plaintext — responses carry `SecretSentinel`
   values only
-- Before publishing any event, runs it through `redactSecrets()` with all
-  known plaintexts for that run
+- Before publishing any event, routes it through a per-run
+  `RunRedactor` (bound to `BuiltAgent.secrets`) which scrubs every
+  string leaf. Same redactor is used for the audit write and for
+  terminal columns (`runs.error_message`, `runs.output_summary`), so
+  SSE, Redis, and `run_events` always see the same masked payload.
 
 ### 2.3 `apps/worker` (BullMQ)
 
@@ -191,8 +201,16 @@ UI input  →  backend validates SecretInput DTO  →  encryptSecret()  →  DB 
 - **API responses**: never include plaintext. `SecretSentinel = {set: true}`
   (no length — computing it would force N-decrypts per list read and narrow an
   attacker's guess space if the UI were screen-recorded)
-- **Logs + SSE**: last-line-of-defence `redactSecrets()` replaces any known
-  plaintext substring with `«redacted»` before publishing
+- **Logs + SSE + audit**: last-line-of-defence `redactSecrets()` /
+  `redactMany()` replaces any known plaintext substring with `«redacted»`
+  at the publish boundary — `run-dispatcher.ts` binds a per-run
+  `RunRedactor` from `BuiltAgent.secrets` and routes every outgoing
+  event through it BEFORE `eventBus.publish(...)` AND
+  `runsRepo.appendEvent(...)`. Same treatment for terminal strings
+  (`runs.error_message`, `runs.output_summary`). The clone-repo worker
+  applies the same pattern to PAT plaintexts on stderr lines. Since
+  SSE and `run_events` fan out from the same scrubbed payload, they
+  cannot drift.
 
 Losing `secret.key` means every encrypted row becomes unrecoverable — back it
 up if you care about portability across machines.
@@ -204,22 +222,36 @@ sequenceDiagram
   participant UI as Browser EventSource
   participant BE as Backend SSE handler
   participant R as Redis
+  participant D as Run dispatcher (in-process)
   participant WK as Worker
 
-  UI->>BE: GET /api/events/run-42
-  BE->>R: SUBSCRIBE agent-bridge:stream:run-42
+  UI->>BE: GET /api/events/run:<uuid>
+  BE->>R: SUBSCRIBE agent-bridge:stream:run:<uuid>
   BE-->>UI: event: connected
-  WK->>R: PUBLISH agent-bridge:stream:run-42 { kind: 'run.token', ... }
+  D->>D: redactor.redactEvent(event)
+  D->>R: PUBLISH { kind: 'run.token', ... (scrubbed) }
+  WK->>WK: redactSecrets(line, [patPlaintext])
+  WK->>R: PUBLISH { kind: 'repo.clone.progress', ... (scrubbed) }
   R-->>BE: message
-  BE-->>UI: event: run.token (after redactSecrets)
+  BE-->>UI: event: run.token
   Note over BE,UI: heartbeat every 15s keeps proxies from idling out
   UI->>BE: close()
   BE->>R: UNSUBSCRIBE + disconnect
 ```
 
-The `RunEvent` type is shared via `@agent-bridge/shared` so producer
-(worker) and consumer (frontend) cannot drift. The bus is a thin wrapper
-around ioredis pub/sub — one subscriber connection per SSE client.
+Two producers, one bus: the **run dispatcher** runs inside the backend
+process (LLM streaming doesn't serialise cleanly across a queue) and the
+**BullMQ worker** runs long-lived clone/index/wiki jobs. Both publish
+`RunEvent`s onto the same Redis channel namespace (`run:<uuid>` for
+agent runs, `repo:<uuid>` for repo jobs) so the SSE handler treats them
+uniformly. The `RunEvent` type is shared via `@agent-bridge/shared` so
+producer and consumer cannot drift. The bus is a thin wrapper around
+ioredis pub/sub — one subscriber connection per SSE client.
+
+`run.token` is a live-only frame: high-frequency, never written to
+`run_events`. The dispatcher's `TokenBatcher` (200 ms window) aggregates
+tokens into `run.token.batch` rows in the audit log, so a late subscriber
+can fetch a compact history without replaying thousands of token deltas.
 
 ## 6. Process + deployment topology
 
@@ -289,8 +321,22 @@ Everything else. Mastra has no opinion or schema here, so we design freely:
 **`runs` vs `mastra.traces`.** Both exist and that's deliberate. Our `runs`
 carries UI semantics (`stream_id` for SSE, `input_prompt`, user-facing
 status). `mastra.traces` carries low-level OTel spans. They coexist linked by
-soft-FK columns on `runs` (`mastra_thread_id`, `mastra_resource_id`) added in
-Phase 3. If Mastra's tracing is ever disabled, our audit log still works.
+soft-FK columns on `runs` (`mastra_thread_id`, `mastra_resource_id`, added in
+Phase 3g via `0003_runs_mastra_link.sql`). If Mastra's tracing is ever
+disabled, our audit log still works.
+
+The link is **soft** on purpose. Real Postgres FKs across schemas are legal
+but would couple `drizzle-kit migrate` (public) to Mastra's auto-init at
+boot (`mastra`). Mastra's schema is not versioned in this repo, so we keep
+the columns as plain `text` and enforce the relationship at the application
+layer — dispatcher writes the link while the run row is still `pending`;
+chat-history joins tolerate orphan rows by rendering "history unavailable"
+if Mastra has GC'd the thread. The columns are populated only when
+`agents.memory_enabled = true`; memory-disabled runs leave them NULL so
+the join domain stays accurate. A partial index on
+`(mastra_thread_id, started_at) WHERE mastra_thread_id IS NOT NULL` keeps
+the chat-replay query cheap without paying for the NULL rows that
+dominate one-shot runs.
 
 ### 7.4 Rule of thumb
 
@@ -324,8 +370,8 @@ error, so we name them explicitly:
                                                                      ▼
                                        ┌────────────────────────────────────────┐
                                        │  GitNexus MCP │ Notion MCP │ Datadog … │
-                                       │  (per repo)   │  native tools,         │
-                                       │               │  http/shell/custom     │
+                                       │  (one subproc │  native tools,         │
+                                       │   per agent)  │  http/shell/custom     │
                                        └────────────────────────────────────────┘
 ```
 

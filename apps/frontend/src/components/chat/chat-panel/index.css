@@ -1,0 +1,309 @@
+/* ---------------------------------------------------------------------------
+   Chat dock. Three stacked regions — header, scrolling list, composer.
+   Lives inside `.main-area-chat` which supplies width + border.
+--------------------------------------------------------------------------- */
+
+.chat-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  position: relative;
+}
+
+/* ─── Header ─────────────────────────────────────────────────────────── */
+
+.chat-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-hi);
+  flex-shrink: 0;
+}
+
+.chat-panel-heading {
+  flex: 1;
+  min-width: 0;
+}
+
+.chat-panel-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-panel-subtitle {
+  margin-top: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.chat-thread-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.chat-thread-pill code {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text);
+}
+
+.chat-thread-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-400);
+  box-shadow: 0 0 6px var(--accent-glow);
+}
+
+.chat-conn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: background var(--dur-1) var(--ease-out);
+}
+
+.chat-conn-dot.is-live {
+  background: var(--success);
+  box-shadow: 0 0 6px rgba(52, 211, 153, 0.55);
+}
+
+.chat-panel-status {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  letter-spacing: 0.03em;
+}
+
+.chat-reset-btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-dim);
+  padding: 6px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
+  flex-shrink: 0;
+}
+
+.chat-reset-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.chat-reset-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ─── Scrolling area ─────────────────────────────────────────────────── */
+
+.chat-panel-scroll {
+  flex: 1 1 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  scroll-behavior: auto; /* smooth is opt-in in JS for jump-to-latest */
+  padding: 20px 16px 24px;
+}
+
+.chat-panel-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.chat-panel-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.chat-panel-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--radius-pill);
+  border: 2px solid var(--surface);
+}
+
+.chat-panel-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--border-strong);
+}
+
+.chat-message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.chat-empty {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-dim);
+}
+
+.chat-empty-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+
+.chat-empty-hint {
+  font-size: 13px;
+  color: var(--text-muted);
+  max-width: 340px;
+  margin: 0 auto;
+  line-height: 1.55;
+}
+
+/* ─── Jump-to-latest affordance ──────────────────────────────────────── */
+
+.chat-jump-latest {
+  position: absolute;
+  bottom: 104px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+  box-shadow: var(--shadow-2);
+  z-index: 2;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    transform var(--dur-2) var(--ease-out);
+}
+
+.chat-jump-latest:hover {
+  background: var(--surface-hover);
+}
+
+/* ─── Composer ───────────────────────────────────────────────────────── */
+
+.chat-composer {
+  border-top: 1px solid var(--border);
+  background: var(--surface-hi);
+  padding: 12px 14px 14px;
+  flex-shrink: 0;
+}
+
+.chat-composer-error {
+  background: var(--danger-bg);
+  color: var(--danger);
+  border: 1px solid rgba(251, 113, 133, 0.3);
+  border-radius: var(--radius-sm);
+  padding: 8px 10px;
+  font-size: 12.5px;
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+
+.chat-composer-inner {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 8px 8px 12px;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
+}
+
+.chat-composer-inner:focus-within {
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.chat-composer-textarea {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  resize: none;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  line-height: 1.55;
+  padding: 4px 0;
+  max-height: 240px;
+}
+
+.chat-composer-textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.chat-composer-textarea:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.chat-composer-send {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-500);
+  color: var(--text-inverted);
+  border: none;
+  font-size: 15px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+
+.chat-composer-send:hover:not(:disabled) {
+  background: var(--accent-600);
+}
+
+.chat-composer-send:active:not(:disabled) {
+  transform: scale(0.95);
+}
+
+.chat-composer-send:disabled {
+  background: var(--surface-raised);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.chat-composer-spinner {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: chat-spin 0.7s linear infinite;
+}
+
+@keyframes chat-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

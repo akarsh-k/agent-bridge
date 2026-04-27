@@ -21,6 +21,7 @@ import './index.css'
 const KIND_ICON: Record<RunEventKind, string> = {
   'run.started': '▶',
   'run.token': '·',
+  'run.token.batch': '·',
   'run.step.started': '→',
   'run.step.finished': '✓',
   'run.tool.called': '⚙',
