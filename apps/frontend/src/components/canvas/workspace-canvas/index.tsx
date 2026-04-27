@@ -23,33 +23,35 @@
  *   - Drag drops flush to localStorage.
  */
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Background,
   BackgroundVariant,
   Controls,
-  MarkerType,
-  MiniMap,
   ReactFlow,
   useEdgesState,
   useNodesState,
   type Edge,
-  type EdgeMarkerType,
   type Node,
   type NodeChange,
+  type ReactFlowInstance,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 
 import type { WorkspaceContextValue } from '../../../lib/workspace-context'
+import type { AddResourceKind } from '../../agent-workspace/add-resource-panel'
 import {
-  autoLayout,
+  clearSavedPositions,
+  layoutAgentOverview,
+  layoutFocusedCluster,
   loadPositions,
   savePositions,
-  seedGroupPositions,
   type PositionMap,
 } from '../../../lib/layout'
 import { AgentNode } from '../nodes/agent-node'
-import { GroupNode, type GroupItem, type GroupKind } from '../nodes/group-node'
+import { AgentCreateNode } from '../nodes/agent-create-node'
+import { GroupNode, type GroupKind } from '../nodes/group-node'
+import { CanvasToolbar } from '../canvas-toolbar'
 
 export type WorkspaceSelection =
   | null
@@ -67,7 +69,13 @@ export interface WorkspaceCanvasProps {
   selection: WorkspaceSelection
   onSelect: (next: WorkspaceSelection) => void
   onFocusAgent: (id: string | null) => void
+  onOpenAddResource: (agentId: string, kind?: AddResourceKind) => void
+  onRemoveAgent: (agentId: string) => Promise<void>
+  onCreateAgent: () => Promise<void>
+  creatingAgent?: boolean
 }
+
+type CanvasMode = 'overview' | 'focus'
 
 // Stable nodeTypes reference — React Flow warns loudly otherwise.
 // NOTE: "group" is a reserved type name in React Flow that applies a grey
@@ -75,6 +83,7 @@ export interface WorkspaceCanvasProps {
 // instead so our custom group chrome is the only thing rendered.
 const NODE_TYPES = {
   agent: AgentNode,
+  agentCreate: AgentCreateNode,
   kindGroup: GroupNode,
 }
 
@@ -89,6 +98,7 @@ const GROUP_KINDS: readonly GroupKind[] = [
 // ─── id helpers ───────────────────────────────────────────────────────────
 
 const agentNodeId = (id: string) => `agent:${id}`
+const createAgentNodeId = 'create-agent'
 const groupNodeId = (kind: GroupKind, agentId: string) =>
   `group:${kind}:${agentId}`
 
@@ -120,19 +130,25 @@ interface BuiltGraph {
   edges: Edge[]
 }
 
-const ARROW_MARKER: EdgeMarkerType = {
-  type: MarkerType.ArrowClosed,
-  width: 14,
-  height: 14,
+export interface AgentNodeSummary {
+  readonly skills: number
+  readonly tools: number
+  readonly repos: number
+  readonly mcps: number
 }
 
-function shortRemote(remoteUrl: string): string {
-  try {
-    const u = new URL(remoteUrl)
-    const path = u.pathname.replace(/^\/+|\.git$/g, '')
-    return `${u.hostname}/${path}`
-  } catch {
-    return remoteUrl
+function summarizeAgent(
+  res: WorkspaceContextValue['agentResources'][string] | undefined,
+): AgentNodeSummary {
+  const enabledMcps = new Set<string>()
+  for (const entry of res?.mcpAllowlist ?? []) {
+    if (entry.enabled) enabledMcps.add(entry.mcpConnectionId)
+  }
+  return {
+    skills: res?.skills.length ?? 0,
+    tools: res?.tools.length ?? 0,
+    repos: res?.attachedRepos.length ?? 0,
+    mcps: enabledMcps.size,
   }
 }
 
@@ -140,228 +156,63 @@ function buildGraph(
   workspace: WorkspaceContextValue,
   focusedAgentId: string | null,
   positions: PositionMap,
+  onOpenAddResource: (agentId: string, kind?: AddResourceKind) => void,
+  onRemoveAgent: (agentId: string) => Promise<void>,
+  onCreateAgent: () => Promise<void>,
+  creatingAgent: boolean | undefined,
 ): BuiltGraph {
-  const { agents, repos, mcpConnections, llmProviders, agentResources } =
-    workspace
+  const { agents, agentResources } = workspace
 
   const nodes: Node[] = []
   const edges: Edge[] = []
 
-  // Quick lookups so pill sublabels ("also attached to 2 others") stay O(1).
-  const repoById = new Map(repos.map((r) => [r.id, r]))
-  const mcpById = new Map(mcpConnections.map((m) => [m.id, m]))
-  const llmById = new Map(llmProviders.map((l) => [l.id, l]))
-
-  // Share counts for shared-resource pills.
-  const repoShareCount = new Map<string, number>()
-  const mcpShareCount = new Map<string, number>()
-  const llmShareCount = new Map<string, number>()
-  for (const agent of agents) {
-    const res = agentResources[agent.id]
-    if (res) {
-      for (const att of res.attachedRepos) {
-        repoShareCount.set(
-          att.repo.id,
-          (repoShareCount.get(att.repo.id) ?? 0) + 1,
-        )
-      }
-      const touched = new Set<string>()
-      for (const entry of res.mcpAllowlist) {
-        if (entry.enabled) touched.add(entry.mcpConnectionId)
-      }
-      for (const mcpId of touched) {
-        mcpShareCount.set(mcpId, (mcpShareCount.get(mcpId) ?? 0) + 1)
-      }
-    }
-    if (agent.llmProviderId) {
-      llmShareCount.set(
-        agent.llmProviderId,
-        (llmShareCount.get(agent.llmProviderId) ?? 0) + 1,
-      )
-    }
+  const mode: CanvasMode = focusedAgentId ? 'focus' : 'overview'
+  const isDimmed = (nodeId: string): boolean => {
+    void nodeId
+    return false
   }
 
-  const shareSublabel = (count: number): string | undefined => {
-    if (count <= 1) return undefined
-    return count === 2 ? 'shared · 1 other' : `shared · ${count - 1} others`
-  }
+  const orderedAgents = [...agents].sort((a, b) => {
+    const created = a.createdAt.localeCompare(b.createdAt)
+    if (created !== 0) return created
+    return a.name.localeCompare(b.name)
+  })
 
-  // Focus-set = ids visible non-dimmed when focused. Empty focus → show all.
-  const focusSet = new Set<string>()
-  if (focusedAgentId) {
-    focusSet.add(agentNodeId(focusedAgentId))
-    for (const kind of GROUP_KINDS) {
-      focusSet.add(groupNodeId(kind, focusedAgentId))
-    }
-  }
-  const isDimmed = (nodeId: string): boolean =>
-    focusedAgentId !== null && !focusSet.has(nodeId)
+  for (const agent of orderedAgents) {
+    if (mode === 'focus' && agent.id !== focusedAgentId) continue
 
-  for (const agent of agents) {
     const aNid = agentNodeId(agent.id)
+    const res = agentResources[agent.id]
     nodes.push({
       id: aNid,
       type: 'agent',
       position: positions[aNid] ?? { x: 0, y: 0 },
-      data: { agent, dimmed: isDimmed(aNid) },
+      data: {
+        agent,
+        dimmed: isDimmed(aNid),
+        mode,
+        summary: summarizeAgent(res),
+        onOpenAddResource,
+        onRemoveAgent,
+      },
     })
+  }
 
-    const res = agentResources[agent.id]
-
-    // ── Skills group ────────────────────────────────────────────────
-    const skillItems: GroupItem[] = (res?.skills ?? []).map((s) => ({
-      id: s.id,
-      label: s.name,
-    }))
-    if (skillItems.length > 0) {
-      pushGroup(nodes, edges, {
-        agentId: agent.id,
-        agentNid: aNid,
-        kind: 'skill',
-        items: skillItems,
-        positions,
-        isDimmed,
-      })
-    }
-
-    // ── Tools group ─────────────────────────────────────────────────
-    const toolItems: GroupItem[] = (res?.tools ?? []).map((t) => ({
-      id: t.id,
-      label: t.name,
-      sublabel: t.kind,
-    }))
-    if (toolItems.length > 0) {
-      pushGroup(nodes, edges, {
-        agentId: agent.id,
-        agentNid: aNid,
-        kind: 'tool',
-        items: toolItems,
-        positions,
-        isDimmed,
-      })
-    }
-
-    // ── Repos group ─────────────────────────────────────────────────
-    const repoItems: GroupItem[] = (res?.attachedRepos ?? [])
-      .map((att): GroupItem | null => {
-        const r = repoById.get(att.repo.id) ?? att.repo
-        return {
-          id: r.id,
-          label: shortRemote(r.remoteUrl),
-          sublabel: att.role?.trim()
-            ? att.role
-            : (shareSublabel(repoShareCount.get(r.id) ?? 0) ?? r.branch),
-          // Surface the clone/index status as a small dot. Values map 1:1
-          // to GroupItemStatus; we pass the column through verbatim so the
-          // canvas doesn't need to know about RepoStatus semantics.
-          status: r.status,
-        }
-      })
-      .filter((x): x is GroupItem => x !== null)
-    if (repoItems.length > 0) {
-      pushGroup(nodes, edges, {
-        agentId: agent.id,
-        agentNid: aNid,
-        kind: 'repo',
-        items: repoItems,
-        positions,
-        isDimmed,
-      })
-    }
-
-    // ── MCPs group ──────────────────────────────────────────────────
-    const enabledByMcp = new Map<string, number>()
-    for (const entry of res?.mcpAllowlist ?? []) {
-      if (!entry.enabled) continue
-      enabledByMcp.set(
-        entry.mcpConnectionId,
-        (enabledByMcp.get(entry.mcpConnectionId) ?? 0) + 1,
-      )
-    }
-    const mcpItems: GroupItem[] = [...enabledByMcp.entries()]
-      .map(([mcpId, toolCount]): GroupItem | null => {
-        const conn = mcpById.get(mcpId)
-        if (!conn) return null
-        const toolsLabel =
-          toolCount === 1 ? '1 tool' : `${toolCount} tools`
-        const share = shareSublabel(mcpShareCount.get(mcpId) ?? 0)
-        return {
-          id: conn.id,
-          label: conn.name,
-          sublabel: share ? `${toolsLabel} · ${share}` : toolsLabel,
-        }
-      })
-      .filter((x): x is GroupItem => x !== null)
-    if (mcpItems.length > 0) {
-      pushGroup(nodes, edges, {
-        agentId: agent.id,
-        agentNid: aNid,
-        kind: 'mcp',
-        items: mcpItems,
-        positions,
-        isDimmed,
-      })
-    }
-
-    // ── LLM group (0 or 1) ──────────────────────────────────────────
-    if (agent.llmProviderId) {
-      const prov = llmById.get(agent.llmProviderId)
-      if (prov) {
-        const llmItems: GroupItem[] = [
-          {
-            id: prov.id,
-            label: prov.label,
-            sublabel:
-              shareSublabel(llmShareCount.get(prov.id) ?? 0) ?? prov.kind,
-          },
-        ]
-        pushGroup(nodes, edges, {
-          agentId: agent.id,
-          agentNid: aNid,
-          kind: 'llm',
-          items: llmItems,
-          positions,
-          isDimmed,
-        })
-      }
-    }
+  if (mode === 'overview') {
+    nodes.push({
+      id: createAgentNodeId,
+      type: 'agentCreate',
+      position: positions[createAgentNodeId] ?? { x: 0, y: 0 },
+      data: {
+        creating: creatingAgent,
+        onCreateAgent,
+      },
+      draggable: false,
+      selectable: false,
+    })
   }
 
   return { nodes, edges }
-}
-
-function pushGroup(
-  nodes: Node[],
-  edges: Edge[],
-  params: {
-    agentId: string
-    agentNid: string
-    kind: GroupKind
-    items: readonly GroupItem[]
-    positions: PositionMap
-    isDimmed: (id: string) => boolean
-  },
-): void {
-  const { agentId, agentNid, kind, items, positions, isDimmed } = params
-  const nid = groupNodeId(kind, agentId)
-  nodes.push({
-    id: nid,
-    type: 'kindGroup',
-    position: positions[nid] ?? { x: 0, y: 0 },
-    data: {
-      groupKind: kind,
-      agentId,
-      items,
-      dimmed: isDimmed(nid),
-    },
-  })
-  edges.push({
-    id: `e:${agentNid}->${nid}`,
-    source: agentNid,
-    target: nid,
-    markerEnd: ARROW_MARKER,
-    className: isDimmed(agentNid) || isDimmed(nid) ? 'dimmed' : undefined,
-  })
 }
 
 // ─── Component ────────────────────────────────────────────────────────────
@@ -372,15 +223,39 @@ export function WorkspaceCanvas({
   selection,
   onSelect,
   onFocusAgent,
+  onOpenAddResource,
+  onRemoveAgent,
+  onCreateAgent,
+  creatingAgent,
 }: WorkspaceCanvasProps) {
   // Persistent position map — hydrated from localStorage, updated on drag,
   // merged with seed offsets + dagre output whenever new nodes appear. Held
   // in state (not a ref) so React 19's rules-of-hooks lint stays happy.
   const [positions, setPositions] = useState<PositionMap>(() => loadPositions())
+  const flowRef = useRef<ReactFlowInstance | null>(null)
+  const lastOverviewSignatureRef = useRef<string | null>(null)
+  const mode: CanvasMode = focusedAgentId ? 'focus' : 'overview'
 
   const built = useMemo(
-    () => buildGraph(workspace, focusedAgentId, positions),
-    [workspace, focusedAgentId, positions],
+    () =>
+      buildGraph(
+        workspace,
+        focusedAgentId,
+        positions,
+        onOpenAddResource,
+        onRemoveAgent,
+        onCreateAgent,
+        creatingAgent,
+      ),
+    [
+      workspace,
+      focusedAgentId,
+      positions,
+      onOpenAddResource,
+      onRemoveAgent,
+      onCreateAgent,
+      creatingAgent,
+    ],
   )
 
   // React Flow owns node/edge arrays internally so it can handle drags etc.
@@ -395,22 +270,74 @@ export function WorkspaceCanvas({
     setEdges(built.edges)
   }
 
-  // Fill in any missing positions. Two-stage:
-  //   1. Seed group nodes near their parent agent (fast, local, predictable).
-  //   2. Fall back to dagre for anything still missing (typically only on
-  //      first-ever render when no agents have saved positions yet).
+  // Fill in missing positions using the deterministic strategy for the
+  // current UX state. Overview is a grid; focus is one local cluster.
   const missing = built.nodes.some((n) => !positions[n.id])
   if (missing) {
-    const seeded = seedGroupPositions(built.nodes, positions)
-    const stillMissing = built.nodes.some((n) => !seeded[n.id])
-    const next = stillMissing
-      ? autoLayout(built.nodes, built.edges, seeded)
-      : seeded
+    const next =
+      mode === 'focus'
+        ? layoutFocusedCluster(built.nodes, positions)
+        : layoutAgentOverview(built.nodes, positions)
     if (next !== positions) {
       setPositions(next)
       savePositions(next)
     }
   }
+
+  useEffect(() => {
+    if (mode !== 'overview') return
+    const signature = built.nodes
+      .map((n) => n.id)
+      .filter((id) => id.startsWith('agent:'))
+      .sort()
+      .join('|')
+
+    if (lastOverviewSignatureRef.current === null) {
+      lastOverviewSignatureRef.current = signature
+      return
+    }
+    if (lastOverviewSignatureRef.current === signature) return
+
+    lastOverviewSignatureRef.current = signature
+    setPositions((prev) => {
+      const next = layoutAgentOverview(built.nodes, prev, { force: true })
+      savePositions(next)
+      return next
+    })
+  }, [built.nodes, mode])
+
+  const organize = useCallback(() => {
+    setPositions((prev) => {
+      const next =
+        mode === 'focus'
+          ? layoutFocusedCluster(built.nodes, prev, { force: true })
+          : layoutAgentOverview(built.nodes, prev, { force: true })
+      savePositions(next)
+      return next
+    })
+  }, [built.nodes, mode])
+
+  const resetLayout = useCallback(() => {
+    clearSavedPositions()
+    const next =
+      mode === 'focus'
+        ? layoutFocusedCluster(built.nodes, {}, { force: true })
+        : layoutAgentOverview(built.nodes, {}, { force: true })
+    savePositions(next)
+    setPositions(next)
+  }, [built.nodes, mode])
+
+  useEffect(() => {
+    if (!flowRef.current || built.nodes.length === 0) return
+    const handle = window.setTimeout(() => {
+      flowRef.current?.fitView({
+        padding: mode === 'focus' ? 0.2 : 0.22,
+        maxZoom: mode === 'focus' ? 1.02 : 1.05,
+        duration: 360,
+      })
+    }, 80)
+    return () => window.clearTimeout(handle)
+  }, [built.nodes.length, focusedAgentId, mode])
 
   // Apply selection ring to nodes. Merge into RF's draft (the one held in
   // `nodes`), not into `built.nodes`, so dragged positions aren't clobbered.
@@ -424,23 +351,15 @@ export function WorkspaceCanvas({
       // Individual resource selections don't map to a canvas node (the pill
       // lives inside a group card), so we highlight that group instead.
       case 'skill':
-        return groupNodeId('skill', selection.agentId)
+        return focusedAgentId ? agentNodeId(selection.agentId) : null
       case 'tool':
-        return groupNodeId('tool', selection.agentId)
-      case 'repo': {
-        const owner = findAgentWithRepo(workspace, selection.id)
-        return owner ? groupNodeId('repo', owner) : null
-      }
-      case 'mcp': {
-        const owner = findAgentWithMcp(workspace, selection.id)
-        return owner ? groupNodeId('mcp', owner) : null
-      }
-      case 'llm': {
-        const owner = findAgentWithLlm(workspace, selection.id)
-        return owner ? groupNodeId('llm', owner) : null
-      }
+        return focusedAgentId ? agentNodeId(selection.agentId) : null
+      case 'repo':
+      case 'mcp':
+      case 'llm':
+        return focusedAgentId ? agentNodeId(focusedAgentId) : null
     }
-  }, [selection, workspace])
+  }, [focusedAgentId, selection])
 
   const decoratedNodes = useMemo(
     () =>
@@ -538,67 +457,22 @@ export function WorkspaceCanvas({
       onConnect={onConnect}
       onNodeClick={handleNodeClick}
       onPaneClick={handlePaneClick}
+      onInit={(instance) => {
+        flowRef.current = instance
+      }}
       fitView
       fitViewOptions={{ padding: 0.25, maxZoom: 1.1 }}
       proOptions={{ hideAttribution: true }}
     >
       <Background variant={BackgroundVariant.Dots} gap={20} size={1.2} />
       <Controls showInteractive={false} />
-      <MiniMap
-        pannable
-        zoomable
-        style={{ background: 'var(--bg-2)' }}
-        nodeColor={(n) => nodeAccent(n.id)}
-        nodeStrokeWidth={2}
+      <CanvasToolbar
+        mode={mode}
+        canExitFocus={focusedAgentId !== null}
+        onOverview={() => onFocusAgent(null)}
+        onOrganize={organize}
+        onResetLayout={resetLayout}
       />
     </ReactFlow>
   )
-}
-
-// ─── Helpers ──────────────────────────────────────────────────────────────
-
-function findAgentWithRepo(
-  workspace: WorkspaceContextValue,
-  repoId: string,
-): string | null {
-  for (const [agentId, res] of Object.entries(workspace.agentResources)) {
-    if (res.attachedRepos.some((a) => a.repo.id === repoId)) return agentId
-  }
-  return null
-}
-
-function findAgentWithMcp(
-  workspace: WorkspaceContextValue,
-  mcpId: string,
-): string | null {
-  for (const [agentId, res] of Object.entries(workspace.agentResources)) {
-    if (
-      res.mcpAllowlist.some(
-        (e) => e.enabled && e.mcpConnectionId === mcpId,
-      )
-    ) {
-      return agentId
-    }
-  }
-  return null
-}
-
-function findAgentWithLlm(
-  workspace: WorkspaceContextValue,
-  llmId: string,
-): string | null {
-  for (const agent of workspace.agents) {
-    if (agent.llmProviderId === llmId) return agent.id
-  }
-  return null
-}
-
-function nodeAccent(id: string): string {
-  if (id.startsWith('agent:')) return '#8b5cf6'
-  if (id.startsWith('group:skill:')) return '#34d399'
-  if (id.startsWith('group:tool:')) return '#38bdf8'
-  if (id.startsWith('group:repo:')) return '#f97316'
-  if (id.startsWith('group:mcp:')) return '#fb7185'
-  if (id.startsWith('group:llm:')) return '#fbbf24'
-  return '#64748b'
 }

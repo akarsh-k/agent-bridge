@@ -1,112 +1,162 @@
 /**
- * Canvas layout helpers — dagre-based auto-layout + localStorage persistence.
+ * Canvas layout helpers — deterministic canvas layout + localStorage
+ * persistence.
  *
  * Why:
- *   - The global canvas has up to ~6 node kinds and dozens of edges. Dropping
- *     everything at (0,0) is unreadable; hand-placing every node every render
- *     is wasteful. Dagre gives a clean left-to-right flow layout in O(n²)
- *     with zero configuration.
+ *   - The workspace has two UX states:
+ *       1. overview: one card per agent, arranged in a predictable grid.
+ *       2. focus: one agent plus its local resource groups in stable slots.
+ *     Generic graph layout made new agents hard to find; deterministic slots
+ *     make creation and recovery predictable.
  *   - Users drag nodes to their preferred spots. Those drags must survive a
  *     reload, so we persist positions keyed by the node id.
  *
  * The policy:
- *   - On first render of a never-seen node, we auto-layout the whole graph
- *     and commit every un-placed node's position.
- *   - Subsequent renders respect saved positions verbatim. Nodes that were
- *     laid out previously but aren't in `existing` yet (because this is the
- *     first time the user sees them) are placed via dagre and saved.
+ *   - First sight of a node gets a deterministic slot.
+ *   - User drags win after that and persist.
+ *   - "Organize" reapplies deterministic slots for the current mode.
  *   - Deleted nodes stay in the position map — cheap, and lets the user
  *     re-add without shuffling. We don't prune aggressively.
  *
  * Storage:
- *   - `localStorage` under a versioned key (`ab:positions:v1`). If the
+ *   - `localStorage` under a versioned key (`ab:positions:v2`). If the
  *     stored JSON doesn't parse or shape-match, we silently fall back to
  *     an empty map — better than throwing on every mount.
  */
 
-import dagre from '@dagrejs/dagre'
-import type { Edge, Node, XYPosition } from '@xyflow/react'
+import type { Node, XYPosition } from '@xyflow/react'
 
 export type PositionMap = Record<string, XYPosition>
 
-const STORAGE_KEY = 'ab:positions:v1'
+const STORAGE_KEY = 'ab:positions:v2'
 
 /**
  * Per-kind bounding box used by dagre and by the grid spacing. These match
  * the CSS `.node-*` card sizes — if you resize those, update here too.
  */
 export const NODE_SIZES = {
-  agent: { width: 240, height: 136 },
+  agent: { width: 300, height: 230 },
   // Group cards hold stacked mini-cards inside; they're wider and taller
   // than they used to be as pills. Height is an estimate for Dagre —
   // actual DOM height scales with item count.
-  group: { width: 300, height: 220 },
+  group: { width: 280, height: 200 },
   unknown: { width: 200, height: 80 },
 } as const
 
-type NodeKind = keyof typeof NODE_SIZES
+const OVERVIEW_GRID = {
+  startX: 72,
+  startY: 88,
+  colGap: 380,
+  rowGap: 285,
+  columns: 3,
+} as const
 
-/**
- * Infer the kind from the node id prefix. The WorkspaceCanvas uses prefixed
- * ids (`agent:<uuid>`, `group:<kind>:<uuid>`) so this stays O(1) without
- * having to plumb a `type` discriminator into the layout call.
- */
-function kindOf(nodeId: string): NodeKind {
-  const colon = nodeId.indexOf(':')
-  if (colon <= 0) return 'unknown'
-  const prefix = nodeId.slice(0, colon)
-  if (prefix in NODE_SIZES) return prefix as NodeKind
-  return 'unknown'
+const CREATE_AGENT_NODE_ID = 'create-agent'
+
+function isOverviewGridNode(id: string): boolean {
+  return id.startsWith('agent:') || id === CREATE_AGENT_NODE_ID
+}
+
+const FOCUS_ANCHOR: XYPosition = { x: 0, y: 0 }
+
+const FOCUS_GROUP_OFFSETS: Record<string, XYPosition> = {
+  llm: { x: -390, y: -180 },
+  mcp: { x: -390, y: 120 },
+  skill: { x: 360, y: -220 },
+  tool: { x: 360, y: 40 },
+  repo: { x: 360, y: 300 },
+}
+
+function overviewPosition(slot: number): XYPosition {
+  const col = slot % OVERVIEW_GRID.columns
+  const row = Math.floor(slot / OVERVIEW_GRID.columns)
+  return {
+    x: OVERVIEW_GRID.startX + col * OVERVIEW_GRID.colGap,
+    y: OVERVIEW_GRID.startY + row * OVERVIEW_GRID.rowGap,
+  }
+}
+
+function overviewSlotForPosition(pos: XYPosition): number | null {
+  const col = (pos.x - OVERVIEW_GRID.startX) / OVERVIEW_GRID.colGap
+  const row = (pos.y - OVERVIEW_GRID.startY) / OVERVIEW_GRID.rowGap
+  if (!Number.isInteger(col) || !Number.isInteger(row)) return null
+  if (col < 0 || row < 0 || col >= OVERVIEW_GRID.columns) return null
+  return row * OVERVIEW_GRID.columns + col
 }
 
 /**
- * Radial offsets applied when seeding a group node's initial position
- * relative to its parent agent. Each kind gets a stable "slot" around the
- * agent so the canvas stays readable even with many agents present.
- *
- * Numbers are tuned so five groups fit around one agent (240 wide) without
- * overlap, assuming the group card is ~300 wide and can grow tall as more
- * items are stacked inside it.
+ * Deterministic overview grid. Existing positions are respected unless
+ * `force` is true (used by the "Organize" toolbar button).
  */
-const GROUP_OFFSETS: Record<string, { dx: number; dy: number }> = {
-  skill: { dx: 380, dy: -150 },
-  tool: { dx: 380, dy: 140 },
-  repo: { dx: 0, dy: 300 },
-  mcp: { dx: -380, dy: 140 },
-  llm: { dx: -380, dy: -150 },
-}
-
-/**
- * Seed any missing group-node positions relative to their parent agent.
- * This is what stops newly-created skills/tools/etc. from landing at
- * (0, 0) or in Dagre-coordinate space that's nowhere near the user's
- * current viewport.
- *
- * Group node id shape: `group:<kind>:<agentId>`.
- * Only seeds when the parent agent already has a saved position; otherwise
- * the caller's Dagre pass will handle it.
- */
-export function seedGroupPositions(
+export function layoutAgentOverview(
   nodes: readonly Node[],
   existing: PositionMap,
+  opts: { readonly force?: boolean } = {},
 ): PositionMap {
-  let out: PositionMap | null = null
-  for (const n of nodes) {
-    if (existing[n.id]) continue
-    if (!n.id.startsWith('group:')) continue
-    const rest = n.id.slice('group:'.length)
-    const sep = rest.indexOf(':')
-    if (sep <= 0) continue
-    const groupKind = rest.slice(0, sep)
-    const agentId = rest.slice(sep + 1)
-    const agentPos = existing[`agent:${agentId}`]
-    if (!agentPos) continue
-    const offset = GROUP_OFFSETS[groupKind]
-    if (!offset) continue
-    if (!out) out = { ...existing }
-    out[n.id] = { x: agentPos.x + offset.dx, y: agentPos.y + offset.dy }
+  const out: PositionMap = { ...existing }
+  const agents = nodes.filter((n) => isOverviewGridNode(n.id))
+  const occupiedSlots = new Set<number>()
+
+  if (!opts.force) {
+    for (const n of agents) {
+      const pos = out[n.id]
+      if (!pos) continue
+      const slot = overviewSlotForPosition(pos)
+      if (slot !== null) occupiedSlots.add(slot)
+    }
   }
-  return out ?? existing
+
+  let nextSlot = 0
+  for (let i = 0; i < agents.length; i += 1) {
+    const n = agents[i]
+    if (!n) continue
+    if (!opts.force && out[n.id]) continue
+
+    const slot = opts.force ? i : nextFreeOverviewSlot(occupiedSlots, nextSlot)
+    out[n.id] = overviewPosition(slot)
+    occupiedSlots.add(slot)
+    nextSlot = slot + 1
+  }
+  return out
+}
+
+function nextFreeOverviewSlot(
+  occupied: ReadonlySet<number>,
+  start: number,
+): number {
+  let slot = start
+  while (occupied.has(slot)) slot += 1
+  return slot
+}
+
+/**
+ * Focused agent cluster. The agent keeps its persisted position unless
+ * forced; resource groups occupy stable slots around it.
+ */
+export function layoutFocusedCluster(
+  nodes: readonly Node[],
+  existing: PositionMap,
+  opts: { readonly force?: boolean } = {},
+): PositionMap {
+  const out: PositionMap = { ...existing }
+  const agent = nodes.find((n) => n.id.startsWith('agent:'))
+  if (!agent) return out
+
+  const savedAnchor = out[agent.id]
+  const anchor: XYPosition =
+    !opts.force && savedAnchor ? savedAnchor : FOCUS_ANCHOR
+  out[agent.id] = anchor
+
+  for (const n of nodes) {
+    if (!n.id.startsWith('group:')) continue
+    if (!opts.force && out[n.id]) continue
+    const groupKind = n.id.slice('group:'.length).split(':', 1)[0]
+    if (!groupKind) continue
+    const offset = FOCUS_GROUP_OFFSETS[groupKind]
+    if (!offset) continue
+    out[n.id] = { x: anchor.x + offset.x, y: anchor.y + offset.y }
+  }
+  return out
 }
 
 // ─── Persistence ──────────────────────────────────────────────────────────
@@ -147,70 +197,18 @@ export function savePositions(map: PositionMap): void {
   }
 }
 
-// ─── Auto-layout ──────────────────────────────────────────────────────────
-
-/**
- * Compute positions for any nodes that don't already have one in `existing`.
- * Returns a merged position map (caller is expected to save it).
- *
- * Nodes that are already placed stay put — dagre is only consulted for the
- * newcomers, but it needs the full graph to place them coherently. That's
- * why we feed every node/edge in and then overlay `existing` afterward.
- */
-export function autoLayout(
-  nodes: readonly Node[],
-  edges: readonly Edge[],
-  existing: PositionMap,
-): PositionMap {
-  const g = new dagre.graphlib.Graph<Record<string, unknown>>()
-  g.setGraph({
-    rankdir: 'LR',
-    nodesep: 36,
-    ranksep: 96,
-    marginx: 32,
-    marginy: 32,
-  })
-  g.setDefaultEdgeLabel(() => ({}))
-
-  for (const n of nodes) {
-    const size = NODE_SIZES[kindOf(n.id)]
-    g.setNode(n.id, { width: size.width, height: size.height })
-  }
-  for (const e of edges) {
-    g.setEdge(e.source, e.target)
-  }
-
+export function clearSavedPositions(): void {
+  if (typeof window === 'undefined') return
   try {
-    dagre.layout(g)
+    window.localStorage.removeItem(STORAGE_KEY)
   } catch {
-    // Dagre occasionally throws on degenerate graphs (single node, etc).
-    // Fall back to a simple grid so the canvas never breaks.
-    return fallbackGrid(nodes, existing)
+    // Same posture as savePositions: layout persistence is optional.
   }
-
-  const out: PositionMap = {}
-  for (const n of nodes) {
-    const saved = existing[n.id]
-    if (saved) {
-      out[n.id] = saved
-      continue
-    }
-    const laid = g.node(n.id) as { x: number; y: number } | undefined
-    if (!laid) {
-      out[n.id] = { x: 0, y: 0 }
-      continue
-    }
-    // Dagre returns the centre; React Flow uses the top-left corner.
-    const size = NODE_SIZES[kindOf(n.id)]
-    out[n.id] = {
-      x: laid.x - size.width / 2,
-      y: laid.y - size.height / 2,
-    }
-  }
-  return out
 }
 
-function fallbackGrid(
+// ─── Compatibility fallback ───────────────────────────────────────────────
+
+export function fallbackGrid(
   nodes: readonly Node[],
   existing: PositionMap,
 ): PositionMap {
@@ -224,4 +222,11 @@ function fallbackGrid(
     i += 1
   }
   return out
+}
+
+export function positionForNode(
+  nodeId: string,
+  positions: PositionMap,
+): XYPosition | null {
+  return positions[nodeId] ?? null
 }

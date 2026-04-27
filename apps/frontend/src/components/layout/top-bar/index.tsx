@@ -7,8 +7,8 @@
  *     an Escape hint when a focus is active.
  *   - `+ New agent` primary action — POSTs straight away (no modal) and
  *     navigates so the new node is both focused and selected.
- *   - Inspector + Activity rail toggles. The Activity button has a green
- *     pulse when the SSE stream is open.
+ *   - Inspector, Chat, and Activity work-panel toggles. The Activity button
+ *     has a green pulse when the SSE stream is open.
  */
 
 import { useCallback, useState } from 'react'
@@ -19,7 +19,7 @@ import { navigate } from '../../../lib/router'
 
 import './index.css'
 
-type RailTab = 'inspector' | 'activity'
+type RailTab = 'inspector' | 'chat' | 'activity'
 
 function draftDefaults(existing: ReadonlySet<string>) {
   const base = `agent-${Date.now().toString(36).slice(-6)}`
@@ -123,47 +123,67 @@ export function TopBar({
           onClick={() => void handleCreate()}
           disabled={creating}
         >
-          <span aria-hidden="true">＋</span>
+          <span className="icon-plus" aria-hidden="true" />
           <span>{creating ? 'Creating…' : 'New agent'}</span>
         </button>
 
-        <span className="topbar-divider" aria-hidden="true" />
+        {focusedAgent ? (
+          <>
+            <span className="topbar-divider" aria-hidden="true" />
 
-        <button
-          type="button"
-          className="topbar-btn"
-          aria-pressed={railOpen && activeTab === 'inspector'}
-          onClick={() => {
-            if (railOpen && activeTab === 'inspector') onToggleRail()
-            else {
-              onSetTab('inspector')
-              if (!railOpen) onToggleRail()
-            }
-          }}
-        >
-          <span aria-hidden="true">⚙︎</span>
-          <span>Inspector</span>
-        </button>
+            <button
+              type="button"
+              className="topbar-btn"
+              aria-pressed={railOpen && activeTab === 'inspector'}
+              onClick={() => {
+                if (railOpen && activeTab === 'inspector') onToggleRail()
+                else {
+                  onSetTab('inspector')
+                  if (!railOpen) onToggleRail()
+                }
+              }}
+            >
+              <span aria-hidden="true">⚙︎</span>
+              <span>Inspector</span>
+            </button>
 
-        <button
-          type="button"
-          className="topbar-btn"
-          aria-pressed={railOpen && activeTab === 'activity'}
-          onClick={() => {
-            if (railOpen && activeTab === 'activity') onToggleRail()
-            else {
-              onSetTab('activity')
-              if (!railOpen) onToggleRail()
-            }
-          }}
-          title={liveConnected ? 'Activity stream connected' : 'Activity'}
-        >
-          <span
-            className={`topbar-btn-dot${liveConnected ? ' live' : ''}`}
-            aria-hidden="true"
-          />
-          <span>Activity</span>
-        </button>
+            <button
+              type="button"
+              className="topbar-btn"
+              aria-pressed={railOpen && activeTab === 'chat'}
+              onClick={() => {
+                if (railOpen && activeTab === 'chat') onToggleRail()
+                else {
+                  onSetTab('chat')
+                  if (!railOpen) onToggleRail()
+                }
+              }}
+            >
+              <span aria-hidden="true">#</span>
+              <span>Chat</span>
+            </button>
+
+            <button
+              type="button"
+              className="topbar-btn"
+              aria-pressed={railOpen && activeTab === 'activity'}
+              onClick={() => {
+                if (railOpen && activeTab === 'activity') onToggleRail()
+                else {
+                  onSetTab('activity')
+                  if (!railOpen) onToggleRail()
+                }
+              }}
+              title={liveConnected ? 'Activity stream connected' : 'Activity'}
+            >
+              <span
+                className={`topbar-btn-dot${liveConnected ? ' live' : ''}`}
+                aria-hidden="true"
+              />
+              <span>Activity</span>
+            </button>
+          </>
+        ) : null}
       </div>
     </header>
   )

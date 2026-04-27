@@ -15,7 +15,7 @@
  *     on purpose, so the user can tweak a node's inspector without it
  *     resetting on URL change.
  *   - One `useSSE` subscription lives here and is shared with the TopBar's
- *     "live" dot and the RightRail's Activity tab.
+ *     "live" dot and the right work panel's Activity tab.
  */
 
 import { useCallback, useEffect, useState } from 'react'
@@ -25,13 +25,21 @@ import { matchAgentDetail, navigate, usePathname } from './lib/router'
 import { useSSE } from './lib/use-sse'
 import { TopBar } from './components/layout/top-bar'
 import { RightRail } from './components/layout/right-rail'
-import { ChatPanel } from './components/chat/chat-panel'
+import {
+  AddResourcePanel,
+  type AddResourceKind,
+} from './components/agent-workspace/add-resource-panel'
+import { ResourceTray } from './components/agent-workspace/resource-tray'
 import {
   WorkspaceCanvas,
   type WorkspaceSelection,
 } from './components/canvas/workspace-canvas'
 
-type RailTab = 'inspector' | 'activity'
+type RailTab = 'inspector' | 'chat' | 'activity'
+type AddPanelState = null | {
+  readonly agentId: string
+  readonly kind?: AddResourceKind
+}
 
 function LoadingOverlay() {
   return (
@@ -82,8 +90,8 @@ function EmptyOverlay({
         </div>
         <div className="overlay-title">Build your first agent</div>
         <div className="overlay-subtitle">
-          Agents orchestrate skills, tools, and repositories. Drop one onto
-          the canvas to start wiring it up.
+          Agents orchestrate skills, tools, and repositories. Drop one onto the
+          canvas to start wiring it up.
         </div>
         {error ? (
           <div className="banner banner-error" role="alert">
@@ -96,7 +104,7 @@ function EmptyOverlay({
           onClick={onCreate}
           disabled={creating}
         >
-          <span aria-hidden="true">＋</span>
+          <span className="icon-plus" aria-hidden="true" />
           <span>{creating ? 'Creating…' : 'New agent'}</span>
         </button>
       </div>
@@ -110,8 +118,9 @@ function Workspace() {
   const { agents, createAgent, status, error } = workspace
 
   const [selection, setSelection] = useState<WorkspaceSelection>(null)
-  const [railOpen, setRailOpen] = useState(true)
+  const [railOpen, setRailOpen] = useState(false)
   const [railTab, setRailTab] = useState<RailTab>('inspector')
+  const [addPanel, setAddPanel] = useState<AddPanelState>(null)
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
 
@@ -143,6 +152,9 @@ function Workspace() {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
       if (focusedAgentId) {
+        setSelection(null)
+        setRailOpen(false)
+        setRailTab('inspector')
         navigate('/')
       } else if (selection) {
         setSelection(null)
@@ -152,21 +164,69 @@ function Workspace() {
     return () => window.removeEventListener('keydown', onKey)
   }, [focusedAgentId, selection])
 
+  // Selecting a canvas object should reveal its inspector.
+  useEffect(() => {
+    if (!selection) return
+    let active = true
+    ;(async () => {
+      await Promise.resolve()
+      if (!active) return
+      setRailTab('inspector')
+      setRailOpen(true)
+    })()
+    return () => {
+      active = false
+    }
+  }, [selection])
+
   // Activity stream id = focused agent (phases 2+ may broaden this).
   const streamId = focusedAgent?.id ?? null
   const { connected, events } = useSSE(streamId, { cap: 200 })
+  const activeRailTab: RailTab =
+    focusedAgent || railTab !== 'chat' ? railTab : 'inspector'
+  const workPanelOpen = focusedAgent !== null && railOpen
 
   const handleToggleRail = useCallback(() => setRailOpen((v) => !v), [])
   const handleSetTab = useCallback((t: RailTab) => setRailTab(t), [])
   const handleExitFocus = useCallback(() => {
     setSelection(null)
+    setRailOpen(false)
+    setRailTab('inspector')
     navigate('/')
   }, [])
 
   const handleFocusAgent = useCallback((id: string | null) => {
-    if (id) navigate(`/agents/${id}`)
-    else navigate('/')
+    if (id) {
+      navigate(`/agents/${id}`)
+      return
+    }
+    setSelection(null)
+    setRailOpen(false)
+    setRailTab('inspector')
+    navigate('/')
   }, [])
+
+  const handleOpenAddResource = useCallback(
+    (agentId: string, kind?: AddResourceKind) => {
+      setAddPanel(kind ? { agentId, kind } : { agentId })
+    },
+    [],
+  )
+
+  const handleRemoveAgent = useCallback(
+    async (agentId: string) => {
+      await workspace.removeAgent(agentId)
+      setSelection((current) =>
+        current?.kind === 'agent' && current.id === agentId ? null : current,
+      )
+      if (focusedAgentId === agentId) {
+        setRailOpen(false)
+        setRailTab('inspector')
+        navigate('/')
+      }
+    },
+    [focusedAgentId, workspace],
+  )
 
   const handleCreateAgent = useCallback(async () => {
     setCreateError(null)
@@ -189,63 +249,82 @@ function Workspace() {
     }
   }, [agents, createAgent])
 
+  const addPanelAgent = addPanel
+    ? (workspace.getAgent(addPanel.agentId) ?? focusedAgent)
+    : null
+
   return (
     <div className="shell">
       <div className="shell-main">
         <TopBar
           focusedAgent={focusedAgent}
-          railOpen={railOpen}
-          activeTab={railTab}
+          railOpen={workPanelOpen}
+          activeTab={activeRailTab}
           liveConnected={connected}
           onToggleRail={handleToggleRail}
           onSetTab={handleSetTab}
           onExitFocus={handleExitFocus}
         />
 
-        <div className="main-area">
-          <div className="main-area-canvas">
-            <WorkspaceCanvas
-              workspace={workspace}
-              focusedAgentId={focusedAgentId}
-              selection={selection}
-              onSelect={setSelection}
-              onFocusAgent={handleFocusAgent}
-            />
+        <div className={`main-area${focusedAgent ? ' is-focused' : ''}`}>
+          <div className="agent-workspace-primary">
+            <div className="main-area-canvas">
+              <WorkspaceCanvas
+                workspace={workspace}
+                focusedAgentId={focusedAgentId}
+                selection={selection}
+                onSelect={setSelection}
+                onFocusAgent={handleFocusAgent}
+                onOpenAddResource={handleOpenAddResource}
+                onRemoveAgent={handleRemoveAgent}
+                onCreateAgent={handleCreateAgent}
+                creatingAgent={creating}
+              />
 
-            {status === 'loading' ? <LoadingOverlay /> : null}
-            {status === 'error' && error ? (
-              <ErrorOverlay message={error.message} />
-            ) : null}
-            {status === 'ready' && agents.length === 0 ? (
-              <EmptyOverlay
-                onCreate={() => void handleCreateAgent()}
-                creating={creating}
-                error={createError}
+              {status === 'loading' ? <LoadingOverlay /> : null}
+              {status === 'error' && error ? (
+                <ErrorOverlay message={error.message} />
+              ) : null}
+              {status === 'ready' && agents.length === 0 ? (
+                <EmptyOverlay
+                  onCreate={() => void handleCreateAgent()}
+                  creating={creating}
+                  error={createError}
+                />
+              ) : null}
+            </div>
+
+            {focusedAgent ? (
+              <ResourceTray
+                agent={focusedAgent}
+                workspace={workspace}
+                onSelect={setSelection}
+                onAdd={(kind) => handleOpenAddResource(focusedAgent.id, kind)}
               />
             ) : null}
           </div>
-
-          {focusedAgent ? (
-            <aside
-              className="main-area-chat"
-              aria-label={`Chat with ${focusedAgent.name}`}
-            >
-              <ChatPanel agent={focusedAgent} />
-            </aside>
-          ) : null}
         </div>
 
         <RightRail
-          collapsed={!railOpen}
-          tab={railTab}
+          collapsed={!workPanelOpen}
+          tab={activeRailTab}
           onTabChange={setRailTab}
           workspace={workspace}
           selection={selection}
           onSelect={setSelection}
+          focusedAgent={focusedAgent}
           activityStreamId={streamId}
           activityEvents={events}
           activityConnected={connected}
         />
+
+        {addPanel && addPanelAgent ? (
+          <AddResourcePanel
+            agent={addPanelAgent}
+            initialKind={addPanel.kind}
+            onClose={() => setAddPanel(null)}
+          />
+        ) : null}
       </div>
     </div>
   )

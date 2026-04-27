@@ -96,20 +96,13 @@ export function GroupNode({ data, selected }: NodeProps) {
       <Handle type="target" position={Position.Left} />
 
       <div className="node-group-header">
-        <span
-          className={`node-kind node-kind-${groupKind}`}
-          aria-hidden="true"
-        >
+        <span className={`node-kind node-kind-${groupKind}`} aria-hidden="true">
           {meta.glyph}
         </span>
         <div className="node-group-title">
           <div className="node-group-label">{headerLabel}</div>
           <div className="node-group-count">
-            {count === 0
-              ? 'empty'
-              : count === 1
-                ? '1 item'
-                : `${count} items`}
+            {count === 0 ? 'empty' : count === 1 ? '1 item' : `${count} items`}
           </div>
         </div>
       </div>
