@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { AgentResponse } from '@agent-bridge/shared'
+import { useWorkspace } from '../../../lib/workspace-context'
 import { SkillForm } from './skill-form'
 import { ToolForm } from './tool-form'
 import { RepoPicker } from './repo-picker'
@@ -59,6 +60,11 @@ export function AddResourcePanel({
   readonly onClose: () => void
 }) {
   const [view, setView] = useState<PanelView>(initialKind ?? 'skill')
+  const workspace = useWorkspace()
+  const attachmentSummary = useMemo(
+    () => buildAttachmentSummary(agent, workspace),
+    [agent, workspace],
+  )
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -75,6 +81,7 @@ export function AddResourcePanel({
   }, [view])
 
   const closeAfterDone = useCallback(() => onClose(), [onClose])
+  const keepOpenAfterDone = useCallback(() => {}, [])
 
   return (
     <div
@@ -94,22 +101,46 @@ export function AddResourcePanel({
             <div className="add-resource-eyebrow">Add to agent</div>
             <h2>{agent.name}</h2>
             <p>
-              Pick what you want to attach. The form opens here with enough
-              space, then returns you to the agent workspace.
+              Add the context and capabilities this agent should use. Current
+              attachments are shown here so you can see what is already wired.
             </p>
           </div>
           <button
             type="button"
             className="add-resource-close"
             aria-label="Close"
+            title="Close"
             onClick={onClose}
           >
-            x
+            <span aria-hidden="true" />
           </button>
         </header>
 
         <div className="add-resource-body">
           <nav className="add-resource-nav" aria-label="Resource type">
+            <div className="add-resource-attached">
+              <div className="add-resource-attached-head">
+                <span>Attached now</span>
+                <strong>{attachmentSummary.total}</strong>
+              </div>
+              <div className="add-resource-attached-grid">
+                {attachmentSummary.items.map((item) => (
+                  <div key={item.kind} className="add-resource-attached-item">
+                    <span
+                      className={`add-resource-attached-dot ${item.kind}`}
+                      aria-hidden="true"
+                    />
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </div>
+                ))}
+              </div>
+              <div className="add-resource-attached-llm">
+                <span>LLM</span>
+                <strong>{attachmentSummary.llmLabel}</strong>
+              </div>
+            </div>
+
             {KINDS.map((item) => (
               <button
                 key={item.kind}
@@ -125,6 +156,9 @@ export function AddResourcePanel({
                 <span>
                   <span className="add-resource-nav-title">{item.title}</span>
                   <span className="add-resource-nav-hint">{item.hint}</span>
+                </span>
+                <span className="add-resource-nav-count">
+                  {attachmentSummary.counts[item.kind]}
                 </span>
               </button>
             ))}
@@ -173,7 +207,7 @@ export function AddResourcePanel({
             <RepoPicker
               agentId={agent.id}
               onCreateNew={() => setView('repo-new')}
-              onDone={closeAfterDone}
+              onDone={keepOpenAfterDone}
             />
           </PanelSection>
         )
@@ -200,7 +234,7 @@ export function AddResourcePanel({
             <LlmPicker
               agentId={agent.id}
               onCreateNew={() => setView('llm-new')}
-              onDone={closeAfterDone}
+              onDone={keepOpenAfterDone}
             />
           </PanelSection>
         )
@@ -222,6 +256,43 @@ export function AddResourcePanel({
   }
 }
 
+function buildAttachmentSummary(
+  agent: AgentResponse,
+  workspace: ReturnType<typeof useWorkspace>,
+) {
+  const resources = workspace.agentResources[agent.id]
+  const mcpIds = new Set<string>()
+  for (const entry of resources?.mcpAllowlist ?? []) {
+    if (entry.enabled) mcpIds.add(entry.mcpConnectionId)
+  }
+
+  const llmProvider = agent.llmProviderId
+    ? workspace.llmProviders.find((provider) => provider.id === agent.llmProviderId)
+    : null
+
+  const counts = {
+    skill: resources?.skills.length ?? 0,
+    tool: resources?.tools.length ?? 0,
+    repo: resources?.attachedRepos.length ?? 0,
+    llm: agent.llmProviderId ? 1 : 0,
+  } satisfies Record<AddResourceKind, number>
+
+  const items = [
+    { kind: 'skill', label: 'Skills', value: counts.skill },
+    { kind: 'tool', label: 'Tools', value: counts.tool },
+    { kind: 'repo', label: 'Repos', value: counts.repo },
+    { kind: 'mcp', label: 'MCP', value: mcpIds.size },
+  ]
+
+  return {
+    counts,
+    items,
+    llmLabel: llmProvider?.label ?? 'Not set',
+    total:
+      counts.skill + counts.tool + counts.repo + counts.llm + mcpIds.size,
+  }
+}
+
 function PanelSection({
   title,
   subtitle,
@@ -235,17 +306,20 @@ function PanelSection({
 }) {
   return (
     <div className="add-resource-section">
-      <div className="add-resource-section-head">
-        {onBack ? (
+      {onBack ? (
+        <div className="add-resource-section-nav">
           <button
             type="button"
             className="add-resource-back"
             onClick={onBack}
             aria-label="Back"
           >
-            Back
+            <span className="add-resource-back-icon" aria-hidden="true" />
+            <span>Back</span>
           </button>
-        ) : null}
+        </div>
+      ) : null}
+      <div className="add-resource-section-head">
         <div>
           <h3>{title}</h3>
           <p>{subtitle}</p>
