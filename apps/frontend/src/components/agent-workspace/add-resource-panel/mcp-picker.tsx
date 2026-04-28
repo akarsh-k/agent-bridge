@@ -43,6 +43,9 @@ type DiscoverPhase =
   | { kind: 'loaded'; tools: readonly DiscoveredMcpTool[]; message: string }
   | { kind: 'failed'; message: string }
 
+/** Inline description longer than this uses a collapsible block so rows stay compact. */
+const MCP_TOOL_DESC_COLLAPSE_LEN = 220
+
 export function McpPicker({
   agentId,
   onCreateNew,
@@ -314,13 +317,27 @@ export function McpPicker({
                                       <span className="mcp-picker-tool-name mono">
                                         {previewName}
                                       </span>
-                                      {tool.description ? (
+                                      {tool.description &&
+                                      tool.description.length <=
+                                        MCP_TOOL_DESC_COLLAPSE_LEN ? (
                                         <span className="mcp-picker-tool-desc">
                                           {tool.description}
                                         </span>
                                       ) : null}
                                     </span>
                                   </label>
+                                  {tool.description &&
+                                  tool.description.length >
+                                    MCP_TOOL_DESC_COLLAPSE_LEN ? (
+                                    <details className="mcp-picker-tool-desc-details">
+                                      <summary className="mcp-picker-tool-desc-summary">
+                                        Tool description
+                                      </summary>
+                                      <div className="mcp-picker-tool-desc mcp-picker-tool-desc-body">
+                                        {tool.description}
+                                      </div>
+                                    </details>
+                                  ) : null}
                                 </li>
                               )
                             })}
