@@ -171,7 +171,7 @@
    colour vocabulary as `.badge` variants for consistency with the right
    rail. In-flight states (`cloning`, `indexing`) pulse via @keyframes
    pulse (from tokens.css) so a user glancing at the canvas can tell
-   something is happening without needing to open the inspector. */
+   something is happening without needing to open details. */
 .node-group-item-status {
   width: 8px;
   height: 8px;

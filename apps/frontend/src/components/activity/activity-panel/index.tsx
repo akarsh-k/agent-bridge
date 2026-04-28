@@ -71,8 +71,8 @@ function formatPayload(event: RunEvent): string | null {
   if (event.data === undefined || event.data === null) return null
   if (typeof event.data === 'string') return event.data
   try {
-    const s = JSON.stringify(event.data)
-    return s.length > 240 ? `${s.slice(0, 240)}…` : s
+    const s = JSON.stringify(event.data, null, 2)
+    return s.length > 800 ? `${s.slice(0, 800)}…` : s
   } catch {
     return null
   }
@@ -126,10 +126,7 @@ export function ActivityPanel({
           </div>
         </div>
       ) : (
-        <ul
-          style={{ listStyle: 'none', padding: 0, margin: 0 }}
-          aria-label="Activity stream"
-        >
+        <ul className="activity-list" aria-label="Activity stream">
           {visible.map((event, i) => {
             const payload = formatPayload(event)
             return (
@@ -142,8 +139,12 @@ export function ActivityPanel({
                   {KIND_ICON[event.kind]}
                 </span>
                 <div className="activity-body">
-                  <span className="activity-ts">{formatTs(event.ts)}</span>
-                  <div className="activity-kind">{event.kind}</div>
+                  <div className="activity-row-head">
+                    <div className="activity-kind">{event.kind}</div>
+                    <time className="activity-ts" dateTime={new Date(event.ts).toISOString()}>
+                      {formatTs(event.ts)}
+                    </time>
+                  </div>
                   {payload ? (
                     <div className="activity-payload mono">{payload}</div>
                   ) : null}

@@ -19,7 +19,7 @@
  *   - Clicking the card chrome selects the group itself
  *     → right rail shows a list summary with click-through to each item.
  *   - Clicking an item selects the individual resource
- *     → right rail shows the resource's own inspector.
+ *     → right rail shows the resource's own details.
  *
  * The canvas routes those two cases by inspecting `event.target` inside
  * `onNodeClick` and looking for the `data-pill-id` attribute we set on

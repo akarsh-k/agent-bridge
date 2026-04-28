@@ -4,7 +4,7 @@ export interface CanvasToolbarProps {
   readonly mode: 'overview' | 'focus'
   readonly canExitFocus: boolean
   readonly onOverview: () => void
-  readonly onOrganize: () => void
+  readonly onFitView: () => void
   readonly onResetLayout: () => void
 }
 
@@ -12,7 +12,7 @@ export function CanvasToolbar({
   mode,
   canExitFocus,
   onOverview,
-  onOrganize,
+  onFitView,
   onResetLayout,
 }: CanvasToolbarProps) {
   const showLayoutActions = mode === 'overview'
@@ -29,8 +29,8 @@ export function CanvasToolbar({
       ) : null}
       {showLayoutActions ? (
         <>
-          <button type="button" className="canvas-toolbar-btn" onClick={onOrganize}>
-            Organize
+          <button type="button" className="canvas-toolbar-btn" onClick={onFitView}>
+            Fit view
           </button>
           <button
             type="button"

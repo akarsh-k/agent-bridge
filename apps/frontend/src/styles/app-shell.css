@@ -51,7 +51,7 @@
 }
 
 .main-area.is-focused .agent-workspace-primary {
-  grid-template-rows: minmax(280px, 1fr) minmax(220px, 32svh);
+  grid-template-rows: 1fr;
 }
 
 .main-area-canvas {

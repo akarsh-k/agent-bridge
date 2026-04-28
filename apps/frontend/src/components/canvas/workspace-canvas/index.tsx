@@ -39,7 +39,6 @@ import {
 import '@xyflow/react/dist/style.css'
 
 import type { WorkspaceContextValue } from '../../../lib/workspace-context'
-import type { AddResourceKind } from '../../agent-workspace/add-resource-panel'
 import {
   clearSavedPositions,
   layoutAgentOverview,
@@ -69,7 +68,6 @@ export interface WorkspaceCanvasProps {
   selection: WorkspaceSelection
   onSelect: (next: WorkspaceSelection) => void
   onFocusAgent: (id: string | null) => void
-  onOpenAddResource: (agentId: string, kind?: AddResourceKind) => void
   onRemoveAgent: (agentId: string) => Promise<void>
   onCreateAgent: () => Promise<void>
   creatingAgent?: boolean
@@ -94,6 +92,7 @@ const GROUP_KINDS: readonly GroupKind[] = [
   'mcp',
   'llm',
 ]
+const FOCUS_RESOURCE_RAIL_OFFSET = 170
 
 // ─── id helpers ───────────────────────────────────────────────────────────
 
@@ -156,7 +155,6 @@ function buildGraph(
   workspace: WorkspaceContextValue,
   focusedAgentId: string | null,
   positions: PositionMap,
-  onOpenAddResource: (agentId: string, kind?: AddResourceKind) => void,
   onRemoveAgent: (agentId: string) => Promise<void>,
   onCreateAgent: () => Promise<void>,
   creatingAgent: boolean | undefined,
@@ -192,7 +190,6 @@ function buildGraph(
         dimmed: isDimmed(aNid),
         mode,
         summary: summarizeAgent(res),
-        onOpenAddResource,
         onRemoveAgent,
       },
     })
@@ -223,7 +220,6 @@ export function WorkspaceCanvas({
   selection,
   onSelect,
   onFocusAgent,
-  onOpenAddResource,
   onRemoveAgent,
   onCreateAgent,
   creatingAgent,
@@ -242,7 +238,6 @@ export function WorkspaceCanvas({
         workspace,
         focusedAgentId,
         positions,
-        onOpenAddResource,
         onRemoveAgent,
         onCreateAgent,
         creatingAgent,
@@ -251,7 +246,6 @@ export function WorkspaceCanvas({
       workspace,
       focusedAgentId,
       positions,
-      onOpenAddResource,
       onRemoveAgent,
       onCreateAgent,
       creatingAgent,
@@ -306,16 +300,13 @@ export function WorkspaceCanvas({
     })
   }, [built.nodes, mode])
 
-  const organize = useCallback(() => {
-    setPositions((prev) => {
-      const next =
-        mode === 'focus'
-          ? layoutFocusedCluster(built.nodes, prev, { force: true })
-          : layoutAgentOverview(built.nodes, prev, { force: true })
-      savePositions(next)
-      return next
+  const fitVisibleNodes = useCallback(() => {
+    void flowRef.current?.fitView({
+      padding: mode === 'focus' ? 0.2 : 0.22,
+      maxZoom: mode === 'focus' ? 1.02 : 1.05,
+      duration: 260,
     })
-  }, [built.nodes, mode])
+  }, [mode])
 
   const resetLayout = useCallback(() => {
     clearSavedPositions()
@@ -330,9 +321,20 @@ export function WorkspaceCanvas({
   useEffect(() => {
     if (!flowRef.current || built.nodes.length === 0) return
     const handle = window.setTimeout(() => {
-      flowRef.current?.fitView({
-        padding: mode === 'focus' ? 0.2 : 0.22,
-        maxZoom: mode === 'focus' ? 1.02 : 1.05,
+      const instance = flowRef.current
+      if (!instance) return
+
+      if (mode === 'focus') {
+        void instance.setCenter(150 - FOCUS_RESOURCE_RAIL_OFFSET / 2, 115, {
+          zoom: 1.02,
+          duration: 260,
+        })
+        return
+      }
+
+      void instance.fitView({
+        padding: 0.22,
+        maxZoom: 1.05,
         duration: 360,
       })
     }, 80)
@@ -470,7 +472,7 @@ export function WorkspaceCanvas({
         mode={mode}
         canExitFocus={focusedAgentId !== null}
         onOverview={() => onFocusAgent(null)}
-        onOrganize={organize}
+        onFitView={fitVisibleNodes}
         onResetLayout={resetLayout}
       />
     </ReactFlow>

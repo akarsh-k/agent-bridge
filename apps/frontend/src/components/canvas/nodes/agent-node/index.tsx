@@ -9,8 +9,6 @@
 import { useState, type MouseEvent } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import type { AgentResponse } from '@agent-bridge/shared'
-import type { AddResourceKind } from '../../../agent-workspace/add-resource-panel'
-import { AgentQuickAdd } from '../../agent-quick-add'
 
 import './index.css'
 
@@ -23,7 +21,6 @@ export interface AgentNodeData extends Record<string, unknown> {
     readonly repos: number
     readonly mcps: number
   }
-  onOpenAddResource?: (agentId: string, kind?: AddResourceKind) => void
   onRemoveAgent?: (agentId: string) => Promise<void>
   dimmed?: boolean
 }
@@ -34,8 +31,7 @@ function initials(name: string): string {
 }
 
 export function AgentNode({ data, selected }: NodeProps) {
-  const { agent, dimmed, mode, summary, onOpenAddResource, onRemoveAgent } =
-    data as AgentNodeData
+  const { agent, dimmed, mode, summary, onRemoveAgent } = data as AgentNodeData
   const showConnectors = mode === 'focus'
   const isReady = agent.llmProviderId !== null
   const [deleting, setDeleting] = useState(false)
@@ -111,13 +107,11 @@ export function AgentNode({ data, selected }: NodeProps) {
 
       <div className="node-agent-actions nodrag">
         <div className="node-agent-actions-primary">
-          {mode === 'focus' && onOpenAddResource ? (
-            <AgentQuickAdd agentId={agent.id} onOpen={onOpenAddResource} />
-          ) : (
-            <span className="node-agent-action-hint">
-              Click card to configure
-            </span>
-          )}
+          <span className="node-agent-action-hint">
+            {mode === 'focus'
+              ? 'Use the left rail to attach resources'
+              : 'Click card to configure'}
+          </span>
         </div>
         <div className="node-agent-actions-secondary">
           {onRemoveAgent ? (

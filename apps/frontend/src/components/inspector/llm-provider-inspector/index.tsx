@@ -70,7 +70,7 @@ export function LlmProviderInspector({
           <div className="rail-empty">
             <div className="rail-empty-title">No agents use this provider</div>
             <div className="rail-empty-hint">
-              Pick this provider from an agent's Inspector to link it.
+              Pick this provider from an agent's Details panel to link it.
             </div>
           </div>
         ) : (

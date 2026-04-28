@@ -1,8 +1,8 @@
 /**
- * Contextual right work panel. Hosts the Inspector, focused-agent Chat, and
+ * Contextual right work panel. Hosts Details, focused-agent Chat, and
  * Activity stream; only one is visible at a time via tabs.
  *
- * Inspector dispatch — the rail picks which form/card to render from the
+ * Details dispatch — the rail picks which form/card to render from the
  * tagged `WorkspaceSelection`:
  *   - agent  → `AgentInspector` (full edit)
  *   - group  → `GroupInspector` (list of items with click-through)
@@ -66,7 +66,7 @@ export function RightRail({
     <aside
       className={`right-rail right-rail-${tab}`}
       data-collapsed={collapsed ? 'true' : 'false'}
-      aria-label="Inspector, chat, and activity"
+      aria-label="Details, chat, and activity"
     >
       <header className="rail-header">
         <div>
@@ -75,7 +75,7 @@ export function RightRail({
           </div>
           <div className="rail-title">
             {tab === 'inspector'
-              ? 'Inspector'
+              ? detailsTitle(selection)
               : tab === 'chat'
                 ? 'Chat'
                 : 'Activity'}
@@ -105,7 +105,7 @@ export function RightRail({
           className="rail-tab"
           onClick={() => onTabChange('inspector')}
         >
-          Inspector
+          Details
         </button>
         {focusedAgent ? (
           <button
@@ -115,7 +115,7 @@ export function RightRail({
             className="rail-tab"
             onClick={() => onTabChange('chat')}
           >
-            Chat
+          Chat
           </button>
         ) : null}
         <button
@@ -125,6 +125,7 @@ export function RightRail({
           className="rail-tab"
           onClick={() => onTabChange('activity')}
         >
+          <span className="rail-tab-live-icon" aria-hidden="true" />
           Activity
           {activityEventCount > 0 ? (
             <span className="rail-tab-count">{activityEventCount}</span>
@@ -162,11 +163,11 @@ function renderInspector(
         <div className="rail-empty-title">
           {focusedAgentName
             ? `Select something for ${focusedAgentName}`
-            : 'Select an agent to inspect'}
+            : 'Select an agent to view details'}
         </div>
         <div className="rail-empty-hint">
           {focusedAgentName
-            ? 'Choose the agent card or one of its resources to edit configuration here.'
+            ? 'Choose the agent card or one of its resources to view and edit details here.'
             : 'Click an agent card to focus it, chat, and manage its resources.'}
         </div>
       </div>
@@ -258,6 +259,26 @@ function inspectorSubtitle(
       return 'MCP connection details'
     case 'llm':
       return 'LLM provider details'
+  }
+}
+
+function detailsTitle(selection: WorkspaceSelection): string {
+  if (!selection) return 'Details'
+  switch (selection.kind) {
+    case 'agent':
+      return 'Agent settings'
+    case 'group':
+      return `${selection.groupKind.toUpperCase()} resources`
+    case 'skill':
+      return 'Skill details'
+    case 'tool':
+      return 'Tool details'
+    case 'repo':
+      return 'Repository details'
+    case 'mcp':
+      return 'MCP details'
+    case 'llm':
+      return 'LLM provider'
   }
 }
 

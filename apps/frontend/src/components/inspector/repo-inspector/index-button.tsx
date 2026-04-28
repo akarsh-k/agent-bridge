@@ -75,7 +75,7 @@ export function IndexButton({
     <div className="inspector-repo-action">
       <button
         type="button"
-        className="btn btn-ghost btn-sm"
+        className="btn btn-ghost btn-sm repo-action-button"
         onClick={handleClick}
         disabled={disabled}
         title={

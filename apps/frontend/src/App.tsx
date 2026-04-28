@@ -11,8 +11,8 @@
  * State model:
  *   - URL is the single source of truth for `focusedAgentId`. `navigate()`
  *     moves it; clicking canvas background or pressing Esc goes back to `/`.
- *   - `selection` (inspector target) is local state — it survives a blur
- *     on purpose, so the user can tweak a node's inspector without it
+ *   - `selection` (details target) is local state — it survives a blur
+ *     on purpose, so the user can tweak a node's details without it
  *     resetting on URL change.
  *   - One `useSSE` subscription lives here and is shared with the TopBar's
  *     "live" dot and the right work panel's Activity tab.
@@ -147,10 +147,11 @@ function Workspace() {
     }
   }, [focusMatch, status, agents])
 
-  // ESC exits focus.
+  // ESC exits focus unless a modal is handling it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return
+      if (addPanel) return
       if (focusedAgentId) {
         setSelection(null)
         setRailOpen(false)
@@ -162,22 +163,24 @@ function Workspace() {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [focusedAgentId, selection])
+  }, [addPanel, focusedAgentId, selection])
 
-  // Selecting a canvas object should reveal its inspector.
+  // A selection updates Details, but should not steal the rail from Chat/Activity.
   useEffect(() => {
     if (!selection) return
     let active = true
     ;(async () => {
       await Promise.resolve()
       if (!active) return
-      setRailTab('inspector')
-      setRailOpen(true)
+      if (!railOpen) {
+        setRailTab('inspector')
+        setRailOpen(true)
+      }
     })()
     return () => {
       active = false
     }
-  }, [selection])
+  }, [railOpen, selection])
 
   // Activity stream id = focused agent (phases 2+ may broaden this).
   const streamId = focusedAgent?.id ?? null
@@ -212,6 +215,12 @@ function Workspace() {
     },
     [],
   )
+
+  const handleSelectResource = useCallback((next: WorkspaceSelection) => {
+    setSelection(next)
+    setRailTab('inspector')
+    setRailOpen(true)
+  }, [])
 
   const handleRemoveAgent = useCallback(
     async (agentId: string) => {
@@ -275,7 +284,6 @@ function Workspace() {
                 selection={selection}
                 onSelect={setSelection}
                 onFocusAgent={handleFocusAgent}
-                onOpenAddResource={handleOpenAddResource}
                 onRemoveAgent={handleRemoveAgent}
                 onCreateAgent={handleCreateAgent}
                 creatingAgent={creating}
@@ -292,16 +300,17 @@ function Workspace() {
                   error={createError}
                 />
               ) : null}
-            </div>
 
-            {focusedAgent ? (
-              <ResourceTray
-                agent={focusedAgent}
-                workspace={workspace}
-                onSelect={setSelection}
-                onAdd={(kind) => handleOpenAddResource(focusedAgent.id, kind)}
-              />
-            ) : null}
+              {focusedAgent ? (
+                <ResourceTray
+                  agent={focusedAgent}
+                  workspace={workspace}
+                  selection={selection}
+                  onSelect={handleSelectResource}
+                  onAdd={(kind) => handleOpenAddResource(focusedAgent.id, kind)}
+                />
+              ) : null}
+            </div>
           </div>
         </div>
 

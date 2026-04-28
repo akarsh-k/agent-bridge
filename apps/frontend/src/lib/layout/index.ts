@@ -14,7 +14,7 @@
  * The policy:
  *   - First sight of a node gets a deterministic slot.
  *   - User drags win after that and persist.
- *   - "Organize" reapplies deterministic slots for the current mode.
+ *   - "Reset layout" reapplies deterministic slots for the current mode.
  *   - Deleted nodes stay in the position map — cheap, and lets the user
  *     re-add without shuffling. We don't prune aggressively.
  *
@@ -86,7 +86,7 @@ function overviewSlotForPosition(pos: XYPosition): number | null {
 
 /**
  * Deterministic overview grid. Existing positions are respected unless
- * `force` is true (used by the "Organize" toolbar button).
+ * `force` is true when resetting the layout.
  */
 export function layoutAgentOverview(
   nodes: readonly Node[],

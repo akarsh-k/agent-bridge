@@ -7,7 +7,7 @@
  *     an Escape hint when a focus is active.
  *   - `+ New agent` primary action — POSTs straight away (no modal) and
  *     navigates so the new node is both focused and selected.
- *   - Inspector, Chat, and Activity work-panel toggles. The Activity button
+ *   - Details, Chat, and Activity work-panel toggles. The Activity button
  *     has a green pulse when the SSE stream is open.
  */
 
@@ -143,8 +143,8 @@ export function TopBar({
                 }
               }}
             >
-              <span aria-hidden="true">⚙︎</span>
-              <span>Inspector</span>
+              <span aria-hidden="true">ⓘ</span>
+              <span>Details</span>
             </button>
 
             <button

@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------------------
-   Right rail — hosts the inspector + activity panel. Width-animated so it
+   Right rail — hosts details + activity panels. Width-animated so it
    collapses gracefully when the user hides it via the top-bar toggle.
 --------------------------------------------------------------------------- */
 
@@ -98,36 +98,62 @@
 }
 
 .rail-tabs {
-  display: flex;
-  padding: 10px 12px;
-  gap: 6px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  margin: 10px 12px;
+  padding: 4px;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface-hi) 74%, transparent);
 }
 
 .rail-tab {
-  background: var(--surface);
+  min-width: 0;
+  justify-content: center;
+  min-height: 34px;
+  background: transparent;
   border: 1px solid transparent;
   color: var(--text-muted);
   font-size: 12.5px;
-  padding: 7px 11px;
-  border-radius: var(--radius-pill);
+  font-weight: 750;
+  padding: 0 10px;
+  border-radius: 10px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  transition: color var(--dur-1) var(--ease-out);
+  gap: 7px;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+
+.rail-tab:hover {
+  color: var(--text);
+  background: var(--surface-hover);
 }
 
 .rail-tab[aria-selected='true'] {
   color: var(--text);
-  background: var(--surface-hi);
+  background: var(--surface);
   border-color: var(--border);
+  box-shadow: var(--shadow-1);
+}
+
+.rail-tab-live-icon {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
 }
 
 .rail-tab-count {
-  padding: 1px 6px;
+  margin-left: 1px;
+  padding: 1px 5px;
   border-radius: var(--radius-pill);
   font-size: 10px;
   background: var(--surface-hi);

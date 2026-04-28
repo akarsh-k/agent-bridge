@@ -3,6 +3,7 @@ import { skillCreateInputSchema } from '@agent-bridge/shared'
 import { useWorkspace } from '../../../lib/workspace-context'
 import { ApiError } from '../../../lib/rpc'
 import { AddFormActions, ErrorText } from './form-atoms'
+import { ResourceIcon } from './resource-icons'
 
 export function SkillForm({
   agentId,
@@ -13,7 +14,8 @@ export function SkillForm({
   readonly onCancel: () => void
   readonly onDone: () => void
 }) {
-  const { createSkill } = useWorkspace()
+  const { agentResources, createSkill } = useWorkspace()
+  const attachedSkills = agentResources[agentId]?.skills ?? []
   const [name, setName] = useState('')
   const [body, setBody] = useState('')
   const [err, setErr] = useState<string | null>(null)
@@ -37,6 +39,9 @@ export function SkillForm({
     setBusy(true)
     try {
       await createSkill(agentId, parsed.data)
+      setName('')
+      setBody('')
+      nameRef.current?.focus()
       onDone()
     } catch (e) {
       setErr(
@@ -59,27 +64,57 @@ export function SkillForm({
         void submit()
       }}
     >
-      <label className="field">
-        <span className="field-label">Name</span>
-        <input
-          ref={nameRef}
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          maxLength={120}
-          placeholder="code-review"
-          disabled={busy}
-        />
-      </label>
-      <label className="field">
-        <span className="field-label">Markdown body (optional)</span>
-        <textarea
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          rows={8}
-          placeholder="You are a meticulous code reviewer..."
-          disabled={busy}
-        />
-      </label>
+      <section className="add-resource-choice-section">
+        <div className="add-resource-choice-label">Attached skills</div>
+        {attachedSkills.length === 0 ? (
+          <div className="add-resource-empty">No skills attached yet.</div>
+        ) : (
+          <div className="add-resource-option-grid">
+            {attachedSkills.map((skill) => (
+              <div
+                key={skill.id}
+                className="add-resource-attached-row add-resource-attached-skill"
+              >
+                <ResourceIcon kind="skill" className="add-resource-attached-icon" />
+                <span className="add-resource-attached-copy">
+                  <span className="add-resource-option-title">{skill.name}</span>
+                  <span className="add-resource-option-sub">
+                    {skill.markdownBody?.trim()
+                      ? skill.markdownBody.trim()
+                      : 'No prompt body yet'}
+                  </span>
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section className="add-resource-choice-section">
+        <div className="add-resource-choice-label">Create skill</div>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <input
+            ref={nameRef}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={120}
+            placeholder="code-review"
+            disabled={busy}
+          />
+        </label>
+        <label className="field">
+          <span className="field-label">Markdown body (optional)</span>
+          <textarea
+            value={body}
+            onChange={(e) => setBody(e.target.value)}
+            rows={8}
+            placeholder="You are a meticulous code reviewer..."
+            disabled={busy}
+          />
+        </label>
+      </section>
+
       <ErrorText message={err} />
       <AddFormActions
         submitLabel={busy ? 'Adding...' : 'Add skill'}

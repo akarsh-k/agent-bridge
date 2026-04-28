@@ -114,11 +114,7 @@ function RepoLogRow({ event }: { event: RunEvent }) {
         </div>
       )
     case 'repo.clone.progress':
-      return (
-        <div className="repo-log-row mono">
-          <span className="repo-log-line">{describeProgress(event)}</span>
-        </div>
-      )
+      return <ProgressRow event={event} />
     case 'repo.clone.ok':
       return (
         <div className="repo-log-row banner ok">
@@ -141,11 +137,7 @@ function RepoLogRow({ event }: { event: RunEvent }) {
         </div>
       )
     case 'repo.index.progress':
-      return (
-        <div className="repo-log-row mono">
-          <span className="repo-log-line">{describeProgress(event)}</span>
-        </div>
-      )
+      return <ProgressRow event={event} />
     case 'repo.index.ok':
       return (
         <div className="repo-log-row banner ok">
@@ -165,6 +157,16 @@ function RepoLogRow({ event }: { event: RunEvent }) {
   }
 }
 
+function ProgressRow({ event }: { event: RunEvent }) {
+  const line = describeProgress(event)
+  if (!line) return null
+  return (
+    <div className="repo-log-row mono">
+      <span className="repo-log-line">{line}</span>
+    </div>
+  )
+}
+
 function isTerminal(e: RunEvent): boolean {
   return (
     e.kind === 'repo.clone.ok' ||
@@ -176,7 +178,10 @@ function isTerminal(e: RunEvent): boolean {
 
 // `Array.prototype.findLast` is ES2023. Polyfill for older TS lib configs
 // so we don't force a `lib` bump for one call site.
-function findLast<T>(arr: readonly T[], pred: (v: T) => boolean): T | undefined {
+function findLast<T>(
+  arr: readonly T[],
+  pred: (v: T) => boolean,
+): T | undefined {
   for (let i = arr.length - 1; i >= 0; i--) {
     const v = arr[i]!
     if (pred(v)) return v
@@ -199,10 +204,25 @@ function describeCloneStarted(event: RunEvent): string {
   return 'git clone'
 }
 
-function describeProgress(event: RunEvent): string {
+function describeProgress(event: RunEvent): string | null {
   const d = event.data as { line?: string } | null | undefined
-  if (typeof d?.line === 'string') return d.line
+  if (typeof d?.line === 'string') {
+    const line = stripTerminalControlCodes(d.line).trimEnd()
+    return line.length ? line : null
+  }
   return '(no output)'
+}
+
+function stripTerminalControlCodes(value: string): string {
+  const esc = String.fromCharCode(27)
+  const bel = String.fromCharCode(7)
+  const csiPattern = new RegExp(`${esc}\\[[0-?]*[ -/]*[@-~]`, 'g')
+  const oscPattern = new RegExp(`${esc}\\][^${bel}]*(?:${bel}|${esc}\\\\)`, 'g')
+
+  return value
+    .replace(csiPattern, '')
+    .replace(oscPattern, '')
+    .replace(/\r/g, '')
 }
 
 function describeCloneOk(event: RunEvent): string {
@@ -238,9 +258,12 @@ function describeIndexOk(event: RunEvent): string {
   const ms =
     typeof d?.durationMs === 'number' ? ` · ${formatMs(d.durationMs)}` : ''
   const parts: string[] = []
-  if (typeof d?.summary?.files === 'number') parts.push(`${d.summary.files} files`)
-  if (typeof d?.summary?.nodes === 'number') parts.push(`${d.summary.nodes} nodes`)
-  if (typeof d?.summary?.edges === 'number') parts.push(`${d.summary.edges} edges`)
+  if (typeof d?.summary?.files === 'number')
+    parts.push(`${d.summary.files} files`)
+  if (typeof d?.summary?.nodes === 'number')
+    parts.push(`${d.summary.nodes} nodes`)
+  if (typeof d?.summary?.edges === 'number')
+    parts.push(`${d.summary.edges} edges`)
   const stats = parts.length > 0 ? ` · ${parts.join(' · ')}` : ''
   return `index succeeded${ms}${stats}`
 }

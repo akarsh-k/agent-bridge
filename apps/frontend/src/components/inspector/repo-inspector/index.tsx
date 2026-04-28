@@ -85,6 +85,28 @@ export function RepoInspector({
             {effective.status}
           </span>
         </div>
+        <div className="repo-primary-actions">
+          <CloneButton
+            repo={effective}
+            onOptimistic={() =>
+              setStatusOverlay({
+                status: 'cloning',
+                basedOnUpdatedAt: repo.updatedAt,
+              })
+            }
+            onRevert={() => setStatusOverlay(null)}
+          />
+          <IndexButton
+            repo={effective}
+            onOptimistic={() =>
+              setStatusOverlay({
+                status: 'indexing',
+                basedOnUpdatedAt: repo.updatedAt,
+              })
+            }
+            onRevert={() => setStatusOverlay(null)}
+          />
+        </div>
         <div className="read-row">
           <span className="read-label">Remote</span>
           <span className="read-value mono">{effective.remoteUrl}</span>
@@ -95,9 +117,7 @@ export function RepoInspector({
         </div>
         <div className="read-row">
           <span className="read-label">Local path</span>
-          <span className="read-value mono">
-            {effective.localPath ?? '—'}
-          </span>
+          <span className="read-value mono">{effective.localPath ?? '—'}</span>
         </div>
         <div className="read-row">
           <span className="read-label">PAT</span>
@@ -124,34 +144,14 @@ export function RepoInspector({
         </section>
       ) : null}
 
-      <section className="inspector-section">
-        <div className="inspector-section-title">
-          <span>Pipeline</span>
-        </div>
-        <div className="inspector-action-row">
-          <CloneButton
-            repo={effective}
-            onOptimistic={() =>
-              setStatusOverlay({
-                status: 'cloning',
-                basedOnUpdatedAt: repo.updatedAt,
-              })
-            }
-            onRevert={() => setStatusOverlay(null)}
-          />
-          <IndexButton
-            repo={effective}
-            onOptimistic={() =>
-              setStatusOverlay({
-                status: 'indexing',
-                basedOnUpdatedAt: repo.updatedAt,
-              })
-            }
-            onRevert={() => setStatusOverlay(null)}
-          />
-        </div>
-        {showLog ? <RepoLog repo={repo} workspace={workspace} /> : null}
-      </section>
+      {showLog ? (
+        <section className="inspector-section">
+          <div className="inspector-section-title">
+            <span>Activity log</span>
+          </div>
+          <RepoLog repo={repo} workspace={workspace} />
+        </section>
+      ) : null}
 
       <section className="inspector-section">
         <div className="inspector-section-title">
@@ -161,7 +161,7 @@ export function RepoInspector({
           <div className="rail-empty">
             <div className="rail-empty-title">No attachments yet</div>
             <div className="rail-empty-hint">
-              Connect this repo to an agent from the Inspector.
+              Connect this repo to an agent from the Details panel.
             </div>
           </div>
         ) : (
@@ -178,9 +178,7 @@ export function RepoInspector({
                   ) : null}
                 </div>
                 {a.attached.description ? (
-                  <div className="read-list-desc">
-                    {a.attached.description}
-                  </div>
+                  <div className="read-list-desc">{a.attached.description}</div>
                 ) : null}
               </li>
             ))}
