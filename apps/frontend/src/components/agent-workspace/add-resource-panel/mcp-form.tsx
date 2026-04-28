@@ -501,18 +501,19 @@ export function McpForm({ existing, onCancel, onDone }: McpFormProps) {
         busy={busy}
         disabled={name.trim().length === 0 || commandOrUrl.trim().length === 0}
         onCancel={onCancel}
+        leading={
+          mode === 'edit' && existing ? (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm mcp-form-delete-btn"
+              onClick={() => void deleteConnection()}
+              disabled={busy}
+            >
+              Delete connection
+            </button>
+          ) : undefined
+        }
       />
-
-      {mode === 'edit' && existing ? (
-        <button
-          type="button"
-          className="mcp-form-delete"
-          onClick={() => void deleteConnection()}
-          disabled={busy}
-        >
-          Delete connection
-        </button>
-      ) : null}
     </form>
   )
 }

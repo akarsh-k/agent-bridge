@@ -229,7 +229,7 @@ export function McpPicker({
                   </button>
                   <button
                     type="button"
-                    className="btn btn-ghost btn-sm"
+                    className="btn btn-sm mcp-picker-conn-edit"
                     onClick={() => onEdit(conn)}
                     disabled={busy}
                   >
@@ -401,7 +401,7 @@ export function McpPicker({
 
       <ErrorText message={err} />
 
-      <div className="add-resource-actions">
+      <div className="add-resource-actions add-resource-actions--toolbar">
         <button
           type="button"
           className="btn btn-ghost"
