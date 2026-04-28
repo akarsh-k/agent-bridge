@@ -14,3 +14,22 @@ export type {
   BuiltAgentMeta,
 } from './build-agent.js'
 export type { GitnexusMountMeta } from './mcp/gitnexus-mcp.js'
+export type {
+  ExternalMcpsMountMeta,
+  McpLogHandler,
+  McpLogLine,
+  MountedConnectionMeta,
+} from './mcp/external-mcps.js'
+export {
+  discoverMcpTools,
+  discoverMcpToolsOAuth,
+} from './mcp/discover-probe.js'
+export type {
+  DiscoverErrorCode,
+  DiscoverProbeInput,
+  DiscoverProbeResult,
+  DiscoveredProbeTool,
+  DiscoverOAuthProbeInput,
+  DiscoverOAuthProbeResult,
+} from './mcp/discover-probe.js'
+export { DrizzleOAuthStorage } from './mcp/oauth-storage.js'

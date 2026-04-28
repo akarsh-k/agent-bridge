@@ -22,6 +22,13 @@ export const runEventKinds = [
   'run.step.finished',
   'run.tool.called',
   'run.tool.result',
+  /**
+   * One line of stderr (or structured MCP log) from an external MCP
+   * connection mounted for this run. Scrubbed through the
+   * RunRedactor before emit; persisted to `run_events` verbatim so
+   * late subscribers can reconstruct the log tail.
+   */
+  'run.mcp.log',
   'run.error',
   'run.finished',
   'worker.progress',
@@ -273,6 +280,30 @@ export interface RunToolResultPayload {
   readonly toolName: string
   readonly output?: unknown
   readonly error?: string
+}
+
+/**
+ * One stderr / log line from an external MCP subprocess (stdio transport)
+ * surfacing live in the run UI. Goes through the same redactor +
+ * publishAndAudit path as every other run event, so plaintext env /
+ * headers values baked into `BuiltAgent.secrets` never leak.
+ *
+ * `level` is a best-effort classification:
+ *   - `error` when the line starts with MCP-spec level prefixes
+ *     (`ERROR`, `FATAL`) or common stderr fatal markers.
+ *   - `warn` when it starts with `WARN` / `WARNING`.
+ *   - `info` otherwise — that's the majority of stdio MCP output, which
+ *     tends to be plain startup banners + JSON-RPC trace lines.
+ *
+ * `connectionName` is the user-visible `mcp_connections.name`; the UI
+ * uses it to group log rows under the right tool card.
+ */
+export interface RunMcpLogPayload {
+  readonly runId: string
+  readonly connectionId: string
+  readonly connectionName: string
+  readonly level: 'info' | 'warn' | 'error'
+  readonly line: string
 }
 
 /**

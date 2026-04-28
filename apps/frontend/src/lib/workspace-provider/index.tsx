@@ -39,12 +39,15 @@ import type {
   AgentCreateInput,
   AgentResponse,
   AgentUpdateInput,
+  AllowlistEntry,
   AllowlistEntryResponse,
   AttachRepoInput,
   AttachedRepoResponse,
   LlmProviderCreateInput,
   LlmProviderResponse,
+  McpConnectionCreateInput,
   McpConnectionResponse,
+  McpConnectionUpdateInput,
   RepoCreateInput,
   RepoEdgeResponse,
   RepoResponse,
@@ -151,6 +154,22 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     }
   }, [refreshTick])
 
+  /**
+   * Fingerprint of the MCP connection catalogue. When connections are
+   * added / removed / replaced (via `refresh()`, create/remove hooks,
+   * etc.), this string changes and the per-agent fan-out below refetches
+   * `mcp-tools` from the server — so `agent_mcp_tools` rows dropped by
+   * an FK cascade disappear from the tray without a full page reload.
+   *
+   * Relying on `topLevel.agents` alone is not enough: wiping
+   * `mcp_connections` in SQL does not change the agent row, but every
+   * allowlist entry became invalid server-side.
+   */
+  const mcpConnectionSig = useMemo(
+    () => topLevel.mcpConnections.map((c) => c.id).sort().join('|'),
+    [topLevel.mcpConnections],
+  )
+
   // Per-agent resources fan-out. Runs whenever the agent list changes.
   useEffect(() => {
     let active = true
@@ -187,7 +206,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false
     }
-  }, [topLevel.agents, refreshTick])
+  }, [topLevel.agents, refreshTick, mcpConnectionSig])
 
   const refresh = useCallback(() => setRefreshTick((n) => n + 1), [])
 
@@ -385,6 +404,136 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [],
   )
 
+  const createMcpConnection = useCallback(
+    async (
+      input: McpConnectionCreateInput,
+    ): Promise<McpConnectionResponse> => {
+      const { mcpConnection } = await callApi<{
+        ok: true
+        mcpConnection: McpConnectionResponse
+      }>(rpc.api['mcp-connections'].$post({ json: input }))
+      setTopLevel((prev) => ({
+        ...prev,
+        mcpConnections: [...prev.mcpConnections, mcpConnection],
+      }))
+      return mcpConnection
+    },
+    [],
+  )
+
+  const patchMcpConnection = useCallback(
+    async (
+      id: string,
+      patch: McpConnectionUpdateInput,
+    ): Promise<McpConnectionResponse> => {
+      const { mcpConnection } = await callApi<{
+        ok: true
+        mcpConnection: McpConnectionResponse
+      }>(
+        rpc.api['mcp-connections'][':id'].$patch({
+          param: { id },
+          json: patch,
+        }),
+      )
+      setTopLevel((prev) => ({
+        ...prev,
+        mcpConnections: prev.mcpConnections.map((c) =>
+          c.id === id ? mcpConnection : c,
+        ),
+      }))
+      // An update may rename the connection; mirror that into every
+      // agent's `mcpAllowlist` entry so the tray label stays in sync
+      // without a full refetch. We don't recompute `enabled` / tool
+      // names — only the joined `mcpConnectionName` column is denormed.
+      setAgentResources((prev) => {
+        let changed = false
+        const next: Record<string, AgentResources> = {}
+        for (const [agentId, bundle] of Object.entries(prev)) {
+          const hit = bundle.mcpAllowlist.some(
+            (e) => e.mcpConnectionId === id,
+          )
+          if (!hit) {
+            next[agentId] = bundle
+            continue
+          }
+          changed = true
+          next[agentId] = {
+            ...bundle,
+            mcpAllowlist: bundle.mcpAllowlist.map((e) =>
+              e.mcpConnectionId === id
+                ? { ...e, mcpConnectionName: mcpConnection.name }
+                : e,
+            ),
+          }
+        }
+        return changed ? next : prev
+      })
+      return mcpConnection
+    },
+    [],
+  )
+
+  const removeMcpConnection = useCallback(
+    async (id: string): Promise<void> => {
+      await callApi<{ ok: true }>(
+        rpc.api['mcp-connections'][':id'].$delete({
+          param: { id },
+        }),
+      )
+      setTopLevel((prev) => ({
+        ...prev,
+        mcpConnections: prev.mcpConnections.filter((c) => c.id !== id),
+      }))
+      // Drop every allowlist entry referencing the deleted connection.
+      // The backend FK already cascaded; this keeps client state in sync.
+      setAgentResources((prev) => {
+        let changed = false
+        const next: Record<string, AgentResources> = {}
+        for (const [agentId, bundle] of Object.entries(prev)) {
+          const before = bundle.mcpAllowlist.length
+          const filtered = bundle.mcpAllowlist.filter(
+            (e) => e.mcpConnectionId !== id,
+          )
+          if (filtered.length === before) {
+            next[agentId] = bundle
+            continue
+          }
+          changed = true
+          next[agentId] = { ...bundle, mcpAllowlist: filtered }
+        }
+        return changed ? next : prev
+      })
+    },
+    [],
+  )
+
+  const setAgentMcpTools = useCallback(
+    async (
+      agentId: string,
+      tools: readonly AllowlistEntry[],
+    ): Promise<readonly AllowlistEntryResponse[]> => {
+      const { tools: next } = await callApi<{
+        ok: true
+        tools: readonly AllowlistEntryResponse[]
+      }>(
+        rpc.api.agents[':agentId']['mcp-tools'].$put({
+          param: { agentId },
+          json: { tools: [...tools] },
+        }),
+      )
+      setAgentResources((prev) => {
+        const bundle = prev[agentId]
+        if (!bundle) return prev
+        return {
+          ...prev,
+          [agentId]: { ...bundle, mcpAllowlist: next },
+        }
+      })
+      return next
+    },
+    [],
+  )
+
   // Single-row refresh. Patches both `repos[]` and any `attachedRepos`
   // entries in place — the latter matter because `RepoInspector` and the
   // repo group node both read the embedded copy. Used after a terminal
@@ -451,6 +600,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       attachRepo,
       createRepo,
       createLlmProvider,
+      createMcpConnection,
+      patchMcpConnection,
+      removeMcpConnection,
+      setAgentMcpTools,
       refreshRepo,
     }),
     [
@@ -468,6 +621,10 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       attachRepo,
       createRepo,
       createLlmProvider,
+      createMcpConnection,
+      patchMcpConnection,
+      removeMcpConnection,
+      setAgentMcpTools,
       refreshRepo,
     ],
   )

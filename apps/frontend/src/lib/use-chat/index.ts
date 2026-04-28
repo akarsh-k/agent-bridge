@@ -40,6 +40,7 @@ import type {
   RunErrorPayload,
   RunEvent,
   RunFinishedPayload,
+  RunMcpLogPayload,
   RunStartedPayload,
   RunStepFinishedPayload,
   RunStepStartedPayload,
@@ -80,6 +81,21 @@ export interface ChatToolInvocation {
   readonly finishedAt?: number
 }
 
+/**
+ * One scrubbed stderr line from a mounted stdio external MCP. Collected
+ * per-assistant-message so the UI can group them under the matching
+ * tool card. `connectionName` is the user-visible name (NOT the slug);
+ * we join against the tool call's auto-prefix to decide which card to
+ * anchor the line under — see `splitLogsByConnection` below.
+ */
+export interface ChatMcpLog {
+  readonly ts: number
+  readonly connectionId: string
+  readonly connectionName: string
+  readonly level: 'info' | 'warn' | 'error'
+  readonly line: string
+}
+
 export type ChatMessageStatus = 'streaming' | 'done' | 'error'
 
 export interface ChatMessage {
@@ -98,6 +114,16 @@ export interface ChatMessage {
   readonly errorMessage?: string
   readonly toolCalls: ChatToolInvocation[]
   readonly steps: ChatStepInfo[]
+  /**
+   * Scrubbed stderr lines from any mounted external MCP. Appended in
+   * arrival order; there is NO per-tool-call correlation upstream
+   * (stdio stderr is a single stream per subprocess) so the UI
+   * groups them by `connectionName` and renders each group under the
+   * MOST RECENT tool card whose prefix matches the connection slug.
+   * If no such tool card exists yet, the group renders as a standalone
+   * block at the bottom of the message.
+   */
+  readonly mcpLogs: ChatMcpLog[]
   readonly finishReason?: string | null
   readonly durationMs?: number
   readonly usage?: TokenUsage
@@ -221,6 +247,7 @@ export function useChat(input: UseChatInput): UseChatResult {
         status: 'done',
         toolCalls: [],
         steps: [],
+        mcpLogs: [],
         lastTokenIndex: -1,
       }
       setMessages((prev) => [...prev, userMessage])
@@ -255,6 +282,7 @@ export function useChat(input: UseChatInput): UseChatResult {
           status: 'streaming',
           toolCalls: [],
           steps: [],
+          mcpLogs: [],
           lastTokenIndex: -1,
         }
         setMessages((prev) => [...prev, assistant])
@@ -350,12 +378,34 @@ function applyEvent(msg: ChatMessage, event: RunEvent): ChatMessage {
       return applyToolCalled(msg, event.data as RunToolCalledPayload, event.ts)
     case 'run.tool.result':
       return applyToolResult(msg, event.data as RunToolResultPayload, event.ts)
+    case 'run.mcp.log':
+      return applyMcpLog(msg, event.data as RunMcpLogPayload, event.ts)
     case 'run.error':
       return applyRunError(msg, event.data as RunErrorPayload)
     case 'run.finished':
       return applyRunFinished(msg, event.data as RunFinishedPayload)
     default:
       return msg
+  }
+}
+
+function applyMcpLog(
+  msg: ChatMessage,
+  payload: RunMcpLogPayload,
+  ts: number,
+): ChatMessage {
+  return {
+    ...msg,
+    mcpLogs: [
+      ...msg.mcpLogs,
+      {
+        ts,
+        connectionId: payload.connectionId,
+        connectionName: payload.connectionName,
+        level: payload.level,
+        line: payload.line,
+      },
+    ],
   }
 }
 

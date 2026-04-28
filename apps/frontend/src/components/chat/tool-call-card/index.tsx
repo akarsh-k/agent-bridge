@@ -14,20 +14,30 @@
  */
 
 import { useMemo, useState } from 'react'
-import type { ChatToolInvocation } from '../../../lib/use-chat'
+import type { ChatMcpLog, ChatToolInvocation } from '../../../lib/use-chat'
 
 import './index.css'
 
 interface ToolCallCardProps {
   readonly call: ChatToolInvocation
+  /**
+   * Scrubbed stderr lines from the underlying MCP connection that
+   * fall within this call's time window. Rendered as a collapsed
+   * entry at the bottom of the card body so the operator can inspect
+   * the banner printed by the MCP alongside the JSON-RPC input /
+   * output.
+   */
+  readonly mcpLogs?: readonly ChatMcpLog[]
 }
 
 const MAX_PREVIEW_CHARS = 1200
 
-export function ToolCallCard({ call }: ToolCallCardProps) {
+export function ToolCallCard({ call, mcpLogs }: ToolCallCardProps) {
   const [open, setOpen] = useState(false)
   const [inputExpanded, setInputExpanded] = useState(false)
   const [outputExpanded, setOutputExpanded] = useState(false)
+  const [logsOpen, setLogsOpen] = useState(false)
+  const logs = mcpLogs ?? []
 
   const { preview: inputPreview, full: inputFull } = useMemo(
     () => stringify(call.input),
@@ -88,6 +98,39 @@ export function ToolCallCard({ call }: ToolCallCardProps) {
             />
           ) : call.status === 'pending' ? (
             <div className="tool-call-pending">Waiting for result…</div>
+          ) : null}
+
+          {logs.length > 0 ? (
+            <div className="tool-call-mcp-logs">
+              <button
+                type="button"
+                className="tool-call-mcp-logs-toggle"
+                onClick={() => setLogsOpen((v) => !v)}
+                aria-expanded={logsOpen}
+              >
+                <span className={`tool-call-caret${logsOpen ? ' open' : ''}`}>
+                  ▸
+                </span>
+                <span>
+                  mcp log · {logs.length} line{logs.length === 1 ? '' : 's'}
+                </span>
+              </button>
+              {logsOpen ? (
+                <pre className="tool-call-payload-body tool-call-mcp-logs-body">
+                  {logs
+                    .map((log) => {
+                      const tag =
+                        log.level === 'error'
+                          ? '[error]'
+                          : log.level === 'warn'
+                            ? '[warn] '
+                            : '[info] '
+                      return `${tag} ${log.line}`
+                    })
+                    .join('\n')}
+                </pre>
+              ) : null}
+            </div>
           ) : null}
         </div>
       ) : null}

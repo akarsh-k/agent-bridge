@@ -187,3 +187,42 @@
   color: var(--text-dim);
   font-style: italic;
 }
+
+/* ─── MCP stderr log drawer (Phase 4f) ──────────────────────────────── */
+
+.tool-call-mcp-logs {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border);
+}
+
+.tool-call-mcp-logs-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  cursor: pointer;
+  padding: 2px 0;
+}
+
+.tool-call-mcp-logs-toggle:hover {
+  color: var(--text);
+}
+
+.tool-call-mcp-logs-body {
+  font-size: 11px;
+  max-height: 240px;
+}
+
+.chat-msg-mcp-log-body {
+  font-size: 11px;
+  max-height: 240px;
+}

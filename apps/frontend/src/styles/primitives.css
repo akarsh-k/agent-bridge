@@ -264,6 +264,35 @@
   color: var(--text-dim);
 }
 
+/*
+ * Paragraph-style variant: normal text flow + inline wrapping. Use
+ * when the strip carries a multi-sentence message with inline
+ * `<code>` / `<em>` children, otherwise flex treats each inline
+ * node as its own column and the copy reads as a jumbled grid.
+ */
+.status-strip.wrap {
+  display: block;
+  padding: 10px 12px;
+  line-height: 1.55;
+}
+
+.status-strip.wrap code {
+  display: inline;
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  padding: 1px 5px;
+  margin: 0 1px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  white-space: nowrap;
+}
+
+.status-strip.wrap em {
+  font-style: italic;
+  color: inherit;
+  opacity: 0.85;
+}
+
 .status-strip.saving {
   color: var(--accent-300);
   border-color: var(--accent-border);
@@ -273,6 +302,18 @@
   color: var(--danger);
   border-color: transparent;
   background: var(--danger-bg);
+}
+/*
+ * Amber "worked, but look closer" variant. Used by the MCP test
+ * strip when the handshake succeeded AND the server advertised zero
+ * tools — not an error from the wire's perspective, but almost
+ * always a configuration issue (missing OAuth, bad token, no
+ * granted resources) the operator needs to action.
+ */
+.status-strip.warning {
+  color: #f5b14c;
+  border-color: transparent;
+  background: rgba(245, 177, 76, 0.12);
 }
 .status-strip.saved {
   color: var(--success);

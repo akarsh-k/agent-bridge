@@ -66,6 +66,7 @@
 
 import { Agent } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
+import type { Tool } from '@mastra/core/tools'
 import { Memory } from '@mastra/memory'
 import { PostgresStore } from '@mastra/pg'
 import { and, asc, eq } from 'drizzle-orm'
@@ -81,6 +82,13 @@ import {
   type GitnexusMountMeta,
   type MountedGitnexus,
 } from './mcp/gitnexus-mcp.js'
+import {
+  emptyExternalMcpsMountMeta,
+  mountExternalMcps,
+  type ExternalMcpsMountMeta,
+  type McpLogHandler,
+  type MountedExternalMcps,
+} from './mcp/external-mcps.js'
 
 // ─── Public surface ──────────────────────────────────────────────────────
 
@@ -97,6 +105,12 @@ export interface BuildAgentInput {
    * cost per call.
    */
   readonly disableGitnexus?: boolean
+  /**
+   * Skip mounting external MCP connections even when the agent has an
+   * allowlist. Same role as `disableGitnexus` — lets the smoke script
+   * isolate LLM failures from MCP failures without editing DB rows.
+   */
+  readonly disableExternalMcps?: boolean
 }
 
 export interface BuiltAgent {
@@ -121,6 +135,21 @@ export interface BuiltAgent {
    * agent" cache keeps secret lifetime scoped to the cache entry.
    */
   readonly secrets: readonly string[]
+  /**
+   * Subscribe to live stderr lines from any mounted stdio external
+   * MCP. Returns an unsubscribe closure. No-op when there are no
+   * stdio external MCPs mounted (http/sse produce no stderr; gitnexus
+   * MCP logs are intentionally not surfaced through this channel —
+   * they're local-only developer concern).
+   *
+   * The dispatcher uses this to fan stderr into `run.mcp.log` events
+   * scrubbed by the run-redactor; any other caller (e.g. the smoke
+   * script's `--trace-mcp-logs`) gets a raw feed of already
+   * ANSI-stripped, line-split text. Lines that arrive before any
+   * subscriber registers are dropped — see
+   * `MountedExternalMcps.subscribeLogs` for the rationale.
+   */
+  subscribeMcpLogs(handler: McpLogHandler): () => void
   /**
    * Tear down any out-of-process resources (currently: the gitnexus MCP
    * subprocess). Idempotent and safe to call even when nothing was
@@ -149,6 +178,13 @@ export interface BuiltAgentMeta {
    * `disableGitnexus: true` — useful for smoke tests.
    */
   readonly gitnexus: GitnexusMountMeta
+  /**
+   * External MCP mount status. `mounted: false` with `connectionCount
+   * === 0` means the agent has no allowlisted tools; `mounted: true`
+   * exposes the per-connection selectedTools / missingTools breakdown
+   * so the UI can flag stale allowlist rows.
+   */
+  readonly externalMcps: ExternalMcpsMountMeta
 }
 
 // ─── Config constants ────────────────────────────────────────────────────
@@ -188,7 +224,12 @@ const VENDOR_DEFAULT_BASE_URL: Partial<Record<LlmProviderKind, string>> = {
 // ─── Public function ─────────────────────────────────────────────────────
 
 export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
-  const { db, agentId, disableGitnexus = false } = input
+  const {
+    db,
+    agentId,
+    disableGitnexus = false,
+    disableExternalMcps = false,
+  } = input
 
   const [agentRow] = await db.db
     .select()
@@ -262,21 +303,43 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     ? buildMemory(db, agentRow.memoryConfig)
     : undefined
 
-  // Mount gitnexus MCP BEFORE constructing the Agent: Mastra's Agent
-  // locks its tool set at construction time, so the tools dict has to
-  // exist up front. `mountGitnexusMcp` itself decides whether to spawn
-  // (no ready repos ⇒ skip). If it throws, we surface that as a config
-  // error to the caller; there's no partially-built agent to leak since
-  // `new Agent(...)` hasn't happened yet.
-  const mounted = await mountGitnexusMcp({
+  // Mount MCP sources BEFORE constructing the Agent: Mastra's Agent
+  // locks its tool set at construction time, so the merged dict has to
+  // exist up front. Either mount may decide to skip (no repos / empty
+  // allowlist); either may throw on misconfiguration, which we surface
+  // to the caller as-is. If the second mount throws we tear down the
+  // first so no subprocess leaks — `buildExternalFailsafeCleanup`
+  // captures that invariant.
+  const mountedGitnexus = await mountGitnexusMcp({
     db,
     agentId,
     disabled: disableGitnexus,
   })
 
-  const instructionsWithRepos = mounted
-    ? appendGitnexusRepoHint(instructions, mounted)
+  let mountedExternal: MountedExternalMcps | null
+  try {
+    mountedExternal = await mountExternalMcps({
+      db,
+      agentId,
+      disabled: disableExternalMcps,
+    })
+  } catch (err) {
+    if (mountedGitnexus) {
+      try {
+        await mountedGitnexus.client.disconnect()
+      } catch {
+        // Swallow — the original external-mcps error is what the caller
+        // cares about; a cascade disconnect failure would just obscure it.
+      }
+    }
+    throw err
+  }
+
+  const instructionsWithRepos = mountedGitnexus
+    ? appendGitnexusRepoHint(instructions, mountedGitnexus)
     : instructions
+
+  const mergedTools = mergeToolDicts(mountedGitnexus, mountedExternal)
 
   const agent = new Agent({
     id: agentRow.id,
@@ -285,11 +348,11 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     instructions: instructionsWithRepos,
     model: modelConfig,
     ...(memory ? { memory } : {}),
-    ...(mounted ? { tools: mounted.tools } : {}),
+    ...(mergedTools ? { tools: mergedTools } : {}),
   })
 
-  const gitnexusMeta = mounted
-    ? mounted.meta
+  const gitnexusMeta = mountedGitnexus
+    ? mountedGitnexus.meta
     : emptyGitnexusMountMeta(
         // `emptyGitnexusMountMeta` still reports the repo count so the
         // UI can say "1 repo attached, MCP off" when the caller used
@@ -298,14 +361,24 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
         await countReadyRepos(db, agentId),
       )
 
-  const disconnect = buildDisconnect(mounted)
+  const externalMcpsMeta = mountedExternal
+    ? mountedExternal.meta
+    : emptyExternalMcpsMountMeta()
 
-  // The only plaintext at this phase is the provider apiKey. We skip
-  // anything under 4 characters as a sanity check — the `redactMany`
-  // helper already no-ops on short strings, but filtering here keeps
-  // the returned list meaningful for log lines like "N secrets bound".
+  const disconnect = buildDisconnect(mountedGitnexus, mountedExternal)
+
+  // Provider apiKey + every decrypted MCP env/header value feed the
+  // Phase 3f run-redactor. `mountExternalMcps` already applied the
+  // ≥4-char gate, so we can concat verbatim. `redactMany` additionally
+  // no-ops on short strings; the gate here just keeps the returned
+  // list meaningful for log lines like "N secrets bound".
   const secrets: string[] = []
   if (apiKey && apiKey.length >= 4) secrets.push(apiKey)
+  if (mountedExternal) secrets.push(...mountedExternal.secrets)
+
+  const subscribeMcpLogs: BuiltAgent['subscribeMcpLogs'] = mountedExternal
+    ? (handler) => mountedExternal.subscribeLogs(handler)
+    : () => () => {}
 
   return {
     agent,
@@ -322,8 +395,10 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
       skillCount: skillRows.length,
       memoryEnabled: agentRow.memoryEnabled,
       gitnexus: gitnexusMeta,
+      externalMcps: externalMcpsMeta,
     },
     secrets,
+    subscribeMcpLogs,
     disconnect,
   }
 }
@@ -475,20 +550,75 @@ function appendGitnexusRepoHint(
 }
 
 /**
- * Build a `disconnect` closure that tears down any mounted MCP client.
- * Hardened so it can be called repeatedly (Mastra's MCPClient already
- * deduplicates in-flight disconnects, but we don't want a caller's
- * defensive double-call to surface as an error either).
+ * Build a `disconnect` closure that tears down any mounted MCP client —
+ * both the gitnexus mount and any external-MCP clients. Hardened so it
+ * can be called repeatedly (Mastra's MCPClient already deduplicates
+ * in-flight disconnects, but we don't want a caller's defensive
+ * double-call to surface as an error either).
+ *
+ * `Promise.allSettled` so one failing subprocess teardown doesn't leave
+ * the others running. The external-mcps mount already uses
+ * allSettled-safe disconnects internally; chain them here the same way.
  */
 function buildDisconnect(
-  mounted: MountedGitnexus | null,
+  gitnexus: MountedGitnexus | null,
+  external: MountedExternalMcps | null,
 ): () => Promise<void> {
-  if (!mounted) return async () => {}
+  if (!gitnexus && !external) return async () => {}
 
   let done = false
   return async () => {
     if (done) return
     done = true
-    await mounted.client.disconnect()
+    const tasks: Array<Promise<void>> = []
+    if (gitnexus) {
+      tasks.push(
+        gitnexus.client.disconnect().catch(() => {
+          // Swallow — same rationale as the external-mcps mount.
+        }),
+      )
+    }
+    if (external) {
+      tasks.push(external.disconnect())
+    }
+    await Promise.allSettled(tasks)
   }
+}
+
+/**
+ * Merge tool dicts from the two MCP sources. Returns `undefined` when
+ * neither source produced any tools so the caller can omit the `tools`
+ * key entirely on the Mastra Agent (a `{}` tools dict is semantically
+ * different from "no tools" on some Mastra minor versions).
+ *
+ * Collisions between the two namespaces should be impossible by
+ * construction — gitnexus keeps its upstream names (`gitnexus_*`) and
+ * external connections use the `<slug>__<rawName>` scheme — but a loud
+ * throw is still the right move if one ever occurs.
+ */
+function mergeToolDicts(
+  gitnexus: MountedGitnexus | null,
+  external: MountedExternalMcps | null,
+): Record<string, Tool<any, any, any, any>> | undefined {
+  if (!gitnexus && !external) return undefined
+  const merged: Record<string, Tool<any, any, any, any>> = {}
+  if (gitnexus) {
+    for (const [key, tool] of Object.entries(gitnexus.tools)) {
+      merged[key] = tool
+    }
+  }
+  if (external) {
+    for (const [key, tool] of Object.entries(external.tools)) {
+      if (key in merged) {
+        throw new Error(
+          `[buildAgent] tool key collision on "${key}" between gitnexus ` +
+            `and external MCP sources — this is unreachable in normal ` +
+            `operation; check that no external connection's slug overlaps ` +
+            `with the gitnexus prefix.`,
+        )
+      }
+      merged[key] = tool
+    }
+  }
+  return merged
 }

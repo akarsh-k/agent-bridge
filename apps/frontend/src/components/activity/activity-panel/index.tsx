@@ -26,6 +26,7 @@ const KIND_ICON: Record<RunEventKind, string> = {
   'run.step.finished': '✓',
   'run.tool.called': '⚙',
   'run.tool.result': '◈',
+  'run.mcp.log': 'ⓘ',
   'run.error': '✕',
   'run.finished': '■',
   'worker.progress': '↻',

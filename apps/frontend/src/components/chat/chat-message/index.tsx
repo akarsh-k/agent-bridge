@@ -19,7 +19,11 @@
  */
 
 import { useMemo, useState } from 'react'
-import type { ChatMessage as ChatMessageType } from '../../../lib/use-chat'
+import type {
+  ChatMcpLog,
+  ChatMessage as ChatMessageType,
+  ChatToolInvocation,
+} from '../../../lib/use-chat'
 import { ToolCallCard } from '../tool-call-card'
 
 import './index.css'
@@ -103,7 +107,25 @@ function AssistantBubble({ message }: { message: ChatMessageType }) {
         {message.toolCalls.length > 0 ? (
           <div className="chat-msg-tools">
             {message.toolCalls.map((call) => (
-              <ToolCallCard key={call.toolCallId} call={call} />
+              <ToolCallCard
+                key={call.toolCallId}
+                call={call}
+                mcpLogs={logsForToolCall(call, message.toolCalls, message.mcpLogs)}
+              />
+            ))}
+          </div>
+        ) : null}
+
+        {orphanMcpLogs(message.toolCalls, message.mcpLogs).length > 0 ? (
+          <div className="chat-msg-tools chat-msg-tools-orphan">
+            {groupLogsByConnection(
+              orphanMcpLogs(message.toolCalls, message.mcpLogs),
+            ).map((group) => (
+              <McpLogsStandaloneCard
+                key={group.connectionId}
+                connectionName={group.connectionName}
+                logs={group.logs}
+              />
             ))}
           </div>
         ) : null}
@@ -232,6 +254,202 @@ function RunDetails({
       ) : null}
     </div>
   )
+}
+
+// ─── MCP log grouping ───────────────────────────────────────────────────
+
+/**
+ * Pick the MCP log lines that "belong" to a given tool card. The rule:
+ * a log line's `connectionName` slugified (lower/ascii/run-collapsed)
+ * MUST match the tool card's name prefix up to `__`. Multiple tool
+ * cards can share a connection (e.g. two `notion__*` calls in one
+ * run); each card shows the ENTIRE tail since the previous same-
+ * connection tool card finished, so the operator can see the
+ * stderr banner that accompanied each call.
+ *
+ * Ordering guarantee:
+ *   - Logs are captured in event-arrival order (see `applyMcpLog`).
+ *   - For each tool card we take the logs whose timestamp falls
+ *     between (exclusive) the previous same-connection card's
+ *     finishedAt and (inclusive) this card's finishedAt-or-now.
+ *
+ * This is best-effort — we don't have a hard link between a log
+ * line and a tool call. The worst case is a line assigned to the
+ * wrong card (if two calls run overlapped on a connection we don't
+ * actually support yet); operators can still see it in the standalone
+ * orphan block.
+ */
+function logsForToolCall(
+  call: ChatToolInvocation,
+  allCalls: readonly ChatToolInvocation[],
+  allLogs: readonly ChatMcpLog[],
+): ChatMcpLog[] {
+  if (allLogs.length === 0) return []
+  const slug = connectionSlugFromToolName(call.toolName)
+  if (!slug) return []
+
+  const sameConnectionCalls = allCalls.filter(
+    (c) => connectionSlugFromToolName(c.toolName) === slug,
+  )
+  const index = sameConnectionCalls.findIndex(
+    (c) => c.toolCallId === call.toolCallId,
+  )
+  if (index === -1) return []
+
+  const prevCall = index > 0 ? sameConnectionCalls[index - 1] : null
+  const lowerBound = prevCall?.finishedAt ?? prevCall?.startedAt ?? 0
+  const upperBound = call.finishedAt ?? Number.POSITIVE_INFINITY
+
+  return allLogs.filter((log) => {
+    if (slugifyClient(log.connectionName) !== slug) return false
+    return log.ts > lowerBound && log.ts <= upperBound
+  })
+}
+
+/**
+ * Logs that didn't land under any tool card. Usually: startup
+ * banners (printed before the first tool call) or logs for a
+ * connection whose tool-call message hasn't arrived yet (rare,
+ * because we always see `tool-call` before `tool-result`, but
+ * possible on SSE reconnect).
+ */
+function orphanMcpLogs(
+  allCalls: readonly ChatToolInvocation[],
+  allLogs: readonly ChatMcpLog[],
+): ChatMcpLog[] {
+  if (allLogs.length === 0) return []
+  const used = new Set<number>()
+  for (const call of allCalls) {
+    const mine = logsForToolCall(call, allCalls, allLogs)
+    for (const log of mine) {
+      // Identity is stable across renders because logs are immutable
+      // ChatMcpLog instances pushed once and never mutated; a ref-
+      // equality set is fine.
+      used.add(allLogs.indexOf(log))
+    }
+  }
+  const orphans: ChatMcpLog[] = []
+  allLogs.forEach((log, i) => {
+    if (!used.has(i)) orphans.push(log)
+  })
+  return orphans
+}
+
+function groupLogsByConnection(
+  logs: readonly ChatMcpLog[],
+): readonly {
+  readonly connectionId: string
+  readonly connectionName: string
+  readonly logs: readonly ChatMcpLog[]
+}[] {
+  const byId = new Map<
+    string,
+    { connectionId: string; connectionName: string; logs: ChatMcpLog[] }
+  >()
+  for (const log of logs) {
+    const existing = byId.get(log.connectionId)
+    if (existing) {
+      existing.logs.push(log)
+      continue
+    }
+    byId.set(log.connectionId, {
+      connectionId: log.connectionId,
+      connectionName: log.connectionName,
+      logs: [log],
+    })
+  }
+  return Array.from(byId.values())
+}
+
+/** Extract the connection slug from an auto-prefixed tool name. */
+function connectionSlugFromToolName(toolName: string): string | null {
+  const idx = toolName.indexOf('__')
+  if (idx <= 0) return null
+  return toolName.slice(0, idx)
+}
+
+/**
+ * Mirror of `slugifyConnectionName` in `packages/agents/src/mcp/external-mcps.ts`.
+ * Keep in sync — drift would mis-assign logs to tool cards.
+ */
+function slugifyClient(name: string): string {
+  const cleaned = name
+    .normalize('NFKD')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+  return cleaned.length > 0 ? cleaned : 'ext'
+}
+
+/**
+ * Standalone card for log groups that don't belong under any tool
+ * card. Same visual idiom as `ToolCallCard`'s header to keep the
+ * message's vertical rhythm consistent.
+ */
+function McpLogsStandaloneCard({
+  connectionName,
+  logs,
+}: {
+  connectionName: string
+  logs: readonly ChatMcpLog[]
+}) {
+  const [open, setOpen] = useState(false)
+  const highest = highestLevel(logs)
+  return (
+    <div className={`tool-call tool-call-${highest === 'error' ? 'error' : 'done'}`}>
+      <button
+        type="button"
+        className="tool-call-header"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+      >
+        <span className="tool-call-status tool-call-status-done" aria-hidden="true">
+          ⓘ
+        </span>
+        <span className="tool-call-name">{connectionName} · logs</span>
+        <span className="tool-call-step">
+          {logs.length} line{logs.length === 1 ? '' : 's'}
+        </span>
+        <span className={`tool-call-caret${open ? ' open' : ''}`} aria-hidden="true">
+          ▸
+        </span>
+      </button>
+      {open ? (
+        <div className="tool-call-body">
+          <McpLogList logs={logs} />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function McpLogList({ logs }: { logs: readonly ChatMcpLog[] }) {
+  return (
+    <pre className="tool-call-payload-body chat-msg-mcp-log-body">
+      {logs
+        .map((log) => {
+          const tag =
+            log.level === 'error'
+              ? '[error]'
+              : log.level === 'warn'
+                ? '[warn] '
+                : '[info] '
+          return `${tag} ${log.line}`
+        })
+        .join('\n')}
+    </pre>
+  )
+}
+
+function highestLevel(
+  logs: readonly ChatMcpLog[],
+): ChatMcpLog['level'] {
+  let level: ChatMcpLog['level'] = 'info'
+  for (const log of logs) {
+    if (log.level === 'error') return 'error'
+    if (log.level === 'warn') level = 'warn'
+  }
+  return level
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────

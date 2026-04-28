@@ -1,10 +1,20 @@
 /**
- * Read-only MCP connection inspector. Shows transport + allowlisted tools
- * grouped by agent.
+ * MCP connection inspector. Read-only by default — shows the stored
+ * config + which agents allowlist which tools. Switching to "Edit"
+ * swaps in the shared `McpForm` (same component used by the quick-add
+ * panel), so there's ONE form implementation for both create and edit.
+ *
+ * Changes to name / env / headers / allow_host_home cascade to the
+ * workspace context automatically via `patchMcpConnection`, so the
+ * sibling tray and the agent-side picker re-render without a refetch.
  */
 
+import { useState } from 'react'
 import type { McpConnectionResponse } from '@agent-bridge/shared'
 import type { WorkspaceContextValue } from '../../../lib/workspace-context'
+import { McpForm } from '../../agent-workspace/add-resource-panel/mcp-form'
+
+type Mode = 'read' | 'edit'
 
 export function McpInspector({
   connection,
@@ -13,6 +23,8 @@ export function McpInspector({
   connection: McpConnectionResponse
   workspace: WorkspaceContextValue
 }) {
+  const [mode, setMode] = useState<Mode>('read')
+
   const byAgent: Array<{
     agentName: string
     agentSlug: string
@@ -33,11 +45,30 @@ export function McpInspector({
     }
   }
 
+  if (mode === 'edit') {
+    return (
+      <div className="inspector">
+        <McpForm
+          existing={connection}
+          onCancel={() => setMode('read')}
+          onDone={() => setMode('read')}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="inspector">
       <section className="inspector-section">
         <div className="inspector-section-title">
           <span>MCP connection</span>
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm"
+            onClick={() => setMode('edit')}
+          >
+            Edit
+          </button>
         </div>
         <div className="read-row">
           <span className="read-label">Name</span>
@@ -69,6 +100,12 @@ export function McpInspector({
             {!connection.env.set && !connection.headers.set ? '—' : ''}
           </span>
         </div>
+        {connection.transport === 'stdio' && connection.allowHostHome ? (
+          <div className="read-row">
+            <span className="read-label">Host HOME</span>
+            <span className="read-value">allowed (advanced)</span>
+          </div>
+        ) : null}
       </section>
 
       <section className="inspector-section">
@@ -80,7 +117,7 @@ export function McpInspector({
             <div className="rail-empty-title">No allowlist yet</div>
             <div className="rail-empty-hint">
               Agents gate which tools they can call via the per-agent
-              allowlist.
+              allowlist. Open an agent and pick tools from its MCP panel.
             </div>
           </div>
         ) : (
@@ -100,10 +137,6 @@ export function McpInspector({
           </ul>
         )}
       </section>
-
-      <p className="muted" style={{ fontSize: 12 }}>
-        Create / rotate MCP connections from Phase 1F.
-      </p>
     </div>
   )
 }

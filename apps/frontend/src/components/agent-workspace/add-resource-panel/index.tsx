@@ -1,21 +1,28 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { AgentResponse } from '@agent-bridge/shared'
+import type {
+  AgentResponse,
+  McpConnectionResponse,
+} from '@agent-bridge/shared'
 import { SkillForm } from './skill-form'
 import { ToolForm } from './tool-form'
 import { RepoPicker } from './repo-picker'
 import { RepoNewForm } from './repo-new-form'
 import { LlmPicker } from './llm-picker'
 import { LlmNewForm } from './llm-new-form'
+import { McpPicker } from './mcp-picker'
+import { McpForm } from './mcp-form'
 
 import './index.css'
 
-export type AddResourceKind = 'skill' | 'tool' | 'repo' | 'llm'
+export type AddResourceKind = 'skill' | 'tool' | 'repo' | 'llm' | 'mcp'
 
 type PanelView =
   | AddResourceKind
   | 'repo-new'
   | 'llm-new'
+  | 'mcp-new'
+  | 'mcp-edit'
 
 const KINDS: readonly {
   kind: AddResourceKind
@@ -47,6 +54,12 @@ const KINDS: readonly {
     hint: 'Assign or create a model provider',
     glyph: 'L',
   },
+  {
+    kind: 'mcp',
+    title: 'MCP tools',
+    hint: 'External tools via Model Context Protocol',
+    glyph: 'M',
+  },
 ]
 
 export function AddResourcePanel({
@@ -59,6 +72,8 @@ export function AddResourcePanel({
   readonly onClose: () => void
 }) {
   const [view, setView] = useState<PanelView>(initialKind ?? 'skill')
+  const [mcpEditTarget, setMcpEditTarget] =
+    useState<McpConnectionResponse | null>(null)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -73,6 +88,7 @@ export function AddResourcePanel({
   const activeKind: AddResourceKind = useMemo(() => {
     if (view === 'repo-new') return 'repo'
     if (view === 'llm-new') return 'llm'
+    if (view === 'mcp-new' || view === 'mcp-edit') return 'mcp'
     return view
   }, [view])
 
@@ -218,6 +234,54 @@ export function AddResourcePanel({
               agentId={agent.id}
               onCancel={() => setView('llm')}
               onDone={closeAfterDone}
+            />
+          </PanelSection>
+        )
+      case 'mcp':
+        return (
+          <PanelSection
+            title="MCP tools"
+            subtitle="Pick which external MCP tools this agent can call. Tool names are auto-prefixed with the connection slug at runtime."
+          >
+            <McpPicker
+              agentId={agent.id}
+              onCreateNew={() => {
+                setMcpEditTarget(null)
+                setView('mcp-new')
+              }}
+              onEdit={(conn) => {
+                setMcpEditTarget(conn)
+                setView('mcp-edit')
+              }}
+              onDone={keepOpenAfterDone}
+            />
+          </PanelSection>
+        )
+      case 'mcp-new':
+        return (
+          <PanelSection
+            title="New MCP connection"
+            subtitle="stdio runs a subprocess; http/sse hits a URL. Secrets are encrypted at rest."
+            onBack={() => setView('mcp')}
+          >
+            <McpForm
+              existing={null}
+              onCancel={() => setView('mcp')}
+              onDone={() => setView('mcp')}
+            />
+          </PanelSection>
+        )
+      case 'mcp-edit':
+        return (
+          <PanelSection
+            title="Edit MCP connection"
+            subtitle="Transport is fixed after create. Secrets decrypt in one place; list / probe / runtime reuse the envelope."
+            onBack={() => setView('mcp')}
+          >
+            <McpForm
+              existing={mcpEditTarget}
+              onCancel={() => setView('mcp')}
+              onDone={() => setView('mcp')}
             />
           </PanelSection>
         )

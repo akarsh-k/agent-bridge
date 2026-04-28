@@ -39,13 +39,15 @@ export const mcpToolNameSchema = z
 
 // ─── PUT body ────────────────────────────────────────────────────────────
 
-const allowlistEntrySchema = z
+export const allowlistEntrySchema = z
   .object({
     mcpConnectionId: z.uuid(),
     toolName: mcpToolNameSchema,
     enabled: z.boolean().optional(),
   })
   .strict()
+
+export type AllowlistEntry = z.infer<typeof allowlistEntrySchema>
 
 /**
  * PUT /api/agents/:agentId/mcp-tools body.

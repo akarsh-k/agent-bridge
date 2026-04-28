@@ -21,6 +21,9 @@ import type {
   ErrorCode,
   LlmProviderTestInput,
   LlmProviderTestResponse,
+  McpConnectionDiscoverInput,
+  McpConnectionDiscoverResponse,
+  McpConnectionTestPollResponse,
 } from '@agent-bridge/shared'
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:3001'
@@ -206,6 +209,59 @@ export async function testLlmProvider(
     rpc.api['llm-providers'][':id'].test.$post({
       param: { id },
       json: overrides,
+    }),
+  )
+  return res.result
+}
+
+// ─── MCP connection helpers ──────────────────────────────────────────────
+
+/**
+ * Kick off a live discovery probe against an MCP connection. `overrides`
+ * is optional — by default the saved row is used. When present, any
+ * subset of `commandOrUrl` / `argsJson` / `env` / `headers` /
+ * `allowHostHome` overrides that field for this one call (not
+ * persisted). Used by both the create/edit drawer (draft overrides) and
+ * the per-agent tool picker (no overrides — it just re-discovers).
+ */
+export async function discoverMcpTools(
+  id: string,
+  overrides: McpConnectionDiscoverInput = {},
+): Promise<McpConnectionDiscoverResponse> {
+  const res = await callApi<{
+    ok: true
+    result: McpConnectionDiscoverResponse
+  }>(
+    rpc.api['mcp-connections'][':id'].test.$post({
+      param: { id },
+      json: overrides,
+    }),
+  )
+  return res.result
+}
+
+/**
+ * Long-poll a Phase-4H OAuth test session. The initial POST /test may
+ * return a `code: 'authorize_required'` shell with a `sessionId` and
+ * `authorizeUrl`; the UI opens the URL in a new tab and calls this
+ * RPC in a loop until the session flips to a terminal status.
+ *
+ * `lastSeen` is the status the UI last rendered — the server
+ * suspends for up to ~25 s while that status still holds, so passing
+ * it correctly is what makes the poll loop efficient (no busy-wait).
+ */
+export async function pollMcpTest(
+  id: string,
+  sessionId: string,
+  lastSeen: 'pending' | 'authorize_required',
+): Promise<McpConnectionTestPollResponse> {
+  const res = await callApi<{
+    ok: true
+    result: McpConnectionTestPollResponse
+  }>(
+    rpc.api['mcp-connections'][':id'].test.poll.$get({
+      param: { id },
+      query: { sessionId, lastSeen },
     }),
   )
   return res.result

@@ -181,6 +181,21 @@ seeing files appear in `~/.gitconfig`, `~/.gitnexus/`, or worse.
 | No ambient `process.env` usage — everything goes through Zod schemas | `@agent-bridge/shared/env`                                                 |
 | Engine mismatch (Node version) fails loudly                          | `.npmrc` `engine-strict=true` + root `engines.node` + `.nvmrc`             |
 
+**HOME clamp patterns for user-configured MCPs (Phase 4).** `spawnSandboxed`
+supports three postures. Only the first two are exposed in the UI:
+
+| Posture                        | When                                                       | What the child sees                                                                                                     |
+| ------------------------------ | ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| **Clamped (default)**          | Every first-party spawn (gitnexus, git, MCPs)              | `HOME=<data-root>/gitnexus-home`, XDG dirs redirected, auth sockets stripped                                            |
+| **Real HOME opt-in**           | stdio MCPs that need user CLI auth (`gh`, `aws`, `gcloud`) | `HOME` untouched, SSH/GPG sockets still stripped                                                                        |
+| **Partial HOME (unsupported)** | "Share `~/.config/foo` but nothing else"                   | Not implemented. If a future MCP needs this, design it as a bind mount — don't half-implement by whitelisting XDG dirs. |
+
+The real-HOME opt-in is a per-connection boolean
+(`mcp_connections.allow_host_home`) and the UI surfaces it behind a
+"Show advanced" toggle on stdio connections only, with an explicit warning
+on the trade-off. http/sse transports have no subprocess; the DTO rejects
+`allow_host_home: true` on them outright.
+
 ## 4. Secrets at rest
 
 Every user-supplied secret flows through the same pipe:
@@ -278,15 +293,15 @@ When `@mastra/pg`'s `PostgresStore` is constructed with `schemaName: 'mastra'`
 (Phase 3 wiring), Mastra auto-creates and migrates these tables. We **never**
 design our own versions:
 
-| Mastra table               | What it stores                                         |
-| -------------------------- | ------------------------------------------------------ |
-| `mastra.threads`           | Conversation threads (one per agent × user × session)  |
-| `mastra.messages`          | Individual messages with role, content, metadata       |
-| `mastra.resources`         | Per-`resourceId` working memory (persists cross-thread)|
-| `mastra.workflow_snapshot` | Suspend/resume state for long-running workflows        |
-| `mastra.evals`             | Eval run results                                       |
-| `mastra.traces`            | OpenTelemetry spans (tool calls, LLM calls, timings)   |
-| `mastra.scorers`           | Scorer outputs                                         |
+| Mastra table               | What it stores                                          |
+| -------------------------- | ------------------------------------------------------- |
+| `mastra.threads`           | Conversation threads (one per agent × user × session)   |
+| `mastra.messages`          | Individual messages with role, content, metadata        |
+| `mastra.resources`         | Per-`resourceId` working memory (persists cross-thread) |
+| `mastra.workflow_snapshot` | Suspend/resume state for long-running workflows         |
+| `mastra.evals`             | Eval run results                                        |
+| `mastra.traces`            | OpenTelemetry spans (tool calls, LLM calls, timings)    |
+| `mastra.scorers`           | Scorer outputs                                          |
 
 `drizzle-kit` runs only against `public.*`. Mastra's migrations run on its
 own schedule the first time `PostgresStore.init()` is called at boot. The
@@ -298,10 +313,10 @@ Some rows on **our** tables carry config that gets piped straight into Mastra
 at runtime. For these, the field shapes **must match Mastra's API exactly** —
 drift is a runtime error, not a type error:
 
-| Our column                  | Mastra consumer                  |
-| --------------------------- | -------------------------------- |
-| `agents.memory_config`      | `new Memory({ options: … })`     |
-| `tools.config_json` (later) | `createTool({ … })` inputs       |
+| Our column                  | Mastra consumer              |
+| --------------------------- | ---------------------------- |
+| `agents.memory_config`      | `new Memory({ options: … })` |
+| `tools.config_json` (later) | `createTool({ … })` inputs   |
 
 See `AgentMemoryConfig` in `@agent-bridge/shared/domain` — docstring calls
 out the anti-drift rule explicitly.
@@ -310,13 +325,13 @@ out the anti-drift rule explicitly.
 
 Everything else. Mastra has no opinion or schema here, so we design freely:
 
-| Our concept                             | Why Mastra has no schema                      |
-| --------------------------------------- | --------------------------------------------- |
-| `agents` (row), `skills`, `tools`       | Mastra agents + tools are code, not data      |
-| `repos`, `agent_repos`, `repo_edges`    | Mastra has no notion of attached codebases    |
-| `mcp_connections`, `agent_mcp_tools`    | Mastra consumes MCP tools at runtime, not DB  |
-| `llm_providers`                         | Mastra providers are instantiated, not stored |
-| `runs`, `run_events`                    | UI-facing audit log; `mastra.traces` is OTel  |
+| Our concept                          | Why Mastra has no schema                      |
+| ------------------------------------ | --------------------------------------------- |
+| `agents` (row), `skills`, `tools`    | Mastra agents + tools are code, not data      |
+| `repos`, `agent_repos`, `repo_edges` | Mastra has no notion of attached codebases    |
+| `mcp_connections`, `agent_mcp_tools` | Mastra consumes MCP tools at runtime, not DB  |
+| `llm_providers`                      | Mastra providers are instantiated, not stored |
+| `runs`, `run_events`                 | UI-facing audit log; `mastra.traces` is OTel  |
 
 **`runs` vs `mastra.traces`.** Both exist and that's deliberate. Our `runs`
 carries UI semantics (`stream_id` for SSE, `input_prompt`, user-facing
@@ -380,17 +395,80 @@ error, so we name them explicitly:
 What our Mastra agent picks up and calls while it's answering a question.
 Fully modeled in the `public.*` schema today:
 
-| Table              | Role                                                 |
-| ------------------ | ---------------------------------------------------- |
-| `tools`            | Native tools defined in code (http, shell, custom)   |
-| `mcp_connections`  | Registered MCP servers (Notion, Datadog, GitNexus…)  |
-| `agent_mcp_tools`  | Per-agent allowlist into those MCP servers           |
+| Table             | Role                                                |
+| ----------------- | --------------------------------------------------- |
+| `tools`           | Native tools defined in code (http, shell, custom)  |
+| `mcp_connections` | Registered MCP servers (Notion, Datadog, GitNexus…) |
+| `agent_mcp_tools` | Per-agent allowlist into those MCP servers          |
 
 `packages/agents` is the only place that reads these. At runtime it merges
 them with Mastra built-ins and hands the combined set to `new Agent({ tools,
 … })`. Users never see "agent tools" in the UI as a unified concept — they
 see "Tools", "MCP Connections", etc. separately, because the authoring UX
 differs per kind.
+
+**Tool-name namespacing (Phase 4).** Two MCPs in the same agent can easily
+both expose `search` or `query`. To keep the keys of `new Agent({ tools })`
+unique — and give the LLM an unambiguous name to call — `mountExternalMcps`
+auto-prefixes every external tool with the sanitised connection slug at
+mount time: `notion__search`, `slack__search`. The raw upstream name stays
+in `agent_mcp_tools.tool_name` (the allowlist is per-connection, so
+`(mcp_connection_id, tool_name)` is already unique there). Gitnexus tools
+come in pre-namespaced as `gitnexus_*` and pass through without a second
+prefix. The picker UI previews the final prefixed name so what the
+operator picks is what the LLM sees.
+
+**Transport nuance.** `mcp_connections.transport` allows
+`stdio | http | sse`, but the Mastra MCP SDK exposes only two wire shapes:
+`StdioServerDefinition` and `HttpServerDefinition` (the latter
+auto-negotiates Streamable-HTTP with SSE fallback internally). Our `'sse'`
+value is therefore a **UI label hint**, not a distinct transport —
+operators who know their shim only speaks SSE can still label it that way,
+but the runtime routes http and sse through the same `HttpServerDefinition`.
+
+**Single decrypt site.** For `mcp_connections.env_envelope` and
+`headers_envelope`, exactly two files are allowed to call `decryptSecret`:
+`apps/backend/src/lib/mcp-connections/discover.ts` (the test endpoint)
+and `packages/agents/src/mcp/external-mcps.ts` (runtime mount). Every
+decrypted value (≥4 chars) is appended to `BuiltAgent.secrets` so the
+Phase 3f run-redactor scrubs it from every SSE frame + `run_events` row.
+
+**Authentication kinds (Phase 4H).** `mcp_connections.auth_kind`
+discriminates three wire-level behaviors:
+
+| `auth_kind` | Transport | Meaning                                                                                                                                                                                             |
+| ----------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `none`      | any       | No upstream credential; the probe connects anonymously. stdio rows always land here.                                                                                                                |
+| `headers`   | http/sse  | Static `Authorization: Bearer …` / API-key headers, encrypted in `headers_envelope`. Same code path as pre-Phase-4H HTTP MCPs.                                                                      |
+| `oauth`     | http/sse  | OAuth 2.1 authorization-code + PKCE via Mastra's `MCPOAuthClientProvider`. Tokens persist in `mcp_oauth_state` (one row per scope key, encrypted via the same envelope format as the other fields). |
+
+OAuth is first-class — there is no `mcp-remote` subprocess, no
+ephemeral callback port, no browser-polled stderr. The flow is:
+
+1. `POST /api/mcp-connections/:id/test` kicks off the probe. If
+   tokens are cached the probe `listToolsets()` synchronously. If
+   not, Mastra's provider emits an authorize URL; the dispatcher
+   parks a `TestSessionRegistry` entry keyed by `connection_id` and
+   returns `{ code: 'authorize_required', sessionId, authorizeUrl }`.
+2. The UI opens `authorizeUrl` in a new tab (the upstream consent
+   screen) and starts long-polling `/api/mcp-connections/:id/test/poll`.
+3. After approval the user's browser lands on
+   `GET /oauth/mcp/:connectionId/callback?code&state`. The handler
+   validates `state` against the session (CSRF guard), hands the
+   `code` to `auth()` via the same `MCPOAuthClientProvider` +
+   `DrizzleOAuthStorage`, then runs `listToolsets()` and flips the
+   session to `ok` (or `failed`).
+4. The polling UI wakes up on that flip and renders the tool list.
+
+The callback URL is pinned to
+`http://localhost:${BACKEND_PORT}/oauth/mcp/:connectionId/callback`
+and is registered with the upstream as part of dynamic client
+registration — it must match byte-for-byte on every round-trip, so
+operators who re-bind the backend to a non-default port must also
+re-create the MCP connection so registration repeats. `mcp-remote`
+remains an escape-hatch for legacy/stdio-only servers but is no
+longer the recommended path for anything that speaks the MCP auth
+spec.
 
 ### 8.2 Bridge tools (outbound — what the IDE sees)
 

@@ -36,6 +36,16 @@
  *   #                  indexed repos. Useful when the local gitnexus
  *   #                  install is broken and you want to isolate whether
  *   #                  the LLM half of the factory is working.
+ *   #   --no-external-mcps
+ *   #                  skip mounting any allowlisted external MCP
+ *   #                  connections. Same intent as --no-gitnexus but
+ *   #                  for the Phase 4 mount path.
+ *   #   --trace-mcp-logs
+ *   #                  subscribe to stdio MCP stderr and echo every
+ *   #                  scrubbed line to the smoke script's stdout as
+ *   #                  it arrives. Interleaves with streamed LLM
+ *   #                  tokens — only useful when diagnosing MCP
+ *   #                  startup / auth issues.
  *
  * NOTE: Do NOT prefix the args with `--` (`pnpm … smoke -- --agent x`).
  *   pnpm forwards `--` into argv verbatim, which flips Node's `parseArgs`
@@ -99,6 +109,8 @@ const { values } = parseArgs({
     prompt: { type: 'string', short: 'p' },
     'no-stream': { type: 'boolean' },
     'no-gitnexus': { type: 'boolean' },
+    'no-external-mcps': { type: 'boolean' },
+    'trace-mcp-logs': { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
   // `pnpm run foo -- --flag` forwards `--` into argv. We don't use
@@ -111,13 +123,16 @@ if (values.help) {
   console.info(
     [
       'Usage: pnpm --filter @agent-bridge/agents smoke --agent <slug-or-uuid>',
-      '         [--prompt "…"] [--no-stream] [--no-gitnexus]',
+      '         [--prompt "…"] [--no-stream] [--no-gitnexus] [--no-external-mcps]',
+      '         [--trace-mcp-logs]',
       '',
       'Reads an agent row from Postgres, builds a Mastra Agent via',
       'buildAgent(...), and runs a single prompt through the LLM. When',
       'the agent has status=ready repos attached, a sandboxed',
       '`gitnexus mcp` subprocess is also spawned and its tools become',
-      'available to the LLM. Pass --no-gitnexus to skip that spawn.',
+      'available to the LLM. When the agent has allowlisted MCP tools',
+      '(Phase 4), the relevant MCP connections are spawned too. Pass',
+      '--no-gitnexus or --no-external-mcps to skip the respective mount.',
     ].join('\n'),
   )
   process.exit(0)
@@ -137,6 +152,8 @@ const prompt =
 
 const stream = values['no-stream'] !== true
 const disableGitnexus = values['no-gitnexus'] === true
+const disableExternalMcps = values['no-external-mcps'] === true
+const traceMcpLogs = values['trace-mcp-logs'] === true
 
 // ─── Main ────────────────────────────────────────────────────────────────
 
@@ -154,10 +171,28 @@ async function main(): Promise<void> {
     const agentId = await resolveAgentId(db, agentRef!)
     console.info(`[smoke] resolved agent ref "${agentRef}" → ${agentId}`)
 
-    // `disableGitnexus` is threaded through so `--no-gitnexus` reproduces
-    // a no-tools, LLM-only run against the exact same DB row.
-    built = await buildAgent({ db, agentId, disableGitnexus })
+    // `disableGitnexus` / `disableExternalMcps` are threaded through so
+    // the matching flags reproduce a no-tools (or gitnexus-only) run
+    // against the exact same DB row.
+    built = await buildAgent({
+      db,
+      agentId,
+      disableGitnexus,
+      disableExternalMcps,
+    })
     logMeta(built.meta)
+
+    // Route MCP stderr lines to the console while the smoke run is
+    // live, but ONLY when the operator explicitly opted in. Default-off
+    // keeps the stream response clean; default-on would clobber the
+    // streamed LLM tokens below with interleaved banners.
+    if (traceMcpLogs) {
+      built.subscribeMcpLogs((log) => {
+        console.info(
+          `[smoke] [mcp ${log.connectionName}] [${log.level}] ${log.line}`,
+        )
+      })
+    }
 
     // Phase 3c: dump the merged tools dict so the operator can confirm
     // the `gitnexus_*` tools surfaced. `agent.getTools?.()` is preferred
@@ -248,6 +283,27 @@ function logMeta(meta: BuiltAgentMeta): void {
       `[smoke] gitnexus: skipped via --no-gitnexus (${gitnexus.repoCount} repo(s) available)`,
     )
   }
+
+  const { externalMcps } = meta
+  if (externalMcps.mounted) {
+    const summary = externalMcps.perConnection
+      .map(
+        (c) =>
+          `${c.name} [${c.transport}] → ${c.mountedToolCount}/${c.selectedTools.length}` +
+          (c.missingTools.length > 0
+            ? ` (missing: ${c.missingTools.join(', ')})`
+            : ''),
+      )
+      .join(' · ')
+    console.info(
+      `[smoke] external-mcps: mounted · ${externalMcps.connectionCount} connection(s) · ` +
+        `${externalMcps.toolCount} tool(s) · ${summary}`,
+    )
+  } else if (externalMcps.connectionCount === 0) {
+    console.info('[smoke] external-mcps: skipped (no allowlisted tools)')
+  } else {
+    console.info('[smoke] external-mcps: skipped via --no-external-mcps')
+  }
 }
 
 /**
@@ -261,7 +317,7 @@ function logMeta(meta: BuiltAgentMeta): void {
 async function logMountedTools(
   built: Awaited<ReturnType<typeof buildAgent>>,
 ): Promise<void> {
-  if (!built.meta.gitnexus.mounted) return
+  if (!built.meta.gitnexus.mounted && !built.meta.externalMcps.mounted) return
 
   const agent = built.agent as unknown as {
     getTools?: () => unknown

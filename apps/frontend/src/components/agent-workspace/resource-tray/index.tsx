@@ -361,6 +361,7 @@ function buildGroups(
       glyph: '⬡',
       description: 'External tools',
       count: mcpById.size,
+      addKind: 'mcp',
       items: [...mcpById.entries()].map(([id, info]) => ({
         id,
         label: info.name,

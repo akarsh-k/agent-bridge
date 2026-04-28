@@ -95,6 +95,21 @@ export const mcpTransports = ['stdio', 'http', 'sse'] as const
 
 export type McpTransport = (typeof mcpTransports)[number]
 
+/**
+ * Authentication strategy for an MCP connection:
+ *   - `'none'`     — no auth; stdio default, and the implicit choice for
+ *                    http/sse MCPs that don't require any credential.
+ *   - `'oauth'`    — http/sse only. Uses Mastra's `MCPOAuthClientProvider`
+ *                    with dynamic client registration + PKCE; tokens
+ *                    persisted in `mcp_oauth_state`.
+ *   - `'headers'`  — http/sse only. Static headers (bearer / API key /
+ *                    whatever the server expects) from the
+ *                    `headers_envelope` column.
+ */
+export const mcpAuthKinds = ['none', 'oauth', 'headers'] as const
+
+export type McpAuthKind = (typeof mcpAuthKinds)[number]
+
 // ─── Runs ─────────────────────────────────────────────────────────────────
 
 export const runStatuses = [

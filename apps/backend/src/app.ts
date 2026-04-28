@@ -16,6 +16,7 @@ import { eventsRouter } from './routes/events.js'
 import { healthRouter } from './routes/health.js'
 import { llmProvidersRouter } from './routes/llm-providers.js'
 import { mcpConnectionsRouter } from './routes/mcp-connections.js'
+import { oauthRouter } from './routes/oauth.js'
 import { repoEdgesRouter } from './routes/repo-edges.js'
 import { repoJobsRouter } from './routes/repo-jobs.js'
 import { reposRouter } from './routes/repos.js'
@@ -101,6 +102,11 @@ const app = new Hono()
   )
   .use('*', requestLogger)
   .route('/api', api)
+  // OAuth callback lives at root because the redirect URL is
+  // registered with upstream providers (Notion etc.) at
+  // dynamic-client-registration time and must stay stable across
+  // API versions.
+  .route('/oauth', oauthRouter)
 
 export type AppType = typeof app
 export { app }

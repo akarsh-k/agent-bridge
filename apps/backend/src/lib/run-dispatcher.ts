@@ -67,6 +67,7 @@ import {
   type RunEvent,
   type RunEventKind,
   type RunFinishedPayload,
+  type RunMcpLogPayload,
   type RunStartedPayload,
   type RunStepFinishedPayload,
   type RunStepStartedPayload,
@@ -124,6 +125,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
 
   let built: BuiltAgent | null = null
   let batcher: TokenBatcher | null = null
+  let unsubscribeMcpLogs: (() => void) | null = null
   // Start with a no-op redactor so any early failure before buildAgent
   // returns still flows through a well-defined code path. The real one
   // replaces it as soon as we have the decrypted plaintexts.
@@ -132,6 +134,41 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
   try {
     built = await buildAgent({ db, agentId })
     redactor = createRunRedactor(built.secrets)
+
+    // Wire MCP stderr BEFORE `markRunning` so the very first `tool-call`
+    // the LLM emits already has its stderr tail flowing through the
+    // redactor. We also want the subscriber bound before ANY external
+    // MCP tool fires — otherwise the operator's `NOTION_TOKEN=...`
+    // banner could be printed to a subscriber-less broker and dropped
+    // in the best case, or (worse) held in an unredacted buffer.
+    unsubscribeMcpLogs = built.subscribeMcpLogs((log) => {
+      // Fire-and-forget: the broker invokes us synchronously per line
+      // but `publishAndAudit` is async. We swallow errors inside
+      // `publishAndAudit` already (audit insert failure is logged,
+      // publish errors would bubble) so re-throwing here would only
+      // surface as an unhandled rejection — caught by the
+      // `.catch(...)` below.
+      const event: RunEvent = {
+        kind: 'run.mcp.log',
+        ts: Date.now(),
+        streamId,
+        data: {
+          runId,
+          connectionId: log.connectionId,
+          connectionName: log.connectionName,
+          level: log.level,
+          line: log.line,
+        } satisfies RunMcpLogPayload,
+      }
+      publishAndAudit(db, eventBus, redactor, streamId, runId, event).catch(
+        (err) => {
+          console.error(
+            `[run-dispatcher] mcp.log publish failed for run ${runId}:`,
+            err,
+          )
+        },
+      )
+    })
 
     // Resolve Mastra thread + resource ids up front. For memory-enabled
     // agents we persist them onto the `runs` row BEFORE flipping
@@ -352,6 +389,23 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
           flushErr,
         )
       }
+    }
+    if (unsubscribeMcpLogs) {
+      // Drop the subscription BEFORE `built.disconnect()` so any
+      // stderr line that arrives mid-teardown doesn't try to publish
+      // onto a stream we're about to close. `disconnect()` also calls
+      // `LogBroker.destroy()` which forcibly clears handlers — the
+      // explicit unsubscribe here just keeps the contract explicit
+      // and future-proofs against a `disconnect()` refactor.
+      try {
+        unsubscribeMcpLogs()
+      } catch (err) {
+        console.error(
+          `[run-dispatcher] mcp-log unsubscribe error for run ${runId}:`,
+          err,
+        )
+      }
+      unsubscribeMcpLogs = null
     }
     if (built) {
       try {

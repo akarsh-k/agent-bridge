@@ -144,6 +144,11 @@
   margin-top: 12px;
 }
 
+.chat-msg-tools-orphan {
+  margin-top: 6px;
+  opacity: 0.9;
+}
+
 /* ─── Error ──────────────────────────────────────────────────────────── */
 
 .chat-msg-error {

@@ -22,12 +22,15 @@ import type {
   AgentCreateInput,
   AgentResponse,
   AgentUpdateInput,
+  AllowlistEntry,
   AllowlistEntryResponse,
   AttachRepoInput,
   AttachedRepoResponse,
   LlmProviderCreateInput,
   LlmProviderResponse,
+  McpConnectionCreateInput,
   McpConnectionResponse,
+  McpConnectionUpdateInput,
   RepoCreateInput,
   RepoEdgeResponse,
   RepoResponse,
@@ -91,6 +94,28 @@ export interface WorkspaceContextValue {
   createLlmProvider: (
     input: LlmProviderCreateInput,
   ) => Promise<LlmProviderResponse>
+  createMcpConnection: (
+    input: McpConnectionCreateInput,
+  ) => Promise<McpConnectionResponse>
+  patchMcpConnection: (
+    id: string,
+    patch: McpConnectionUpdateInput,
+  ) => Promise<McpConnectionResponse>
+  /**
+   * Delete an MCP connection and cascade the removal across every
+   * agent's allowlist in local state. The backend's FK cascade handles
+   * the DB side.
+   */
+  removeMcpConnection: (id: string) => Promise<void>
+  /**
+   * Set-replace an agent's MCP tool allowlist. Mirrors the backend's
+   * `PUT /api/agents/:agentId/mcp-tools` semantic — the `tools` array
+   * becomes the canonical allowlist, replacing any previous state.
+   */
+  setAgentMcpTools: (
+    agentId: string,
+    tools: readonly AllowlistEntry[],
+  ) => Promise<readonly AllowlistEntryResponse[]>
 
   /**
    * Refetch a single repo row from the server and patch it into both the

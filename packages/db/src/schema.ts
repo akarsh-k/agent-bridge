@@ -35,6 +35,7 @@ import {
 import type {
   AgentMemoryConfig,
   LlmProviderKind,
+  McpAuthKind,
   McpTransport,
   RepoStatus,
   RunStatus,
@@ -253,6 +254,14 @@ export const mcpConnections = pgTable(
     /** AES-256-GCM envelope over HTTP/SSE headers map. */
     headersEnvelope: text('headers_envelope'),
     /**
+     * Authentication kind for the connection. `'none'` and `'headers'`
+     * capture the pre-Phase-4H behavior — stdio rows and header-based
+     * HTTP rows. `'oauth'` opts in to Mastra's `MCPOAuthClientProvider`
+     * with tokens persisted in `mcp_oauth_state`. The wire-level
+     * discriminator on the DTO mirrors this column 1:1.
+     */
+    authKind: text('auth_kind').$type<McpAuthKind>().notNull().default('none'),
+    /**
      * Sandbox opt-out. When true, `spawnSandboxed` passes the real `$HOME`
      * so MCPs like `gh` that read `~/.config/gh` can see the user's CLI auth.
      * UI must warn explicitly; default is strict isolation.
@@ -262,6 +271,35 @@ export const mcpConnections = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [uniqueIndex('mcp_connections_name_uq').on(t.name)],
+)
+
+// ─── mcp_oauth_state ──────────────────────────────────────────────────────
+// Per-connection OAuth persistence used by Mastra's `MCPOAuthClientProvider`.
+// One row per (connection, scope_key) — e.g. `tokens`, `client_info`,
+// `code_verifier`, `state`. Values are `v1.iv.tag.ct` envelopes from
+// `@agent-bridge/shared/crypto`, same discipline as `env_envelope`. Cascades
+// with the parent connection so deleting an MCP also revokes its auth cache.
+
+export const mcpOauthState = pgTable(
+  'mcp_oauth_state',
+  {
+    mcpConnectionId: uuid('mcp_connection_id')
+      .notNull()
+      .references(() => mcpConnections.id, { onDelete: 'cascade' }),
+    /**
+     * Logical slot name. Matches the keys Mastra's `MCPOAuthClientProvider`
+     * reads/writes via our `OAuthStorage` adapter. Kept as free-form text
+     * (not a pgEnum) because the upstream set is defined by Mastra/the MCP
+     * auth spec and may grow — e.g. a future `resource_metadata` cache.
+     */
+    scopeKey: text('scope_key').notNull(),
+    valueEnvelope: text('value_envelope').notNull(),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.mcpConnectionId, t.scopeKey] }),
+  ],
 )
 
 // ─── agent_mcp_tools (join) ───────────────────────────────────────────────
@@ -395,6 +433,9 @@ export type McpConnectionInsert = typeof mcpConnections.$inferInsert
 export type AgentMcpToolRow = typeof agentMcpTools.$inferSelect
 export type AgentMcpToolInsert = typeof agentMcpTools.$inferInsert
 
+export type McpOauthStateRow = typeof mcpOauthState.$inferSelect
+export type McpOauthStateInsert = typeof mcpOauthState.$inferInsert
+
 export type RunRow = typeof runs.$inferSelect
 export type RunInsert = typeof runs.$inferInsert
 
@@ -416,6 +457,7 @@ export const allTables = [
   agentRepos,
   repoEdges,
   mcpConnections,
+  mcpOauthState,
   agentMcpTools,
   runs,
   runEvents,
@@ -435,6 +477,7 @@ export const tableNames = [
   'agent_repos',
   'repo_edges',
   'mcp_connections',
+  'mcp_oauth_state',
   'agent_mcp_tools',
   'runs',
   'run_events',
@@ -456,5 +499,6 @@ export const tablesWithUpdatedAt = [
   'agent_repos',
   'repo_edges',
   'mcp_connections',
+  'mcp_oauth_state',
   'runs',
 ] as const
