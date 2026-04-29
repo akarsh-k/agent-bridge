@@ -14,6 +14,7 @@ import { agentReposRouter } from './routes/agent-repos.js'
 import { agentRunsRouter } from './routes/agent-runs.js'
 import { agentsRouter } from './routes/agents.js'
 import { bridgeRouter } from './routes/bridge.js'
+import { bridgeToolsRouter } from './routes/bridge-tools.js'
 import { eventsRouter } from './routes/events.js'
 import { healthRouter } from './routes/health.js'
 import { llmProvidersRouter } from './routes/llm-providers.js'
@@ -90,6 +91,7 @@ const api = new Hono()
   .route('/agents/:agentId/mcp-tools', agentMcpToolsRouter)
   .route('/agents/:agentId/skills', skillsRouter)
   .route('/agents/:agentId/tools', toolsRouter)
+  .route('/agents/:agentId/bridge-tools', bridgeToolsRouter)
   .route('/agents/:agentId/runs', agentRunsRouter)
   .route('/llm-providers', llmProvidersRouter)
   .route('/mcp-connections', mcpConnectionsRouter)

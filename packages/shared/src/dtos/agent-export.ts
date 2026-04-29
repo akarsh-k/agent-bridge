@@ -72,7 +72,15 @@ const toolKindSchema = z.enum(toolKinds)
  * separate from `LATEST_VERSION` so the literal isn't accidentally
  * written in a non-bumpable place.
  */
-export const AGENT_EXPORT_LATEST_VERSION = 1 as const
+export const AGENT_EXPORT_LATEST_VERSION = 2 as const
+
+/**
+ * Bundles produced before Phase 7 used `version: 1` and didn't have the
+ * `bridgeTools` field. We accept both versions on import so older
+ * exports keep working — the importer treats a missing `bridgeTools`
+ * key as an empty array.
+ */
+export const AGENT_EXPORT_SUPPORTED_VERSIONS = [1, 2] as const
 
 // ─── Skill / tool / repo / edge sub-shapes ───────────────────────────────
 
@@ -134,6 +142,27 @@ const exportedMcpAllowlistEntrySchema = z
   })
   .strict()
 
+/**
+ * Phase 7: an exported `bridge_tools` row. The DB CHECK constraints
+ * (reserved-prefix and identifier format) ARE re-applied at the import
+ * boundary by the route's INSERT — but we also re-validate here so a
+ * bundle hand-edited on disk fails parsing before the DB sees it.
+ */
+const exportedBridgeToolSchema = z
+  .object({
+    name: z
+      .string()
+      .regex(/^[a-zA-Z][a-zA-Z0-9_]{0,63}$/, 'invalid bridge tool name')
+      .refine((v) => !v.startsWith('query_'), {
+        message: '"query_" prefix is reserved for the auto-derived default tool',
+      }),
+    description: z.string().max(1_000),
+    inputSchema: z.record(z.string(), z.unknown()),
+    promptTemplate: z.string().max(20_000),
+    enabled: z.boolean(),
+  })
+  .strict()
+
 // ─── Agent core ──────────────────────────────────────────────────────────
 
 const exportedAgentCoreSchema = z
@@ -159,7 +188,12 @@ const exportedAgentCoreSchema = z
 
 export const agentExportBundleSchema = z
   .object({
-    version: z.literal(AGENT_EXPORT_LATEST_VERSION),
+    /**
+     * Bundle schema version. Producers always emit
+     * `AGENT_EXPORT_LATEST_VERSION`; importers accept any version in
+     * `AGENT_EXPORT_SUPPORTED_VERSIONS` for backward compatibility.
+     */
+    version: z.union([z.literal(1), z.literal(2)]),
     /** ISO-8601 timestamp of when the export was generated. Informational. */
     exportedAt: z.iso.datetime(),
     agent: exportedAgentCoreSchema,
@@ -168,6 +202,11 @@ export const agentExportBundleSchema = z
     repoAttachments: z.array(exportedRepoAttachmentSchema).max(1_000),
     repoEdges: z.array(exportedRepoEdgeSchema).max(10_000),
     mcpAllowlist: z.array(exportedMcpAllowlistEntrySchema).max(1_000),
+    /**
+     * Phase 7 — outbound bridge tools. Optional in the schema so v1
+     * bundles still parse; importer treats absence as an empty array.
+     */
+    bridgeTools: z.array(exportedBridgeToolSchema).max(1_000).optional(),
   })
   .strict()
 
@@ -213,6 +252,7 @@ export const agentImportResponseSchema = z.object({
     repoAttachments: z.number().int().nonnegative(),
     repoEdges: z.number().int().nonnegative(),
     mcpAllowlist: z.number().int().nonnegative(),
+    bridgeTools: z.number().int().nonnegative(),
   }),
   warnings: z.array(z.string()).max(100),
 })

@@ -33,10 +33,13 @@
 
 import { randomUUID } from 'node:crypto'
 
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
+import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
-import { asc, eq } from 'drizzle-orm'
-import { z } from 'zod'
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+} from '@modelcontextprotocol/sdk/types.js'
+import { and, asc, eq } from 'drizzle-orm'
 
 import {
   createDb,
@@ -70,6 +73,51 @@ interface AgentRecord {
   readonly llmProviderId: string | null
 }
 
+interface BridgeToolRecord {
+  readonly id: string
+  readonly name: string
+  readonly description: string
+  readonly inputSchema: Record<string, unknown>
+  readonly promptTemplate: string
+}
+
+/**
+ * One entry in the bridge's tool registry. Either a Phase-5 1:1 default
+ * (auto-derived `query_<slug>`) or a Phase-7 explicit `bridge_tools`
+ * row. The IDE sees them identically — both are MCP tools with a name,
+ * description, and JSON-Schema input. The handler routes accordingly.
+ */
+interface ToolEntry {
+  readonly name: string
+  readonly description: string
+  readonly inputSchema: Record<string, unknown>
+  readonly agent: AgentRecord
+  readonly source: ToolEntrySource
+}
+
+type ToolEntrySource =
+  | { kind: 'default' }
+  | { kind: 'phase7'; tool: BridgeToolRecord }
+
+/**
+ * Default JSON Schema for the Phase 5 1:1 fallback tool. Mirrors the
+ * Zod shape the previous `McpServer.registerTool` flavour built. The
+ * IDE sees this verbatim on `tools/list`.
+ */
+const DEFAULT_TOOL_INPUT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    query: {
+      type: 'string',
+      minLength: 1,
+      maxLength: 8_000,
+      description: 'The question or instruction to send to the agent.',
+    },
+  },
+  required: ['query'],
+  additionalProperties: false,
+}
+
 /**
  * Read every agent that has a configured LLM provider. Agents without
  * a provider are silently skipped — surfacing them in the IDE would
@@ -91,40 +139,92 @@ async function listExposableAgents(db: AgentBridgeDb): Promise<AgentRecord[]> {
 }
 
 /**
- * Register one MCP tool per agent. The tool name is
- * `${BRIDGE_TOOL_RESERVED_PREFIX}<slug>` so it's stable across
- * sessions and namespaced away from any user-authored bridge tools
- * Phase 7 will add. Description falls back to a generic phrasing
- * when `agents.description` is null.
+ * Phase 7 resolver. For each exposable agent, query
+ * `bridge_tools` rows where `enabled = true`. If any exist, register
+ * those (1:N mode); otherwise register the Phase 5 default tool
+ * (1:1 mode). One pass over the DB, one decision per agent.
  */
-function registerAgentTools(
-  server: McpServer,
+async function buildToolRegistry(
+  db: AgentBridgeDb,
   agents: readonly AgentRecord[],
-  ctx: BridgeContext,
-): void {
-  for (const agent of agents) {
-    const toolName = `${BRIDGE_TOOL_RESERVED_PREFIX}${agent.slug}`
-    const description =
-      agent.description?.trim() ||
-      `Query the "${agent.name}" agent. The agent has access to its configured tools and repos; ask in natural language.`
+): Promise<{
+  registry: Map<string, ToolEntry>
+  modeByAgentSlug: Map<string, '1:1 default' | `1:N (${number})`>
+}> {
+  const registry = new Map<string, ToolEntry>()
+  const modeByAgentSlug = new Map<
+    string,
+    '1:1 default' | `1:N (${number})`
+  >()
 
-    server.registerTool(
-      toolName,
-      {
+  for (const agent of agents) {
+    const rows = await db.db
+      .select({
+        id: schema.bridgeTools.id,
+        name: schema.bridgeTools.name,
+        description: schema.bridgeTools.description,
+        inputSchema: schema.bridgeTools.inputSchema,
+        promptTemplate: schema.bridgeTools.promptTemplate,
+      })
+      .from(schema.bridgeTools)
+      .where(
+        and(
+          eq(schema.bridgeTools.agentId, agent.id),
+          eq(schema.bridgeTools.enabled, true),
+        ),
+      )
+      .orderBy(asc(schema.bridgeTools.name))
+
+    const enabledRows: BridgeToolRecord[] = rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      description: r.description,
+      inputSchema: r.inputSchema as Record<string, unknown>,
+      promptTemplate: r.promptTemplate,
+    }))
+
+    if (enabledRows.length > 0) {
+      modeByAgentSlug.set(agent.slug, `1:N (${enabledRows.length})`)
+      for (const row of enabledRows) {
+        const inputSchema =
+          row.inputSchema && Object.keys(row.inputSchema).length > 0
+            ? row.inputSchema
+            : EMPTY_OBJECT_SCHEMA
+        registry.set(row.name, {
+          name: row.name,
+          description: row.description.trim() || `Bridge tool for "${agent.name}".`,
+          inputSchema,
+          agent,
+          source: { kind: 'phase7', tool: row },
+        })
+      }
+    } else {
+      modeByAgentSlug.set(agent.slug, '1:1 default')
+      const toolName = `${BRIDGE_TOOL_RESERVED_PREFIX}${agent.slug}`
+      const description =
+        agent.description?.trim() ||
+        `Query the "${agent.name}" agent. The agent has access to its configured tools and repos; ask in natural language.`
+      registry.set(toolName, {
+        name: toolName,
         description,
-        inputSchema: {
-          query: z
-            .string()
-            .min(1)
-            .max(8_000)
-            .describe('The question or instruction to send to the agent.'),
-        },
-      },
-      async ({ query }) => {
-        return executeAgentQuery(ctx, agent, query)
-      },
-    )
+        inputSchema: DEFAULT_TOOL_INPUT_SCHEMA,
+        agent,
+        source: { kind: 'default' },
+      })
+    }
   }
+
+  return { registry, modeByAgentSlug }
+}
+
+/**
+ * Empty JSON Schema for tools that haven't authored an input shape yet.
+ * MCP clients accept `{ type: 'object' }` to mean "no required args".
+ */
+const EMPTY_OBJECT_SCHEMA: Record<string, unknown> = {
+  type: 'object',
+  properties: {},
+  additionalProperties: true,
 }
 
 interface BridgeContext {
@@ -137,12 +237,18 @@ interface BridgeContext {
  * awaits the dispatcher to completion (HTTP fires-and-forgets so the
  * 202 lands while the run is still streaming; the bridge can't
  * stream — it returns one text payload — so awaiting is correct).
+ *
+ * Phase 7 path: when the entry source is a `bridge_tools` row, the
+ * operator's `prompt_template` is rendered against the IDE-supplied
+ * args to produce `runs.input_prompt`. Phase 5 (default) path: the
+ * raw `query` arg becomes the prompt verbatim.
  */
-async function executeAgentQuery(
+async function executeToolCall(
   ctx: BridgeContext,
-  agent: AgentRecord,
-  query: string,
+  entry: ToolEntry,
+  args: Record<string, unknown>,
 ) {
+  const { agent } = entry
   const runId = randomUUID()
   const streamId = bridgeStreamId(runId)
 
@@ -169,11 +275,40 @@ async function executeAgentQuery(
     )
   }
 
+  // Build the actual `inputPrompt` from the tool kind:
+  //   - Phase 5 default: take the `query` arg verbatim.
+  //   - Phase 7 explicit: render the operator's `prompt_template`
+  //     with the IDE-supplied args.
+  let prompt: string
+  let bridgeToolName: string | null = null
+  if (entry.source.kind === 'phase7') {
+    bridgeToolName = entry.name
+    prompt = renderPromptTemplate(
+      entry.source.tool.promptTemplate,
+      args,
+    )
+  } else {
+    const q = args['query']
+    if (typeof q !== 'string' || q.trim().length === 0) {
+      return toolErrorResult(
+        'Missing required arg "query" — pass a question or instruction.',
+      )
+    }
+    prompt = q
+  }
+
+  if (prompt.trim().length === 0) {
+    return toolErrorResult(
+      'Rendered prompt was empty — check that your bridge tool template references args correctly.',
+    )
+  }
+
   await runsRepo.createRun(ctx.db, {
     id: runId,
     agentId: agent.id,
-    inputPrompt: query,
+    inputPrompt: prompt,
     streamId,
+    bridgeToolName,
   })
 
   try {
@@ -183,7 +318,7 @@ async function executeAgentQuery(
       agentId: agent.id,
       runId,
       streamId,
-      prompt: query,
+      prompt,
     })
   } catch (err) {
     // dispatchRun resolves rather than rejects on a normal run-error
@@ -227,6 +362,35 @@ async function executeAgentQuery(
   }
 }
 
+/**
+ * Minimal `{{ name }}` template renderer for Phase 7 prompt templates.
+ * Placeholders match `[a-zA-Z_][a-zA-Z0-9_]*` (same identifier rule as
+ * MCP tool names). Unknown placeholders interpolate as the empty
+ * string — better than throwing on a partial match, since the operator
+ * can still see the rendered prompt in `runs.input_prompt` and fix
+ * the template. We deliberately do NOT support escaping or filters;
+ * if templates get hairy, switch to a real templating library (this
+ * function is the only call site).
+ */
+function renderPromptTemplate(
+  template: string,
+  args: Record<string, unknown>,
+): string {
+  return template.replace(
+    /\{\{\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*\}\}/g,
+    (_match, name: string) => {
+      const v = args[name]
+      if (v === undefined || v === null) return ''
+      if (typeof v === 'string') return v
+      try {
+        return JSON.stringify(v)
+      } catch {
+        return String(v)
+      }
+    },
+  )
+}
+
 function toolErrorResult(message: string) {
   return {
     isError: true,
@@ -254,23 +418,51 @@ async function main(): Promise<void> {
   const eventBus = createEventBus({ redisUrl: env.REDIS_URL })
 
   const agents = await listExposableAgents(db)
+  const { registry, modeByAgentSlug } = await buildToolRegistry(db, agents)
+
   console.error(
-    `[mcp-bridge] exposing ${agents.length} agent(s): ${
-      agents.map((a) => a.slug).join(', ') || '<none>'
-    }`,
+    `[mcp-bridge] exposing ${registry.size} tool(s) across ${agents.length} agent(s):`,
   )
+  for (const agent of agents) {
+    const mode = modeByAgentSlug.get(agent.slug) ?? '<no mode>'
+    console.error(`[mcp-bridge]   • ${agent.slug} → ${mode}`)
+  }
 
-  const server = new McpServer(
+  // Phase 7 uses the lower-level `Server` API instead of `McpServer`
+  // because we need to ship arbitrary JSON Schema (operator-authored)
+  // verbatim on `tools/list`. `McpServer.registerTool` only accepts Zod
+  // shapes; converting JSON Schema → Zod at runtime would require a
+  // converter dep AND would round-trip the schema, potentially
+  // dropping fields. The lower-level handlers let the schema flow
+  // unchanged from DB → MCP wire.
+  const server = new Server(
     { name: 'agent-bridge', version: '1.0.0' },
-    {
-      // Capabilities are derived from registered tools by the SDK; we
-      // declare an empty capabilities object so the handshake doesn't
-      // advertise prompts/resources we never set.
-      capabilities: { tools: {} },
-    },
+    { capabilities: { tools: {} } },
   )
 
-  registerAgentTools(server, agents, { db, eventBus })
+  const ctx: BridgeContext = { db, eventBus }
+
+  server.setRequestHandler(ListToolsRequestSchema, () => {
+    return {
+      tools: Array.from(registry.values()).map((entry) => ({
+        name: entry.name,
+        description: entry.description,
+        inputSchema: entry.inputSchema,
+      })),
+    }
+  })
+
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const { name, arguments: rawArgs } = request.params
+    const entry = registry.get(name)
+    if (!entry) {
+      return toolErrorResult(
+        `Unknown tool "${name}". The bridge only exposes agents that have an LLM provider attached; recreate the IDE session if you just added one.`,
+      )
+    }
+    const args = (rawArgs ?? {}) as Record<string, unknown>
+    return executeToolCall(ctx, entry, args)
+  })
 
   const transport = new StdioServerTransport()
   await server.connect(transport)

@@ -83,6 +83,12 @@ export async function createRun(
     readonly agentId: string
     readonly inputPrompt: string
     readonly streamId: string
+    /**
+     * Phase 7: bridge tool name when this run was started by
+     * `apps/mcp-bridge` AND the agent had ≥1 explicit `bridge_tools`
+     * row. Phase 5 (1:1 default) and UI-chat runs leave this null.
+     */
+    readonly bridgeToolName?: string | null
   },
 ): Promise<RunRow> {
   const [row] = await handle.db
@@ -93,6 +99,9 @@ export async function createRun(
       streamId: params.streamId,
       inputPrompt: params.inputPrompt,
       status: 'pending',
+      ...(params.bridgeToolName !== undefined
+        ? { bridgeToolName: params.bridgeToolName }
+        : {}),
     })
     .returning()
 

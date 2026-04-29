@@ -65,12 +65,12 @@ export const agentExportRouter = new Hono()
         })
       }
 
-      // Walk skills, tools, attached repos, edges, and the MCP allowlist
-      // in parallel — each is independent of the others. We deliberately
-      // do NOT pull `llm_providers`: providers carry encrypted secrets
-      // and the operator must reattach one after import (see DTO
-      // docstring for rationale).
-      const [skills, tools, attachedRepos, repoEdges, mcpAllowlist] =
+      // Walk skills, tools, attached repos, edges, MCP allowlist, and
+      // Phase 7 bridge tools in parallel — each is independent. We
+      // deliberately do NOT pull `llm_providers`: providers carry
+      // encrypted secrets and the operator must reattach one after
+      // import (see DTO docstring for rationale).
+      const [skills, tools, attachedRepos, repoEdges, mcpAllowlist, bridgeTools] =
         await Promise.all([
           db
             .select({
@@ -137,6 +137,17 @@ export const agentExportRouter = new Hono()
               ),
             )
             .where(eq(schema.agentMcpTools.agentId, id)),
+          db
+            .select({
+              name: schema.bridgeTools.name,
+              description: schema.bridgeTools.description,
+              inputSchema: schema.bridgeTools.inputSchema,
+              promptTemplate: schema.bridgeTools.promptTemplate,
+              enabled: schema.bridgeTools.enabled,
+            })
+            .from(schema.bridgeTools)
+            .where(eq(schema.bridgeTools.agentId, id))
+            .orderBy(asc(schema.bridgeTools.name)),
         ])
 
       // The edges query above only resolved the `from` side via the
@@ -192,6 +203,10 @@ export const agentExportRouter = new Hono()
         repoAttachments: attachedRepos,
         repoEdges: expandedEdges,
         mcpAllowlist,
+        bridgeTools: bridgeTools.map((t) => ({
+          ...t,
+          inputSchema: t.inputSchema as Record<string, unknown>,
+        })),
       }
 
       // Validate before returning so a schema drift between the DB shape
@@ -387,6 +402,47 @@ export const agentExportRouter = new Hono()
             }
           }
 
+          // 7. Phase 7 bridge tools. Optional — v1 bundles don't carry
+          //    them. Names are GLOBALLY unique on `bridge_tools.name`
+          //    (MCP spec: per-server uniqueness), so we pre-check for
+          //    collisions and skip them with a warning. A throw inside
+          //    the transaction would abort the whole import; pre-
+          //    checking is the correct way to "partial-import" here.
+          const bridgeToolsToImport = bundle.bridgeTools ?? []
+          let bridgeToolsImported = 0
+          if (bridgeToolsToImport.length > 0) {
+            const wantedNames = bridgeToolsToImport.map((bt) => bt.name)
+            const existing = await tx
+              .select({ name: schema.bridgeTools.name })
+              .from(schema.bridgeTools)
+              .where(inArray(schema.bridgeTools.name, wantedNames))
+            const taken = new Set(existing.map((r) => r.name))
+
+            const acceptable = bridgeToolsToImport.filter((bt) => {
+              if (taken.has(bt.name)) {
+                warnings.push(
+                  `skipping bridge tool "${bt.name}": name already in use on this install`,
+                )
+                return false
+              }
+              return true
+            })
+
+            if (acceptable.length > 0) {
+              await tx.insert(schema.bridgeTools).values(
+                acceptable.map((bt) => ({
+                  agentId: agent.id,
+                  name: bt.name,
+                  description: bt.description,
+                  inputSchema: bt.inputSchema,
+                  promptTemplate: bt.promptTemplate,
+                  enabled: bt.enabled,
+                })),
+              )
+              bridgeToolsImported = acceptable.length
+            }
+          }
+
           return {
             agentId: agent.id,
             summary: {
@@ -395,6 +451,7 @@ export const agentExportRouter = new Hono()
               repoAttachments: bundle.repoAttachments.length,
               repoEdges: edgeImported,
               mcpAllowlist: mcpImported,
+              bridgeTools: bridgeToolsImported,
             },
           }
         })

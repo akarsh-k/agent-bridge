@@ -71,6 +71,13 @@
       "when": 1777465847758,
       "tag": "0009_provider_embedding_model",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1777470677851,
+      "tag": "0010_bridge_tools",
+      "breakpoints": true
     }
   ]
 }

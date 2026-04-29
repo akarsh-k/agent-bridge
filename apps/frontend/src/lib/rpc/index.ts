@@ -21,6 +21,9 @@ import type {
   AgentExportBundle,
   AgentImportInput,
   AgentImportResponse,
+  BridgeToolCreateInput,
+  BridgeToolResponse,
+  BridgeToolUpdateInput,
   ErrorCode,
   LlmProviderRefreshModelsInput,
   LlmProviderRefreshModelsResponse,
@@ -246,6 +249,70 @@ export async function importAgentBundle(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(input),
     }),
+  )
+}
+
+// ─── Bridge tools (Phase 7) ──────────────────────────────────────────────
+
+export async function listBridgeTools(
+  agentId: string,
+): Promise<readonly BridgeToolResponse[]> {
+  const res = await callApi<{
+    ok: true
+    bridgeTools: readonly BridgeToolResponse[]
+  }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/bridge-tools`,
+      { method: 'GET' },
+    ),
+  )
+  return res.bridgeTools
+}
+
+export async function createBridgeTool(
+  agentId: string,
+  input: BridgeToolCreateInput,
+): Promise<BridgeToolResponse> {
+  const res = await callApi<{ ok: true; bridgeTool: BridgeToolResponse }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/bridge-tools`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      },
+    ),
+  )
+  return res.bridgeTool
+}
+
+export async function patchBridgeTool(
+  agentId: string,
+  id: string,
+  patch: BridgeToolUpdateInput,
+): Promise<BridgeToolResponse> {
+  const res = await callApi<{ ok: true; bridgeTool: BridgeToolResponse }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/bridge-tools/${encodeURIComponent(id)}`,
+      {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      },
+    ),
+  )
+  return res.bridgeTool
+}
+
+export async function deleteBridgeTool(
+  agentId: string,
+  id: string,
+): Promise<void> {
+  await callApi<{ ok: true; id: string }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/bridge-tools/${encodeURIComponent(id)}`,
+      { method: 'DELETE' },
+    ),
   )
 }
 

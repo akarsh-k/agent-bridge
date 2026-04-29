@@ -28,6 +28,7 @@ import { useWorkspace } from '../../../lib/workspace-context'
 import { ModelPicker } from '../../common/model-picker'
 import { ApiError, exportAgentBundle } from '../../../lib/rpc'
 import { navigate } from '../../../lib/router'
+import { BridgeToolsSection } from './bridge-tools-section'
 import { MemorySection } from './memory-section'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
@@ -320,6 +321,13 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
           />
         </section>
       ) : null}
+
+      <section className="inspector-section">
+        <div className="inspector-section-title">
+          <span>Bridge tools</span>
+        </div>
+        <BridgeToolsSection agentId={agent.id} agentSlug={agent.slug} />
+      </section>
 
       {serverError ? (
         <div className="banner banner-error" role="alert">

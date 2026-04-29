@@ -364,6 +364,77 @@ export const agentMcpTools = pgTable(
   ],
 )
 
+// ─── bridge_tools (Phase 7) ──────────────────────────────────────────────
+// Outbound MCP tools an agent exposes to IDEs (Cursor, Claude Code) via
+// `apps/mcp-bridge`. Distinct from `agent_mcp_tools` (which is the
+// INBOUND allowlist of MCP tools the agent itself can invoke). See
+// `docs/ARCHITECTURE.md` §8 for the inbound/outbound naming convention.
+//
+// Resolution at MCP-bridge boot (per agent):
+//   1. If the agent has ≥1 row in `bridge_tools` with `enabled = true`,
+//      expose those tools verbatim (one MCP tool per row).
+//   2. Otherwise, fall back to the Phase 5 1:1 default (`query_<slug>`).
+//
+// `name` is GLOBALLY unique (MCP spec requires per-server tool-name
+// uniqueness; one bridge process = one MCP server). The `query_` prefix
+// is reserved for the Phase 5 auto-derived defaults, enforced by a CHECK
+// constraint so an explicit row can't shadow the implicit default.
+//
+// `input_schema` stores a JSON Schema draft-07 object — the format MCP
+// clients actually consume. We don't store Zod (doesn't serialize)
+// or our own schema language (would force translation at boot).
+
+export const bridgeTools = pgTable(
+  'bridge_tools',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    /**
+     * MCP tool identifier as the IDE sees it. Must satisfy
+     * `^[a-zA-Z][a-zA-Z0-9_]{0,63}$` and must NOT start with `query_`
+     * (reserved for Phase 5 fallback). Both rules are enforced at the
+     * DB layer via CHECK constraints — the application catches them
+     * earlier with a friendlier error, but the DB is the last line.
+     */
+    name: text('name').notNull(),
+    description: text('description').notNull().default(''),
+    /**
+     * JSON Schema draft-07 object describing the tool's input. Stored
+     * as opaque jsonb at the schema layer; the auth UI parses + the
+     * mcp-bridge ships it verbatim to clients via `tools/list`.
+     */
+    inputSchema: jsonb('input_schema')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    /**
+     * Mustache-ish prompt template — placeholders are wrapped in `{{ … }}`
+     * and resolve to the named arg at invocation time. The bridge
+     * synthesises `runs.input_prompt` from this template + the
+     * incoming arg map. We store the raw template (not the rendered
+     * prompt) so future arg changes don't require migration.
+     */
+    promptTemplate: text('prompt_template').notNull().default(''),
+    enabled: boolean('enabled').notNull().default(true),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    uniqueIndex('bridge_tools_name_uq').on(t.name),
+    index('bridge_tools_agent_idx').on(t.agentId),
+    check(
+      'bridge_tools_name_not_reserved',
+      sql`${t.name} NOT LIKE 'query\\_%' ESCAPE '\\'`,
+    ),
+    check(
+      'bridge_tools_name_format',
+      sql`${t.name} ~ '^[a-zA-Z][a-zA-Z0-9_]{0,63}$'`,
+    ),
+  ],
+)
+
 // ─── runs ─────────────────────────────────────────────────────────────────
 
 export const runs = pgTable(
@@ -397,6 +468,17 @@ export const runs = pgTable(
      * multi-user auth will stamp real user ids here.
      */
     mastraResourceId: text('mastra_resource_id'),
+    /**
+     * Phase 7: which bridge tool the IDE invoked, when this run was
+     * started by `apps/mcp-bridge` AND the agent had ≥1 explicit
+     * `bridge_tools` row. Phase 5 (1:1 default) runs leave this NULL —
+     * the auto-derived `query_<slug>` tool isn't a row in
+     * `bridge_tools`, and giving it a synthetic name here would muddle
+     * the "explicit vs default" filter. Soft column (no FK): bridge
+     * tools can be deleted while a run row that referenced them
+     * still exists, and we don't want to cascade-null on every edit.
+     */
+    bridgeToolName: text('bridge_tool_name'),
     startedAt: timestamp('started_at', {
       withTimezone: true,
       mode: 'date',
@@ -419,6 +501,12 @@ export const runs = pgTable(
     index('runs_mastra_thread_idx')
       .on(t.mastraThreadId, t.startedAt)
       .where(sql`${t.mastraThreadId} IS NOT NULL`),
+    // "Runs of bridge tool X for this agent" filter for Phase 7 UI.
+    // Partial index drops the NULL rows from chat / 1:1 default runs
+    // so it stays small even after years of usage.
+    index('runs_agent_bridge_tool_idx')
+      .on(t.agentId, t.bridgeToolName, t.startedAt)
+      .where(sql`${t.bridgeToolName} IS NOT NULL`),
   ],
 )
 
@@ -471,6 +559,9 @@ export type McpConnectionInsert = typeof mcpConnections.$inferInsert
 export type AgentMcpToolRow = typeof agentMcpTools.$inferSelect
 export type AgentMcpToolInsert = typeof agentMcpTools.$inferInsert
 
+export type BridgeToolRow = typeof bridgeTools.$inferSelect
+export type BridgeToolInsert = typeof bridgeTools.$inferInsert
+
 export type McpOauthStateRow = typeof mcpOauthState.$inferSelect
 export type McpOauthStateInsert = typeof mcpOauthState.$inferInsert
 
@@ -497,6 +588,7 @@ export const allTables = [
   mcpConnections,
   mcpOauthState,
   agentMcpTools,
+  bridgeTools,
   runs,
   runEvents,
 ] as const
@@ -517,6 +609,7 @@ export const tableNames = [
   'mcp_connections',
   'mcp_oauth_state',
   'agent_mcp_tools',
+  'bridge_tools',
   'runs',
   'run_events',
 ] as const
@@ -538,5 +631,6 @@ export const tablesWithUpdatedAt = [
   'repo_edges',
   'mcp_connections',
   'mcp_oauth_state',
+  'bridge_tools',
   'runs',
 ] as const

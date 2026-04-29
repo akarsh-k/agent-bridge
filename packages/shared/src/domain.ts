@@ -166,27 +166,43 @@ export type RunStatus = (typeof runStatuses)[number]
 // ─── Bridge tools (Phase 5 / Phase 7) ─────────────────────────────────────
 
 /**
- * Marker namespace for "bridge tools" — the tools an agent exposes
- * outbound to an IDE (Cursor, Claude Code) via the wrapper MCP server
- * in `apps/mcp-bridge`. Distinct from "agent tools" (the inbound tools
- * an agent itself uses), which live on `agent_mcp_tools` etc.
+ * One bridge tool — what an agent exposes outbound to an IDE (Cursor,
+ * Claude Code) via the wrapper MCP server in `apps/mcp-bridge`.
+ * Distinct from "agent tools" (inbound tools the agent itself uses),
+ * which live on `agent_mcp_tools` etc. See `docs/ARCHITECTURE.md` §8.
  *
- * **Phase 5 (1:1):** every agent auto-exposes exactly one bridge tool
- * — `query_<agent.slug>` derived at runtime, no DB row, the
- * `query_` prefix is reserved.
+ * **Phase 5 (1:1, default):** every agent that has NO `bridge_tools`
+ * rows auto-exposes a single tool — `query_<agent.slug>` derived at
+ * runtime, no DB row. The `query_` prefix is reserved (see
+ * `BRIDGE_TOOL_RESERVED_PREFIX`).
  *
- * **Phase 7 (1:N):** a `bridge_tools` table will let operators author
- * multiple curated bridge tools per agent. To keep that migration
- * additive, this interface is reserved as **empty** in Phase 5 — code
- * MUST NOT construct it. When Phase 7 fills in required fields
- * (`name`, `description`, `inputSchema`, `promptTemplate`), no
- * existing call site needs to change.
+ * **Phase 7 (1:N, opt-in):** rows in `bridge_tools` (one row → one
+ * outbound MCP tool) override the 1:1 default for that agent. Each row
+ * has its own `inputSchema` (JSON Schema draft-07) and
+ * `promptTemplate` (mustache-ish, `{{ argName }}` placeholders).
  *
- * See `docs/PLAN.md` Phase 5 design decision "BridgeToolDescriptor is
- * a marker only".
+ * The *interface* shape mirrors the row shape — but in some flows
+ * (export/import, a UI draft) you may carry a descriptor without an
+ * `id` / agent / timestamps yet. Use `BridgeToolRow` from
+ * `@agent-bridge/db/schema` when you need the persisted shape.
  */
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface BridgeToolDescriptor {}
+export interface BridgeToolDescriptor {
+  readonly name: string
+  readonly description: string
+  readonly inputSchema: BridgeToolInputSchema
+  readonly promptTemplate: string
+  readonly enabled: boolean
+}
+
+/**
+ * The shape MCP clients actually consume on `tools/list`. We store + ship
+ * JSON Schema draft-07+ object form (`{ type: 'object', properties: {...} }`)
+ * because it's what the MCP wire spec accepts. The schema is opaque to
+ * Agent Bridge — we don't validate the JSON Schema itself; Mastra and
+ * the IDE handle that downstream. Operators who pass invalid JSON
+ * Schema get a runtime error from the IDE, not from us.
+ */
+export type BridgeToolInputSchema = Record<string, unknown>
 
 /**
  * Reserved tool-name prefix for the auto-derived 1:1 default bridge
