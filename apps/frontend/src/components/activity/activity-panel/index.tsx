@@ -45,6 +45,7 @@ const KIND_ICON: Record<RunEventKind, string> = {
   'repo.wiki.progress': '↻',
   'repo.wiki.ok': '✓',
   'repo.wiki.fail': '✕',
+  'agent.config.changed': '✎',
   ping: '·',
 }
 
@@ -76,6 +77,17 @@ function formatTs(ts: number): string {
 
 function formatPayload(event: RunEvent): string | null {
   if (event.data === undefined || event.data === null) return null
+
+  // Render `agent.config.changed` as a human one-liner instead of a
+  // JSON dump — the whole point of the event is to read like an
+  // activity log entry.
+  if (event.kind === 'agent.config.changed' && isConfigPayload(event.data)) {
+    const { action, resource, label, detail } = event.data
+    const verb = action.charAt(0).toUpperCase() + action.slice(1)
+    const head = `${verb} ${resource.replace('_', ' ')}: ${label}`
+    return detail ? `${head} — ${detail}` : head
+  }
+
   if (typeof event.data === 'string') return event.data
   try {
     const s = JSON.stringify(event.data, null, 2)
@@ -83,6 +95,21 @@ function formatPayload(event: RunEvent): string | null {
   } catch {
     return null
   }
+}
+
+function isConfigPayload(data: unknown): data is {
+  action: string
+  resource: string
+  label: string
+  detail?: string
+} {
+  if (typeof data !== 'object' || data === null) return false
+  const d = data as Record<string, unknown>
+  return (
+    typeof d.action === 'string' &&
+    typeof d.resource === 'string' &&
+    typeof d.label === 'string'
+  )
 }
 
 export function ActivityPanel({

@@ -47,6 +47,17 @@ export const runEventKinds = [
   'repo.wiki.progress',
   'repo.wiki.ok',
   'repo.wiki.fail',
+  /**
+   * Emitted by mutating CRUD routes (skills, tools, repos, edges, MCP
+   * allowlist, agent core fields) AFTER the DB write succeeds, on the
+   * per-agent fan-out channel `agent:<agentId>`. Lets the Activity
+   * panel show config edits inline with runtime events. NOT persisted
+   * to `run_events` — the DB row itself + `updated_at` is the audit
+   * trail; the SSE frame is just for the live feed.
+   *
+   * Payload shape: `AgentConfigChangedPayload`.
+   */
+  'agent.config.changed',
   'ping',
 ] as const
 
@@ -440,4 +451,53 @@ export function bridgeStreamId(runId: string): string {
  */
 export function agentStreamId(agentId: string): string {
   return `agent:${agentId}`
+}
+
+// ─── `agent.config.changed` payload ──────────────────────────────────────
+
+/**
+ * Resource categories that the Activity panel knows how to render.
+ * Kept as a closed list so the UI can map each value to an icon + colour
+ * without a fallback path. Add new entries here when a new mutating
+ * resource lands.
+ */
+export const agentConfigResources = [
+  'agent',
+  'skill',
+  'tool',
+  'repo',
+  'repo_edge',
+  'mcp_allowlist',
+] as const
+export type AgentConfigResource = (typeof agentConfigResources)[number]
+
+/**
+ * Verbs the Activity panel surfaces. We use `attached`/`detached` for
+ * `repo` (since a repo is a global resource that's attached to an
+ * agent, not created by it) and `added`/`removed`/`updated` for
+ * everything else. `replaced` is reserved for set-style PUTs (e.g. the
+ * MCP allowlist, where the request body becomes the canonical state).
+ */
+export const agentConfigActions = [
+  'added',
+  'updated',
+  'removed',
+  'attached',
+  'detached',
+  'replaced',
+] as const
+export type AgentConfigAction = (typeof agentConfigActions)[number]
+
+export interface AgentConfigChangedPayload {
+  readonly agentId: string
+  readonly action: AgentConfigAction
+  readonly resource: AgentConfigResource
+  /**
+   * Short human label — the resource's name / slug / "3 tools" for
+   * a set-replace. Trim aggressively at the producer; the Activity card
+   * renders this verbatim.
+   */
+  readonly label: string
+  /** Optional one-line context. Shown in the card's hover/expand state. */
+  readonly detail?: string
 }

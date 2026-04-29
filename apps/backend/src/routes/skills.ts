@@ -24,6 +24,7 @@ import {
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
+import { publishAgentConfig } from '../lib/agent-events.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 import { isPostgresErrorWithCode, PG } from '../lib/pg-errors.js'
 
@@ -93,6 +94,12 @@ export const skillsRouter = new Hono()
           })
         }
 
+        publishAgentConfig({
+          agentId,
+          action: 'added',
+          resource: 'skill',
+          label: row.name,
+        })
         return c.json(
           { ok: true as const, skill: toSkillResponse(row) },
           201,
@@ -179,6 +186,12 @@ export const skillsRouter = new Hono()
           })
         }
 
+        publishAgentConfig({
+          agentId,
+          action: 'updated',
+          resource: 'skill',
+          label: row.name,
+        })
         return c.json({ ok: true as const, skill: toSkillResponse(row) })
       } catch (err) {
         if (isPostgresErrorWithCode(err, PG.UNIQUE_VIOLATION)) {
@@ -210,7 +223,7 @@ export const skillsRouter = new Hono()
             eq(schema.skills.agentId, agentId),
           ),
         )
-        .returning({ id: schema.skills.id })
+        .returning({ id: schema.skills.id, name: schema.skills.name })
 
       if (!row) {
         return httpError(c, {
@@ -219,6 +232,12 @@ export const skillsRouter = new Hono()
         })
       }
 
+      publishAgentConfig({
+        agentId,
+        action: 'removed',
+        resource: 'skill',
+        label: row.name,
+      })
       return c.json({ ok: true as const, id: row.id })
     },
   )

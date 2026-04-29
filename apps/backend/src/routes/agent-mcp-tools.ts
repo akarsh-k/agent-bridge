@@ -27,6 +27,7 @@ import {
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
+import { publishAgentConfig } from '../lib/agent-events.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 
 async function loadAgent(agentId: string) {
@@ -91,6 +92,7 @@ export const agentMcpToolsRouter = new Hono()
         }),
       )
 
+      // No publish on GET — read-only.
       return c.json({ ok: true as const, tools })
     },
   )
@@ -191,6 +193,12 @@ export const agentMcpToolsRouter = new Hono()
         }),
       )
 
+      publishAgentConfig({
+        agentId,
+        action: 'replaced',
+        resource: 'mcp_allowlist',
+        label: `${tools.length} tool${tools.length === 1 ? '' : 's'}`,
+      })
       return c.json({ ok: true as const, tools })
     },
   )

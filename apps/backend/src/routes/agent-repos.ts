@@ -31,6 +31,7 @@ import { readIndexSummary } from '@agent-bridge/shared/gitnexus'
 import { repoSourceDir } from '@agent-bridge/shared/paths'
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
+import { publishAgentConfig } from '../lib/agent-events.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 import { isPostgresErrorWithCode, PG } from '../lib/pg-errors.js'
 import { toRepoResponse } from './repos.js'
@@ -139,6 +140,13 @@ export const agentReposRouter = new Hono()
         }
 
         const summary = await loadIndexSummary(repoRow)
+        publishAgentConfig({
+          agentId,
+          action: 'attached',
+          resource: 'repo',
+          label: repoRow.remoteUrl,
+          detail: `branch=${repoRow.branch}`,
+        })
         return c.json(
           {
             ok: true as const,
@@ -265,6 +273,13 @@ export const agentReposRouter = new Hono()
       }
 
       const summary = await loadIndexSummary(repoRow)
+      publishAgentConfig({
+        agentId,
+        action: 'updated',
+        resource: 'repo',
+        label: repoRow.remoteUrl,
+        detail: `branch=${repoRow.branch}`,
+      })
       return c.json({
         ok: true as const,
         attachment: toAttachedRepoResponse(attach, repoRow, summary),
@@ -322,6 +337,30 @@ export const agentReposRouter = new Hono()
           message: `attachment (${agentId}, ${repoId}) not found`,
         })
       }
+
+      // Look up the repo's URL/branch for a friendlier label. Don't
+      // fail the response if the repo row is gone (cascaded delete) —
+      // the detach succeeded; the label just degrades to the id.
+      const [repoRow] = await db
+        .select({
+          remoteUrl: schema.repos.remoteUrl,
+          branch: schema.repos.branch,
+        })
+        .from(schema.repos)
+        .where(eq(schema.repos.id, repoId))
+        .limit(1)
+      publishAgentConfig({
+        agentId,
+        action: 'detached',
+        resource: 'repo',
+        label: repoRow?.remoteUrl ?? repoId,
+        detail: repoRow
+          ? `branch=${repoRow.branch}` +
+            (result.edgesRemoved > 0
+              ? ` · ${result.edgesRemoved} edge(s) removed`
+              : '')
+          : undefined,
+      })
 
       return c.json({
         ok: true as const,

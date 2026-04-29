@@ -33,6 +33,7 @@ import {
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
+import { publishAgentConfig } from '../lib/agent-events.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 import { isPostgresErrorWithCode, PG } from '../lib/pg-errors.js'
 
@@ -115,6 +116,12 @@ export const repoEdgesRouter = new Hono()
           })
         }
 
+        publishAgentConfig({
+          agentId,
+          action: 'added',
+          resource: 'repo_edge',
+          label: row.connector,
+        })
         return c.json(
           { ok: true as const, edge: toRepoEdgeResponse(row) },
           201,
@@ -209,6 +216,12 @@ export const repoEdgesRouter = new Hono()
         })
       }
 
+      publishAgentConfig({
+        agentId,
+        action: 'updated',
+        resource: 'repo_edge',
+        label: row.connector,
+      })
       return c.json({ ok: true as const, edge: toRepoEdgeResponse(row) })
     },
   )
@@ -231,7 +244,10 @@ export const repoEdgesRouter = new Hono()
             eq(schema.repoEdges.agentId, agentId),
           ),
         )
-        .returning({ id: schema.repoEdges.id })
+        .returning({
+          id: schema.repoEdges.id,
+          connector: schema.repoEdges.connector,
+        })
 
       if (!row) {
         return httpError(c, {
@@ -240,6 +256,12 @@ export const repoEdgesRouter = new Hono()
         })
       }
 
+      publishAgentConfig({
+        agentId,
+        action: 'removed',
+        resource: 'repo_edge',
+        label: row.connector,
+      })
       return c.json({ ok: true as const, id: row.id })
     },
   )

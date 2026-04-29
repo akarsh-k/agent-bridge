@@ -23,6 +23,7 @@ import {
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
+import { publishAgentConfig } from '../lib/agent-events.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 import { isPostgresErrorWithCode, PG } from '../lib/pg-errors.js'
 
@@ -197,6 +198,21 @@ export const agentsRouter = new Hono()
           })
         }
 
+        // Activity feed: which fields changed? List the keys the
+        // operator actually edited so the card reads "name, model"
+        // not "Untitled agent". Skip the auto-seeded `memoryConfig`
+        // (Phase 6b) since the human edit is `memoryEnabled`, not
+        // the seeded blob.
+        const changedFields = Object.keys(body)
+        if (changedFields.length > 0) {
+          publishAgentConfig({
+            agentId: id,
+            action: 'updated',
+            resource: 'agent',
+            label: row.name,
+            detail: `fields: ${changedFields.join(', ')}`,
+          })
+        }
         return c.json({ ok: true as const, agent: toAgentResponse(row) })
       } catch (err) {
         if (isPostgresErrorWithCode(err, PG.UNIQUE_VIOLATION)) {

@@ -25,6 +25,7 @@ import {
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
+import { publishAgentConfig } from '../lib/agent-events.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 import { isPostgresErrorWithCode, PG } from '../lib/pg-errors.js'
 
@@ -98,6 +99,13 @@ export const toolsRouter = new Hono()
           })
         }
 
+        publishAgentConfig({
+          agentId,
+          action: 'added',
+          resource: 'tool',
+          label: row.name,
+          detail: `kind=${row.kind}`,
+        })
         return c.json(
           { ok: true as const, tool: toToolResponse(row) },
           201,
@@ -181,6 +189,12 @@ export const toolsRouter = new Hono()
           })
         }
 
+        publishAgentConfig({
+          agentId,
+          action: 'updated',
+          resource: 'tool',
+          label: row.name,
+        })
         return c.json({ ok: true as const, tool: toToolResponse(row) })
       } catch (err) {
         if (isPostgresErrorWithCode(err, PG.UNIQUE_VIOLATION)) {
@@ -212,7 +226,7 @@ export const toolsRouter = new Hono()
             eq(schema.tools.agentId, agentId),
           ),
         )
-        .returning({ id: schema.tools.id })
+        .returning({ id: schema.tools.id, name: schema.tools.name })
 
       if (!row) {
         return httpError(c, {
@@ -221,6 +235,12 @@ export const toolsRouter = new Hono()
         })
       }
 
+      publishAgentConfig({
+        agentId,
+        action: 'removed',
+        resource: 'tool',
+        label: row.name,
+      })
       return c.json({ ok: true as const, id: row.id })
     },
   )
