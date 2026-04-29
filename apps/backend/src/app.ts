@@ -21,6 +21,7 @@ import { llmProvidersRouter } from './routes/llm-providers.js'
 import { mcpConnectionsRouter } from './routes/mcp-connections.js'
 import { oauthRouter } from './routes/oauth.js'
 import { repoEdgesRouter } from './routes/repo-edges.js'
+import { repoGraphRouter } from './routes/repo-graph.js'
 import { repoJobsRouter } from './routes/repo-jobs.js'
 import { repoWikiStaticRouter } from './routes/repo-wiki-static.js'
 import { reposRouter } from './routes/repos.js'
@@ -97,6 +98,7 @@ const api = new Hono()
   .route('/mcp-connections', mcpConnectionsRouter)
   .route('/repos', reposRouter)
   .route('/repos', repoJobsRouter)
+  .route('/repos', repoGraphRouter)
   .route('/repos', repoWikiStaticRouter)
   .route('/runs', runsRouter)
   .route('/bridge', bridgeRouter)

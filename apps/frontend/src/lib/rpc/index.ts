@@ -32,6 +32,8 @@ import type {
   McpConnectionDiscoverInput,
   McpConnectionDiscoverResponse,
   McpConnectionTestPollResponse,
+  RepoGraph,
+  RepoGraphMode,
 } from '@agent-bridge/shared'
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:3001'
@@ -224,6 +226,34 @@ export async function generateRepoWiki(
 /** Absolute URL for the bundled wiki HTML viewer for a given repo. */
 export function repoWikiViewerUrl(repoId: string): string {
   return `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/wiki/index.html`
+}
+
+/**
+ * Fetch a slice of the repo's knowledge graph for the View graph modal.
+ * The backend supports three modes:
+ *
+ *   - `symbols`   (default) — top-degree Functions / Classes / Methods
+ *                             linked by CALLS. The actual semantic graph.
+ *   - `structure`           — Folder + File directory tree (CONTAINS).
+ *   - `imports`             — File-level IMPORTS dependency graph.
+ *
+ * 409 is the documented "not indexed yet" response and the modal
+ * renders an inline empty state for that case — surfacing it as
+ * `ApiError` lets the caller branch on the code instead of relying on
+ * substring matches.
+ */
+export async function getRepoGraph(
+  repoId: string,
+  mode?: RepoGraphMode,
+): Promise<RepoGraph> {
+  const url = new URL(
+    `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/graph`,
+  )
+  if (mode) url.searchParams.set('mode', mode)
+  const res = await callApi<{ ok: true; graph: RepoGraph }>(
+    fetch(url.toString(), { method: 'GET' }),
+  )
+  return res.graph
 }
 
 // ─── Agent export / import helpers ───────────────────────────────────────

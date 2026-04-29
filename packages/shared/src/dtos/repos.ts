@@ -184,6 +184,106 @@ export const repoWikiInputSchema = z
 
 export type RepoWikiInput = z.infer<typeof repoWikiInputSchema>
 
+// ─── /api/repos/:id/graph ────────────────────────────────────────────────
+
+/**
+ * Read-only graph extracted from `gitnexus analyze`'s Kuzu store via
+ * `gitnexus cypher`. The endpoint serves three orthogonal slices of
+ * the same knowledge graph:
+ *
+ *   - `structure` — directory tree (Folder + File nodes, CONTAINS).
+ *   - `symbols`   — top-degree Functions / Classes / Methods linked by
+ *                   CALLS. The closest approximation to "the semantic
+ *                   graph" the operator usually wants when they say
+ *                   "show me the graph".
+ *   - `imports`   — File-level IMPORTS graph (module dependencies).
+ *
+ * Each mode returns the same wire shape; the `kind` column on nodes +
+ * edges lets the UI colour by category without duplicating endpoints.
+ */
+export const repoGraphModes = ['structure', 'symbols', 'imports'] as const
+export type RepoGraphMode = (typeof repoGraphModes)[number]
+
+export const repoGraphNodeKinds = [
+  'folder',
+  'file',
+  'function',
+  'class',
+  'method',
+] as const
+export type RepoGraphNodeKind = (typeof repoGraphNodeKinds)[number]
+
+export const repoGraphEdgeKinds = ['contains', 'calls', 'imports'] as const
+export type RepoGraphEdgeKind = (typeof repoGraphEdgeKinds)[number]
+
+export const repoGraphNodeSchema = z.object({
+  id: z.string().min(1),
+  name: z.string(),
+  kind: z.enum(repoGraphNodeKinds),
+  /**
+   * Edge degree (incoming + outgoing) at extraction time. Optional so
+   * the structure mode (where all nodes have a single CONTAINS parent)
+   * doesn't waste bytes on a uniform value. Used by `symbols` mode to
+   * size the most-connected functions visibly larger.
+   */
+  degree: z.number().int().nonnegative().nullable().optional(),
+})
+
+export type RepoGraphNode = z.infer<typeof repoGraphNodeSchema>
+
+export const repoGraphEdgeSchema = z.object({
+  source: z.string().min(1),
+  target: z.string().min(1),
+  kind: z.enum(repoGraphEdgeKinds),
+})
+
+export type RepoGraphEdge = z.infer<typeof repoGraphEdgeSchema>
+
+export const repoGraphSchema = z.object({
+  /** Mode that produced this payload. Echoed so the UI can compare
+   *  against its current selection without bookkeeping the request. */
+  mode: z.enum(repoGraphModes),
+  /** Sorted by id so two calls against the same index produce the same
+   *  shape. */
+  nodes: z.array(repoGraphNodeSchema),
+  edges: z.array(repoGraphEdgeSchema),
+  /**
+   * Pre-cap totals keyed by node kind so the UI can render a
+   * "showing X of N" hint when truncation kicks in. `null` when the
+   * underlying count(*) query couldn't be run; the UI silently skips
+   * the hint in that case.
+   */
+  totals: z
+    .object({
+      folders: z.number().int().nonnegative().nullable(),
+      files: z.number().int().nonnegative().nullable(),
+      functions: z.number().int().nonnegative().nullable(),
+      classes: z.number().int().nonnegative().nullable(),
+      methods: z.number().int().nonnegative().nullable(),
+    })
+    .partial()
+    .strict(),
+  /** Soft cap applied during extraction. */
+  limits: z.object({
+    nodes: z.number().int().positive(),
+    edges: z.number().int().positive(),
+  }),
+})
+
+export type RepoGraph = z.infer<typeof repoGraphSchema>
+
+/**
+ * Query string for `GET /api/repos/:id/graph`. Optional everywhere so a
+ * cold-loaded modal hits the default mode without manufacturing a
+ * client-side default.
+ */
+export const repoGraphQuerySchema = z
+  .object({
+    mode: z.enum(repoGraphModes).optional(),
+  })
+  .strict()
+export type RepoGraphQuery = z.infer<typeof repoGraphQuerySchema>
+
 // ─── /api/agents/:agentId/repos (attachments) ────────────────────────────
 
 /**

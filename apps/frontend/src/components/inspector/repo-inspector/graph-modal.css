@@ -1,0 +1,637 @@
+/* ---------------------------------------------------------------------------
+   GraphModal — full-screen overlay layered above the workspace canvas.
+   The styling tries to feel more like a "code intelligence" surface than
+   a generic dialog: layered backgrounds, glow accents, custom node cards
+   with per-kind icons + tints, animated CALLS edges.
+--------------------------------------------------------------------------- */
+
+.graph-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background:
+    radial-gradient(
+      900px 600px at 50% 25%,
+      rgba(139, 92, 246, 0.18),
+      transparent 70%
+    ),
+    radial-gradient(
+      700px 500px at 80% 90%,
+      rgba(103, 232, 249, 0.08),
+      transparent 70%
+    ),
+    rgba(8, 7, 13, 0.78);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  pointer-events: auto;
+  animation: graph-modal-fade-in 200ms var(--ease-out);
+}
+
+@keyframes graph-modal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.graph-modal-card {
+  width: min(1280px, 100%);
+  height: min(840px, 100%);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-strong);
+  background:
+    linear-gradient(
+      180deg,
+      var(--surface-hi) 0%,
+      var(--surface) 60%,
+      var(--surface) 100%
+    );
+  box-shadow:
+    0 24px 60px -12px rgba(0, 0, 0, 0.6),
+    0 0 0 1px rgba(167, 139, 250, 0.18);
+  overflow: hidden;
+  position: relative;
+}
+
+.graph-modal-card::before {
+  /* Subtle accent ring along the top — feels like the canvas card has
+     "energy" coming off the heading. */
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-400) 30%,
+    var(--accent-400) 70%,
+    transparent 100%
+  );
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.graph-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 22px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.graph-modal-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.graph-modal-eyebrow {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-300);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.graph-modal-eyebrow::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--accent-400);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.graph-modal-subtitle {
+  font-size: 12px;
+  color: var(--text-dim);
+  word-break: break-all;
+}
+
+.graph-modal-close {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-dim);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
+}
+
+.graph-modal-close:hover {
+  background: var(--accent-bg);
+  color: var(--text);
+  border-color: var(--accent-border);
+}
+
+/* ---------- Toolbar with mode tabs ---------- */
+
+.graph-modal-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 22px;
+  border-bottom: 1px solid var(--border);
+  background:
+    linear-gradient(180deg, rgba(167, 139, 250, 0.04), transparent);
+}
+
+.graph-modal-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: var(--radius);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.graph-modal-tab {
+  appearance: none;
+  border: none;
+  background: transparent;
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out);
+}
+
+.graph-modal-tab:hover:not(.is-active) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+
+.graph-modal-tab.is-active {
+  color: var(--text);
+  background: linear-gradient(
+    180deg,
+    rgba(167, 139, 250, 0.22),
+    rgba(139, 92, 246, 0.16)
+  );
+  box-shadow:
+    0 0 0 1px var(--accent-border),
+    0 6px 14px -8px var(--accent-glow);
+}
+
+.graph-modal-tab-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  flex: 0 0 auto;
+  box-shadow: 0 0 8px currentColor;
+}
+.dot-symbols { background: #a78bfa; color: #a78bfa; }
+.dot-structure { background: #67e8f9; color: #67e8f9; }
+.dot-imports { background: #fbbf24; color: #fbbf24; }
+
+.graph-modal-hint {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: right;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ---------- Stats bar ---------- */
+
+.graph-modal-stats {
+  display: flex;
+  gap: 8px;
+  padding: 10px 22px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-wrap: wrap;
+}
+
+.graph-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.graph-stat-icon {
+  width: 14px;
+  height: 14px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+}
+
+.graph-stat-label {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.graph-stat-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.graph-stat-edges {
+  margin-left: auto;
+}
+
+/* ---------- Body / canvas frame ---------- */
+
+.graph-modal-body {
+  flex: 1;
+  position: relative;
+  display: flex;
+  min-height: 0;
+}
+
+.graph-flow-frame {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  background:
+    radial-gradient(
+      1200px 700px at 50% 0%,
+      rgba(139, 92, 246, 0.07),
+      transparent 60%
+    ),
+    var(--bg-canvas);
+}
+
+.graph-flow-frame .react-flow {
+  width: 100%;
+  height: 100%;
+}
+
+.graph-flow-frame .react-flow__edge-path {
+  filter: drop-shadow(0 0 6px rgba(167, 139, 250, 0.18));
+}
+
+/* React Flow's animated class drives a marching-ants stroke; we keep it
+ * subtle so the dashes feel like data flow, not a barber pole. */
+.graph-flow-frame .graph-edge-calls .react-flow__edge-path {
+  filter: drop-shadow(0 0 6px rgba(167, 139, 250, 0.45));
+}
+
+.graph-flow-frame .graph-edge-imports .react-flow__edge-path {
+  filter: drop-shadow(0 0 6px rgba(103, 232, 249, 0.32));
+}
+
+.graph-modal-controls {
+  background: var(--surface-raised) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 10px !important;
+  overflow: hidden;
+  box-shadow: var(--shadow-1);
+}
+
+.graph-modal-controls button {
+  background: transparent !important;
+  border-bottom: 1px solid var(--border) !important;
+  color: var(--text-dim) !important;
+  fill: var(--text-dim) !important;
+}
+
+.graph-modal-controls button:hover {
+  background: var(--surface-hover) !important;
+  color: var(--text) !important;
+  fill: var(--text) !important;
+}
+
+.graph-modal-truncation {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  right: 14px;
+  z-index: 4;
+  padding: 9px 14px;
+  border-radius: var(--radius);
+  background: rgba(251, 191, 36, 0.10);
+  border: 1px solid rgba(251, 191, 36, 0.32);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.graph-modal-truncation-icon {
+  color: var(--warn);
+  flex: 0 0 auto;
+  font-size: 14px;
+  line-height: 1;
+  margin-top: 1px;
+}
+
+/* ---------- Legend ---------- */
+
+.graph-modal-legend {
+  position: absolute;
+  bottom: 14px;
+  left: 14px;
+  z-index: 4;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: rgba(15, 14, 23, 0.85);
+  border: 1px solid var(--border);
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  font-size: 11px;
+  color: var(--text-dim);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.graph-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-legend-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+}
+
+.graph-legend-edge {
+  width: 18px;
+  height: 2px;
+  border-radius: 2px;
+  display: inline-block;
+}
+
+.graph-legend-edge-calls {
+  background: repeating-linear-gradient(
+    90deg,
+    #a78bfa 0 4px,
+    transparent 4px 7px
+  );
+}
+.graph-legend-edge-imports { background: #67e8f9; }
+.graph-legend-edge-contains { background: rgba(167, 139, 250, 0.45); }
+
+/* ---------- State panels ---------- */
+
+.graph-modal-state {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  padding: 32px;
+  text-align: center;
+}
+
+.graph-modal-state-glyph {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  display: grid;
+  place-items: center;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-300);
+  font-size: 26px;
+  font-weight: 600;
+}
+
+.graph-modal-state-glyph.err {
+  background: var(--danger-bg);
+  border-color: rgba(251, 113, 133, 0.32);
+  color: var(--danger);
+}
+
+.graph-modal-state-title {
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--text);
+}
+.graph-modal-state-title.err {
+  color: var(--danger);
+}
+
+.graph-modal-state-message {
+  font-size: 13px;
+  color: var(--text-dim);
+  max-width: 460px;
+  line-height: 1.55;
+}
+
+/* ---------- Loading dots ---------- */
+
+.graph-loader {
+  display: inline-flex;
+  gap: 8px;
+}
+
+.graph-loader span {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--accent-400);
+  opacity: 0.4;
+  animation: graph-loader-bounce 1s var(--ease-out) infinite;
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+
+.graph-loader span:nth-child(2) { animation-delay: 0.15s; }
+.graph-loader span:nth-child(3) { animation-delay: 0.3s; }
+
+@keyframes graph-loader-bounce {
+  0%, 100% { transform: translateY(0); opacity: 0.35; }
+  50%      { transform: translateY(-6px); opacity: 1; }
+}
+
+/* ---------- Custom React Flow node ---------- */
+
+.graph-flow-frame .react-flow__node-abNode {
+  /* React Flow wraps the inner DOM in this class; reset its default
+     pill so our card chrome takes over. */
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+}
+
+.graph-node {
+  width: 240px;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: linear-gradient(
+    180deg,
+    var(--surface-hi) 0%,
+    var(--surface-raised) 100%
+  );
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 4px 14px -8px rgba(0, 0, 0, 0.6);
+  color: var(--text);
+  position: relative;
+  transition:
+    transform var(--dur-2) var(--ease-spring),
+    border-color var(--dur-2) var(--ease-out),
+    box-shadow var(--dur-2) var(--ease-out);
+}
+
+.graph-node:hover {
+  border-color: var(--accent-border);
+  box-shadow:
+    0 0 0 1px var(--accent-border),
+    0 8px 22px -8px var(--accent-glow);
+  transform: translateY(-1px);
+}
+
+.graph-node-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  border: 1px solid currentColor;
+}
+
+.graph-node-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.graph-node-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: -0.01em;
+}
+
+.graph-node-subtitle {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-node-degree {
+  flex: 0 0 auto;
+  min-width: 22px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-300);
+  font-size: 10.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.graph-node-handle {
+  width: 6px !important;
+  height: 6px !important;
+  border-radius: 999px !important;
+  background: var(--accent-400) !important;
+  border: 2px solid var(--surface-hi) !important;
+  opacity: 0;
+  transition: opacity var(--dur-1) var(--ease-out);
+}
+
+.graph-node:hover .graph-node-handle { opacity: 1; }
+
+/* Per-kind icon tint. The `.graph-node-icon` border + glyph both
+ * inherit `currentColor`. */
+.graph-node-icon-folder {
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.14);
+}
+.graph-node-icon-file {
+  color: #94a3b8;
+  background: rgba(148, 163, 184, 0.10);
+}
+.graph-node-icon-function {
+  color: #a78bfa;
+  background: rgba(167, 139, 250, 0.16);
+}
+.graph-node-icon-method {
+  color: #67e8f9;
+  background: rgba(103, 232, 249, 0.14);
+}
+.graph-node-icon-class {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.14);
+}
+
+/* Node frame tint per kind — subtle, just enough to read the kind
+ * without the icon. */
+.graph-node-class {
+  border-color: rgba(251, 191, 36, 0.32);
+  background: linear-gradient(
+    180deg,
+    rgba(251, 191, 36, 0.07) 0%,
+    var(--surface-raised) 100%
+  );
+}
+
+.graph-node-method {
+  border-color: rgba(103, 232, 249, 0.28);
+}
+
+.graph-node-folder {
+  border-color: var(--accent-border);
+}
+
+.graph-node-file .graph-node-name {
+  color: var(--text-dim);
+}

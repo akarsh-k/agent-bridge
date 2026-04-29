@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs'
+import path from 'node:path'
 import type { Job } from 'bullmq'
 
 import { llmProvidersRepo, reposRepo } from '@agent-bridge/db'
@@ -15,7 +16,7 @@ import {
   type RunEvent,
 } from '@agent-bridge/shared'
 import { decryptSecret } from '@agent-bridge/shared/crypto'
-import { runGitnexus } from '@agent-bridge/shared/gitnexus'
+import { repoWikiDir, runGitnexus } from '@agent-bridge/shared/gitnexus'
 import {
   repoSourceDir,
   type RepoDirDescriptor,
@@ -214,6 +215,14 @@ export async function handleGenerateWikiJob(
   let parsedPages: number | null = null
   let parsedResultMode: string | null = null
 
+  // Atomic supersede: rename the existing wiki dir aside before the
+  // (potentially long) generation begins, so a failure mid-run can't
+  // leave the operator with a half-written wiki. Restored on failure;
+  // the stale copy is removed on success. See `prepareSupersede` for
+  // the crash-recovery logic.
+  const wikiDir = repoWikiDir(sourceDir)
+  const supersede = await prepareSupersede(wikiDir)
+
   try {
     await runWiki({
       sourceDir,
@@ -248,6 +257,12 @@ export async function handleGenerateWikiJob(
       },
     })
 
+    // gitnexus exited 0 — promote the new wiki dir as live by dropping
+    // the stale copy. If gitnexus's "up-to-date" no-op short-circuit
+    // hit, no new `wiki/` dir was written; in that case restore the
+    // pre-run snapshot so the operator's existing wiki survives.
+    await commitSupersede(wikiDir, supersede)
+
     // up-to-date short-circuit: gitnexus exits 0 without emitting fresh
     // counts. Leave `parsedPages` as null (the DB column nulls out for
     // this run) but stamp `wikiGeneratedAt` so the UI shows a fresh
@@ -280,6 +295,11 @@ export async function handleGenerateWikiJob(
       pages: parsedPages,
     }
   } catch (err) {
+    // Restore the pre-run wiki BEFORE we record the failure, so the UI
+    // never sees a `wiki_status='error'` row whose on-disk artefacts
+    // are missing. Any partial `wiki/` written by the failed run is
+    // discarded.
+    await rollbackSupersede(wikiDir, supersede)
     const rawMessage = errMsg(err)
     const message = redactSecrets(rawMessage, redactList)
     await failAndPublish({
@@ -474,4 +494,106 @@ async function failAndPublish(args: {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+// ─── atomic supersede ─────────────────────────────────────────────────────
+
+interface SupersedeContext {
+  /** Absolute path the live wiki gets renamed to before the run. `null`
+   *  when there was no prior wiki to protect (first-time generation). */
+  readonly stalePath: string | null
+}
+
+/**
+ * Snapshot the existing `wiki/` (if any) under a sibling `wiki.stale/`
+ * so a mid-run failure doesn't leave the operator with a half-written
+ * directory. Idempotent against a previous crashed worker:
+ *
+ *   1. If `wiki.stale/` exists from a prior run AND `wiki/` is missing,
+ *      restore it first — the previous attempt crashed between rename
+ *      and rollback. Restoring is the safer guess (preserves the older
+ *      working wiki) than leaving the operator with no wiki at all.
+ *   2. Otherwise, blow away any orphan `wiki.stale/` left behind by an
+ *      already-recovered run.
+ *   3. If a live `wiki/` exists now, rename it to `wiki.stale/`.
+ *
+ * The stale dir is co-located with the live dir under
+ * `<sourceDir>/.gitnexus/`. Same filesystem → rename is atomic.
+ */
+async function prepareSupersede(
+  wikiDir: string,
+): Promise<SupersedeContext> {
+  const stalePath = path.join(path.dirname(wikiDir), 'wiki.stale')
+  const wikiExists = await pathExists(wikiDir)
+  const staleExists = await pathExists(stalePath)
+
+  if (staleExists && !wikiExists) {
+    // Crash-recovery: a prior worker renamed but never restored. Move
+    // the snapshot back into place; the upcoming run will treat it as
+    // the live wiki.
+    await fs.rename(stalePath, wikiDir)
+    return { stalePath: wikiDir }
+  }
+
+  if (staleExists) {
+    // Orphan stale alongside a live wiki — a previous successful run
+    // failed to clean up. Drop the stale; the live wiki is the source
+    // of truth.
+    await fs.rm(stalePath, { recursive: true, force: true })
+  }
+
+  if (await pathExists(wikiDir)) {
+    await fs.rename(wikiDir, stalePath)
+    return { stalePath }
+  }
+
+  return { stalePath: null }
+}
+
+/**
+ * Promote the new wiki: drop the snapshot. Special case: gitnexus's
+ * up-to-date short-circuit exits 0 without writing a new `wiki/`, so
+ * if no fresh dir landed we restore the snapshot rather than discarding
+ * it (otherwise the operator's wiki silently disappears on a no-op
+ * regenerate).
+ */
+async function commitSupersede(
+  wikiDir: string,
+  ctx: SupersedeContext,
+): Promise<void> {
+  if (!ctx.stalePath) return
+
+  if (!(await pathExists(wikiDir))) {
+    // No fresh output → rollback. This is the up-to-date no-op case.
+    await fs.rename(ctx.stalePath, wikiDir)
+    return
+  }
+  await fs.rm(ctx.stalePath, { recursive: true, force: true })
+}
+
+/**
+ * Discard the (potentially partial) new wiki and restore the snapshot.
+ * If the snapshot was never taken (first-time gen), just remove the
+ * partial `wiki/` so the operator doesn't end up linking to a corrupt
+ * directory.
+ */
+async function rollbackSupersede(
+  wikiDir: string,
+  ctx: SupersedeContext,
+): Promise<void> {
+  // `force: true` on rm makes it tolerate ENOENT — the partial wiki may
+  // not exist if gitnexus exited before it created the directory.
+  await fs.rm(wikiDir, { recursive: true, force: true })
+  if (ctx.stalePath) {
+    await fs.rename(ctx.stalePath, wikiDir)
+  }
+}
+
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await fs.access(p)
+    return true
+  } catch {
+    return false
+  }
 }

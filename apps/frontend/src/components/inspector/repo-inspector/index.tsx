@@ -28,6 +28,7 @@ import type {
 } from '@agent-bridge/shared'
 import type { WorkspaceContextValue } from '../../../lib/workspace-context'
 import { CloneButton } from './clone-button'
+import { GraphButton } from './graph-button'
 import { IndexButton } from './index-button'
 import { IndexSummary } from './index-summary'
 import { RepoLog } from './repo-log'
@@ -150,6 +151,7 @@ export function RepoInspector({
             }
             onRevert={() => setWikiOverlay(null)}
           />
+          <GraphButton repo={effective} />
         </div>
         <div className="read-row">
           <span className="read-label">Remote</span>

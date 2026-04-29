@@ -251,3 +251,185 @@ function pickInt(value: unknown): number | null {
   }
   return null
 }
+
+// ─── cypher (graph extraction) ───────────────────────────────────────────
+//
+// `gitnexus cypher <query>` exits with a JSON envelope of
+// `{ markdown, row_count }` (or `{ error }` on a binder/runtime error).
+// The `markdown` field carries a markdown table:
+//
+//   | h1 | h2 |
+//   | --- | --- |
+//   | r1c1 | r1c2 |
+//   | r2c1 | r2c2 |
+//
+// gitnexus 1.6.3 has no `--format json` flag, so we parse the table
+// here. Each call is cheap (one spawn) and we keep the pipeline scalar-
+// only (`RETURN n.id, n.name`) so cell values never contain `|` and the
+// parser stays a single-pass split.
+//
+// All graph queries land under `repoCypherRows()` so the extra spawn cost
+// is paid once per query, not per request handler.
+
+export interface CypherCellRow {
+  readonly [columnHeader: string]: string
+}
+
+export interface CypherRunOptions extends RunGitnexusOptions {
+  /** Source dir of the repo whose `.gitnexus/lbug` should answer the
+   *  query. Used to gate on `meta.json` existence before the spawn. */
+  readonly sourceDir: string
+  /**
+   * Registered repo name in the gitnexus registry — passed as
+   * `gitnexus cypher -r <name>`. REQUIRED whenever the registry holds
+   * more than one indexed repo, which is the steady-state for this
+   * app. Use `repoDirName(descriptor)` from
+   * `@agent-bridge/shared/paths` to get the same alias the analyze
+   * pass registered.
+   */
+  readonly repoName: string
+}
+
+export interface CypherRunFailure {
+  readonly ok: false
+  /** Coarse classification: `not-indexed` if `meta.json` is missing
+   *  (running cypher would error with a registry miss), `parse` if the
+   *  output envelope was malformed, `query` if gitnexus returned an
+   *  error envelope, `spawn` if the child failed to launch. */
+  readonly reason: 'not-indexed' | 'parse' | 'query' | 'spawn'
+  readonly message: string
+}
+
+export interface CypherRunSuccess {
+  readonly ok: true
+  readonly rows: readonly CypherCellRow[]
+}
+
+export type CypherRunResult = CypherRunSuccess | CypherRunFailure
+
+/**
+ * Run a single Cypher query against a repo's local Kuzu store and parse
+ * the markdown-table envelope into row objects. Never throws — callers
+ * fold the failure shape into a 503 / empty-graph response.
+ *
+ * Caveat: cells are parsed by literal `|` split, so any column whose
+ * value embeds `|` will tear. This is fine for our usage (scalar id /
+ * name returns) but is documented here so future query authors stay
+ * inside that lane.
+ */
+export async function repoCypherRows(
+  query: string,
+  options: CypherRunOptions,
+): Promise<CypherRunResult> {
+  const { sourceDir, repoName, ...runOpts } = options
+  const metaPath = repoMetaJsonPath(sourceDir)
+  try {
+    await fs.access(metaPath)
+  } catch {
+    return {
+      ok: false,
+      reason: 'not-indexed',
+      message: 'meta.json missing; the repo has not been indexed yet',
+    }
+  }
+
+  let result: { code: number; stdout: string; stderr: string }
+  try {
+    result = await runGitnexusToCompletion(
+      ['cypher', '-r', repoName, query],
+      {
+        ...runOpts,
+        cwd: sourceDir,
+      },
+    )
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'spawn',
+      message: err instanceof Error ? err.message : String(err),
+    }
+  }
+
+  if (result.code !== 0) {
+    return {
+      ok: false,
+      reason: 'query',
+      message:
+        `gitnexus cypher exited with code ${result.code}: ` +
+        truncateForLog(result.stderr || result.stdout),
+    }
+  }
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(result.stdout)
+  } catch {
+    return {
+      ok: false,
+      reason: 'parse',
+      message: `gitnexus cypher emitted non-JSON stdout: ${truncateForLog(result.stdout)}`,
+    }
+  }
+
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { ok: false, reason: 'parse', message: 'envelope is not an object' }
+  }
+
+  const env = parsed as Record<string, unknown>
+  if (typeof env['error'] === 'string') {
+    return { ok: false, reason: 'query', message: env['error'] }
+  }
+
+  const markdown = typeof env['markdown'] === 'string' ? env['markdown'] : null
+  if (markdown === null) {
+    return {
+      ok: false,
+      reason: 'parse',
+      message: 'envelope missing markdown field',
+    }
+  }
+
+  return { ok: true, rows: parseMarkdownTable(markdown) }
+}
+
+/**
+ * Tolerant markdown-table → row-object parser. Recognises a standard
+ * `| h |` header followed by a `| --- |` separator. Yields nothing for
+ * empty / malformed input — callers are expected to handle a zero-row
+ * success the same as a normal "no matches" result.
+ */
+function parseMarkdownTable(markdown: string): readonly CypherCellRow[] {
+  const lines = markdown.split('\n').map((l) => l.trim()).filter(Boolean)
+  if (lines.length < 2) return []
+
+  const headerLine = lines[0]
+  const separatorLine = lines[1]
+  if (!headerLine || !separatorLine) return []
+  if (!/^\s*\|/.test(separatorLine) || !/-{3,}/.test(separatorLine)) return []
+
+  const headers = splitMarkdownRow(headerLine)
+  const rows: CypherCellRow[] = []
+  for (let i = 2; i < lines.length; i++) {
+    const line = lines[i]
+    if (!line) continue
+    const cells = splitMarkdownRow(line)
+    const row: Record<string, string> = {}
+    for (let h = 0; h < headers.length; h++) {
+      row[headers[h] ?? `col_${h}`] = cells[h] ?? ''
+    }
+    rows.push(row)
+  }
+  return rows
+}
+
+function splitMarkdownRow(line: string): string[] {
+  // Strip the leading + trailing pipe before splitting so we don't get
+  // empty edge cells. Split, then trim each cell.
+  const trimmed = line.replace(/^\s*\|/, '').replace(/\|\s*$/, '')
+  return trimmed.split('|').map((c) => c.trim())
+}
+
+function truncateForLog(input: string, max = 240): string {
+  const compact = input.replace(/\s+/g, ' ').trim()
+  return compact.length <= max ? compact : `${compact.slice(0, max)}…`
+}
