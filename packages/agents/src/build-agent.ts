@@ -676,9 +676,15 @@ async function countReadyRepos(
 
 /**
  * Append a short "repos at your disposal" hint to the instructions so the
- * LLM knows which `repo` values to pass when calling gitnexus tools. Kept
- * deliberately compact — the model already has `list_repos` if it wants
- * authoritative discovery, this is just an opening cue.
+ * LLM knows which `repo` values to pass when calling gitnexus tools.
+ *
+ * Important: `gitnexus_list_repos` reads from the gitnexus filesystem
+ * registry (`gitnexus-home/`), which is shared across every agent on
+ * this machine. So `list_repos` may return repos that are NOT attached
+ * to this agent — repos indexed by other agents on the same install
+ * sit in the same registry. The LIST BELOW is the single source of
+ * truth for what THIS agent has access to. We tell the LLM that
+ * explicitly so it doesn't surface unattached repos to the user.
  */
 function appendGitnexusRepoHint(
   instructions: string,
@@ -690,12 +696,23 @@ function appendGitnexusRepoHint(
     .map((r) => `- ${r.label}  (${r.remoteUrl}#${r.branch})`)
     .join('\n')
 
+  const count = mounted.meta.repoLabels.length
+  const noun = count === 1 ? 'repository' : 'repositories'
+
   const block = [
-    '## Available indexed repositories (via gitnexus_* tools)',
+    `## Attached repositories (${count})`,
     '',
-    'These repos are indexed and queryable. When calling any `gitnexus_*`',
-    'tool, pass the repo label as the `repo` argument. Use `gitnexus_list_repos`',
-    'to confirm at runtime if you are unsure.',
+    `This agent has ${count} ${noun} attached. The list below is the`,
+    'authoritative inventory — it is what the operator configured for',
+    'this agent. When calling any `gitnexus_*` tool, pass the repo label',
+    'as the `repo` argument and only use values from this list.',
+    '',
+    'Do NOT use `gitnexus_list_repos` to count or enumerate repositories',
+    'when answering the user — that tool reads a shared filesystem',
+    'registry and may return repos indexed by other agents that are NOT',
+    'attached to this one. Trust the list below for everything user-',
+    'facing; reach for `list_repos` only when you genuinely need the',
+    'underlying gitnexus repo id (rare).',
     '',
     lines,
   ].join('\n')
