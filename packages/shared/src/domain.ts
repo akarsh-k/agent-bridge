@@ -31,6 +31,24 @@ export const llmProviderKinds = [
 
 export type LlmProviderKind = (typeof llmProviderKinds)[number]
 
+/**
+ * Snapshot of `/v1/models` for a configured provider, cached on the
+ * `llm_providers.models_json` jsonb column. Populated by the
+ * `POST /api/llm-providers/:id/models/refresh` endpoint and read by every
+ * model-picker UI (agent inspector, wiki button, llm-new-form). `null`
+ * when the operator hasn't refreshed yet — pickers render as plain
+ * free-text inputs in that case.
+ *
+ * `models` are stored verbatim from the upstream `/v1/models` response
+ * (`data[].id`); we don't merge multiple fetches or curate. `fetchedAt`
+ * lets the UI render "refreshed 3m ago" hints + lets a future TTL
+ * eviction job decide what's stale.
+ */
+export interface LlmProviderModelsCache {
+  readonly models: readonly string[]
+  readonly fetchedAt: string
+}
+
 // ─── Tools ────────────────────────────────────────────────────────────────
 
 export const toolKinds = [
@@ -62,6 +80,27 @@ export const repoStatuses = [
 ] as const
 
 export type RepoStatus = (typeof repoStatuses)[number]
+
+/**
+ * Wiki generation is orthogonal to the main `RepoStatus` state machine —
+ * a repo stays `ready` (i.e. usable by agents + indexable) regardless of
+ * whether its wiki is current. This decoupling matters because wiki gen
+ * can take minutes against an LLM and we don't want it to make the repo
+ * look unusable for chat in the meantime.
+ *
+ *   - `none`        — wiki has never been generated for this repo.
+ *   - `generating`  — a `gitnexus wiki` job is in flight.
+ *   - `ready`       — wiki is on disk under `<source>/.gitnexus/wiki/`.
+ *   - `error`       — last wiki run failed; `wiki_last_error` carries why.
+ */
+export const repoWikiStatuses = [
+  'none',
+  'generating',
+  'ready',
+  'error',
+] as const
+
+export type RepoWikiStatus = (typeof repoWikiStatuses)[number]
 
 /**
  * Structural counts from a `gitnexus analyze` pass, mirrored from gitnexus's

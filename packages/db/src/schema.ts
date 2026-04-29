@@ -35,9 +35,11 @@ import {
 import type {
   AgentMemoryConfig,
   LlmProviderKind,
+  LlmProviderModelsCache,
   McpAuthKind,
   McpTransport,
   RepoStatus,
+  RepoWikiStatus,
   RunStatus,
   ToolConfig,
   ToolKind,
@@ -71,6 +73,14 @@ export const llmProviders = pgTable(
     defaultModel: text('default_model'),
     /** AES-256-GCM envelope. Nullable for no-auth local endpoints. */
     apiKeyEnvelope: text('api_key_envelope'),
+    /**
+     * Cached `/v1/models` response. `null` until the operator clicks
+     * "Refresh models" (POST /api/llm-providers/:id/models/refresh).
+     * Single source of truth for the model dropdowns in agent +
+     * provider + wiki UIs — see `LlmProviderModelsCache` in
+     * `@agent-bridge/shared`.
+     */
+    modelsJson: jsonb('models_json').$type<LlmProviderModelsCache>(),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -168,6 +178,24 @@ export const repos = pgTable(
     lastError: text('last_error'),
     /** AES-256-GCM envelope. Nullable for public repos. */
     gitPatEnvelope: text('git_pat_envelope'),
+    /**
+     * Wiki state — orthogonal to `status` (Phase 2C). A repo stays `ready`
+     * for agents while its wiki regenerates. `wiki_status` drives the
+     * inspector dot + button enablement; the worker owns every transition
+     * out of `generating`. The four sibling columns mirror the `last_*` /
+     * `last_error` shape used by the index lifecycle.
+     */
+    wikiStatus: text('wiki_status')
+      .$type<RepoWikiStatus>()
+      .notNull()
+      .default('none'),
+    wikiGeneratedAt: timestamp('wiki_generated_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
+    /** Page count parsed from `gitnexus wiki` stdout (`Pages: N`). */
+    wikiPages: integer('wiki_pages'),
+    wikiLastError: text('wiki_last_error'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

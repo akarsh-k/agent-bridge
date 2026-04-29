@@ -21,6 +21,18 @@
  * failures LEAVE `localPath` intact — the source tree is still on disk,
  * we just couldn't analyze it this time.
  *
+ * Wiki lifecycle (orthogonal — Phase 2C):
+ *
+ *   wiki_status: none ─► generating ─┬─► ready
+ *                                    └─► error
+ *
+ *   ready | error ─► generating  (manual re-generate from the UI)
+ *
+ * The CAS guard for `generating` requires `status='ready'` because
+ * `gitnexus wiki` reads `<source>/.gitnexus/meta.json` which only exists
+ * post-index. `wiki_*` columns never affect the main `status` — a repo
+ * with a failed wiki run is still usable for chat + re-indexing.
+ *
  * Node-only.
  */
 
@@ -230,6 +242,103 @@ export async function finishIndex(
     .set({
       status: 'error',
       lastError: result.lastError,
+      updatedAt: sql`now()`,
+    })
+    .where(eq(repos.id, repoId))
+    .returning()
+  return row ?? null
+}
+
+// ─── wiki ────────────────────────────────────────────────────────────────
+//
+// Wiki state is orthogonal to the main `status` machine — see the design
+// note in `@agent-bridge/shared/domain.ts` (`repoWikiStatuses`). The repo
+// stays `status='ready'` while wiki gen runs, but `wiki_status` flips
+// `none|ready|error → generating → ready|error`. We require
+// `status='ready'` on the CAS to claim — gitnexus wiki reads
+// `<source>/.gitnexus/meta.json` which only exists after a successful
+// `analyze`. Pre-checking saves the worker a wasted spawn.
+
+/**
+ * Flip a repo row's wiki state from `none | ready | error` → `generating`,
+ * but only when `status='ready'` (i.e. the repo has been successfully
+ * indexed). Same CAS pattern as `markCloning` / `markIndexing`: two
+ * concurrent "generate now" requests can't both win.
+ *
+ * Clears `wiki_last_error` (a fresh attempt should not surface a stale
+ * error). Does NOT touch the main `status` column or `last_error` —
+ * wiki failures belong to wiki state only.
+ *
+ * Returns the updated row, or `null` if the CAS lost (status not ready,
+ * or another wiki job already in flight).
+ */
+export async function markWikiGenerating(
+  handle: AgentBridgeDb,
+  repoId: string,
+): Promise<RepoRow | null> {
+  const [row] = await handle.db
+    .update(repos)
+    .set({
+      wikiStatus: 'generating',
+      wikiLastError: null,
+      updatedAt: sql`now()`,
+    })
+    .where(
+      and(
+        eq(repos.id, repoId),
+        eq(repos.status, 'ready'),
+        inArray(repos.wikiStatus, ['none', 'ready', 'error']),
+      ),
+    )
+    .returning()
+
+  return row ?? null
+}
+
+export type WikiResult =
+  | {
+      readonly status: 'ready'
+      readonly generatedAt: Date
+      readonly pages: number | null
+    }
+  | { readonly status: 'error'; readonly lastError: string }
+
+/**
+ * Terminal transition `wiki_status='generating' → ready | error`.
+ * Worker-only — same ownership model as `finishClone` / `finishIndex`.
+ *
+ * Success stamps `wiki_generated_at` + the parsed `wiki_pages` count
+ * (nullable: a no-op `Mode: up-to-date` run leaves `pages` null and
+ * `generated_at` is whatever the worker passed — typically `now()`).
+ * Failure sets `wiki_last_error` and leaves the previous
+ * `wiki_generated_at` / `wiki_pages` intact so the UI can still link to
+ * a stale-but-readable wiki from a prior successful run.
+ */
+export async function finishWiki(
+  handle: AgentBridgeDb,
+  repoId: string,
+  result: WikiResult,
+): Promise<RepoRow | null> {
+  if (result.status === 'ready') {
+    const [row] = await handle.db
+      .update(repos)
+      .set({
+        wikiStatus: 'ready',
+        wikiGeneratedAt: result.generatedAt,
+        wikiPages: result.pages,
+        wikiLastError: null,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(repos.id, repoId))
+      .returning()
+    return row ?? null
+  }
+
+  const [row] = await handle.db
+    .update(repos)
+    .set({
+      wikiStatus: 'error',
+      wikiLastError: result.lastError,
       updatedAt: sql`now()`,
     })
     .where(eq(repos.id, repoId))

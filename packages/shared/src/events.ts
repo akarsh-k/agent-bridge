@@ -43,6 +43,10 @@ export const runEventKinds = [
   'repo.index.progress',
   'repo.index.ok',
   'repo.index.fail',
+  'repo.wiki.started',
+  'repo.wiki.progress',
+  'repo.wiki.ok',
+  'repo.wiki.fail',
   'ping',
 ] as const
 
@@ -138,7 +142,68 @@ export interface RepoIndexFailPayload {
   readonly exitCode?: number
 }
 
-/** Build the SSE `streamId` for per-repo clone + index progress. */
+// ─── `repo.wiki.*` payload shapes ─────────────────────────────────────────
+//
+// Wiki generation publishes on the same `repo:<id>` stream as clone + index
+// so the inspector log can render a continuous timeline across all three
+// pipelines. `mode` mirrors the `GenerateWikiJob.mode` discriminant — the
+// frontend uses it to label the banner ("Generating wiki…" vs "Re-generating
+// wiki (force)…") and the worker forwards it as the `--force` flag toggle.
+
+export type RepoWikiMode = 'initial' | 'force'
+
+export interface RepoWikiStartedPayload {
+  readonly repoId: string
+  readonly mode: RepoWikiMode
+  /**
+   * Hint for the UI banner — surfaces which provider is being charged for
+   * this run. The backend resolves it from `llm_providers.kind` at enqueue
+   * time so the worker doesn't need to publish a "started" frame at all
+   * (the backend publishes one before the job lands on the queue, the
+   * worker publishes a second one once it actually picks up the job —
+   * same idempotent contract as `repo.index.started`).
+   */
+  readonly providerKind: string
+}
+
+/**
+ * One line of `gitnexus wiki` stdout/stderr after redaction. The CLI
+ * streams a `cli-progress` bar that emits `\r`-terminated phase updates
+ * ("Generating pages... (12s)") plus newline-terminated free-form lines.
+ * Our line buffer splits on both so the log stays glanceable.
+ */
+export interface RepoWikiProgressPayload {
+  readonly repoId: string
+  readonly line: string
+}
+
+export interface RepoWikiOkPayload {
+  readonly repoId: string
+  readonly durationMs: number
+  readonly mode: RepoWikiMode
+  /**
+   * Page count parsed from the final stdout summary ("Pages: N"). `null`
+   * when the run was a no-op (`Mode: up-to-date`) and the CLI didn't emit
+   * a fresh count, OR when the parser couldn't find the line (defensive —
+   * gitnexus could change the output format in a future minor bump).
+   */
+  readonly pages: number | null
+  /**
+   * gitnexus's own `WikiResult.mode` value, parsed from stdout
+   * ("Mode: incremental" / "full" / "up-to-date"). `null` if not found.
+   * Lets the UI distinguish "regenerated everything" from "rebuilt only
+   * the diff" without an extra column.
+   */
+  readonly resultMode: string | null
+}
+
+export interface RepoWikiFailPayload {
+  readonly repoId: string
+  readonly message: string
+  readonly exitCode?: number
+}
+
+/** Build the SSE `streamId` for per-repo clone + index + wiki progress. */
 export function repoStreamId(repoId: string): string {
   return `repo:${repoId}`
 }

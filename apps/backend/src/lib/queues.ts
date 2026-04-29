@@ -18,8 +18,10 @@ import { Redis } from 'ioredis'
 import {
   QUEUE_NAMES,
   cloneRepoJobSchema,
+  generateWikiJobSchema,
   indexRepoJobSchema,
   type CloneRepoJob,
+  type GenerateWikiJob,
   type IndexRepoJob,
   type QueueName,
 } from '@agent-bridge/shared'
@@ -94,6 +96,31 @@ export async function enqueueIndexRepo(
   const queue = getQueue(QUEUE_NAMES.indexRepo)
   const job = await queue.add(`index:${payload.repoId}`, payload, {
     attempts: 1,
+    removeOnComplete: { age: 24 * 3_600, count: 200 },
+    removeOnFail: { age: 7 * 24 * 3_600 },
+  })
+  return { jobId: String(job.id ?? 'unknown') }
+}
+
+/**
+ * Enqueue a `generateWiki` job from the HTTP layer. Wiki generation is
+ * always user-initiated — no auto-chain off the index worker — because
+ * each run charges the configured LLM provider per page.
+ *
+ * Retries = 2 with exponential backoff: a transient 429 / upstream 5xx
+ * is worth one auto-retry, but beyond that the cost-per-attempt is real
+ * money and the failure mode is usually a config issue (bad model name,
+ * missing apiKey) that retry can't fix. Matches the worker's queue
+ * config in `apps/worker/src/index.ts`.
+ */
+export async function enqueueGenerateWiki(
+  input: GenerateWikiJob,
+): Promise<{ jobId: string }> {
+  const payload = generateWikiJobSchema.parse(input)
+  const queue = getQueue(QUEUE_NAMES.generateWiki)
+  const job = await queue.add(`wiki:${payload.repoId}`, payload, {
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 5_000 },
     removeOnComplete: { age: 24 * 3_600, count: 200 },
     removeOnFail: { age: 7 * 24 * 3_600 },
   })

@@ -17,7 +17,11 @@
  */
 
 import { z } from 'zod'
-import { llmProviderKinds, type LlmProviderKind } from '../domain.js'
+import {
+  llmProviderKinds,
+  type LlmProviderKind,
+  type LlmProviderModelsCache,
+} from '../domain.js'
 import { secretInputSchema, secretSentinelSchema } from './secrets.js'
 
 const kindSchema = z.enum(llmProviderKinds)
@@ -99,6 +103,17 @@ export type LlmProviderUpdateInput = z.infer<typeof llmProviderUpdateInputSchema
 
 // ─── Response ────────────────────────────────────────────────────────────
 
+/**
+ * Snapshot of `/v1/models` for this provider, refreshed via
+ * `POST /api/llm-providers/:id/models/refresh`. `null` when the operator
+ * has never refreshed; the model-picker UIs render as plain free-text
+ * inputs in that case.
+ */
+export const llmProviderModelsCacheSchema = z.object({
+  models: z.array(z.string().min(1).max(200)),
+  fetchedAt: z.iso.datetime(),
+}) satisfies z.ZodType<LlmProviderModelsCache>
+
 export const llmProviderResponseSchema = z.object({
   id: z.uuid(),
   kind: kindSchema,
@@ -107,6 +122,8 @@ export const llmProviderResponseSchema = z.object({
   defaultModel: z.string().nullable(),
   /** Presence-only sentinel. Never contains plaintext. */
   apiKey: secretSentinelSchema,
+  /** Cached `/v1/models` response or `null` if never refreshed. */
+  models: llmProviderModelsCacheSchema.nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 })
@@ -190,4 +207,60 @@ export const llmProviderTestResponseSchema = z.discriminatedUnion('ok', [
 
 export type LlmProviderTestResponse = z.infer<
   typeof llmProviderTestResponseSchema
+>
+
+// ─── Refresh models ──────────────────────────────────────────────────────
+//
+// `POST /api/llm-providers/:id/models/refresh` re-fetches `/v1/models`
+// from the provider and updates the cached row. Same secret-handling
+// discipline as the test endpoint: any `baseUrl` / `apiKey` overrides
+// the caller passes apply only to this one call (not persisted), and
+// the saved envelope is the default. The response shape mirrors
+// `LlmProviderTestResponse` so the UI can render success / failure
+// from one rendering path.
+
+export const llmProviderRefreshModelsInputSchema = z
+  .object({
+    baseUrl: baseFields.baseUrl,
+    apiKey: baseFields.apiKey,
+  })
+  .strict()
+  .partial()
+
+export type LlmProviderRefreshModelsInput = z.infer<
+  typeof llmProviderRefreshModelsInputSchema
+>
+
+export const llmProviderRefreshModelsResponseSchema = z.discriminatedUnion(
+  'ok',
+  [
+    z
+      .object({
+        ok: z.literal(true),
+        durationMs: z.number().int().nonnegative(),
+        kind: kindSchema,
+        models: llmProviderModelsCacheSchema,
+      })
+      .strict(),
+    z
+      .object({
+        ok: z.literal(false),
+        durationMs: z.number().int().nonnegative(),
+        kind: kindSchema,
+        code: z.enum([
+          'unreachable',
+          'auth',
+          'rate_limited',
+          'upstream',
+          'timeout',
+          'unknown',
+        ]),
+        message: z.string(),
+      })
+      .strict(),
+  ],
+)
+
+export type LlmProviderRefreshModelsResponse = z.infer<
+  typeof llmProviderRefreshModelsResponseSchema
 >

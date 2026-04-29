@@ -19,6 +19,7 @@ import { mcpConnectionsRouter } from './routes/mcp-connections.js'
 import { oauthRouter } from './routes/oauth.js'
 import { repoEdgesRouter } from './routes/repo-edges.js'
 import { repoJobsRouter } from './routes/repo-jobs.js'
+import { repoWikiStaticRouter } from './routes/repo-wiki-static.js'
 import { reposRouter } from './routes/repos.js'
 import { skillsRouter } from './routes/skills.js'
 import { toolsRouter } from './routes/tools.js'
@@ -65,6 +66,7 @@ const api = new Hono()
   .route('/mcp-connections', mcpConnectionsRouter)
   .route('/repos', reposRouter)
   .route('/repos', repoJobsRouter)
+  .route('/repos', repoWikiStaticRouter)
   .get(
     '/hello',
     zValidator('query', z.object({ name: z.string().trim().min(1).max(200) })),

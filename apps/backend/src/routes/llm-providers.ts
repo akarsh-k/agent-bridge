@@ -25,6 +25,7 @@ import { Hono } from 'hono'
 import {
   llmProviderCreateInputSchema,
   llmProviderIdParamSchema,
+  llmProviderRefreshModelsInputSchema,
   llmProviderResponseSchema,
   llmProviderTestInputSchema,
   llmProviderUpdateInputSchema,
@@ -33,7 +34,10 @@ import {
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
-import { testProvider } from '../lib/llm-providers/index.js'
+import {
+  refreshProviderModels,
+  testProvider,
+} from '../lib/llm-providers/index.js'
 import { isPostgresErrorWithCode, PG } from '../lib/pg-errors.js'
 import {
   applySecretInput,
@@ -52,6 +56,7 @@ function toLlmProviderResponse(row: LlmProviderRow): LlmProviderResponse {
     baseUrl: row.baseUrl,
     defaultModel: row.defaultModel,
     apiKey: envelopeToSentinel(row.apiKeyEnvelope),
+    models: row.modelsJson ?? null,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   })
@@ -256,6 +261,77 @@ export const llmProvidersRouter = new Hono()
         },
         body,
       )
+
+      return c.json({ ok: true as const, result })
+    },
+  )
+  // ─── POST /api/llm-providers/:id/models/refresh ──────────────────────────
+  //
+  // Re-fetch `/v1/models` and persist the result on `models_json`.
+  // Same secret-handling discipline as the test endpoint: any
+  // `baseUrl` / `apiKey` overrides apply only to this one call. 2xx
+  // always carries an `LlmProviderRefreshModelsResponse`; a failed
+  // probe returns `{ ok: false, code, message }` (not 4xx) so the UI
+  // has one envelope to parse for both success and reachability errors.
+  // The DB write is best-effort (failure is logged + ignored) — the
+  // operator can retry, and we don't want a transient DB hiccup to
+  // mask a successful upstream probe.
+  .post(
+    '/:id/models/refresh',
+    zValidator('param', llmProviderIdParamSchema, (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    }),
+    zValidator('json', llmProviderRefreshModelsInputSchema, (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param')
+      const body = c.req.valid('json')
+      const { db } = getDb()
+
+      const [row] = await db
+        .select()
+        .from(schema.llmProviders)
+        .where(eq(schema.llmProviders.id, id))
+        .limit(1)
+
+      if (!row) {
+        return httpError(c, {
+          code: 'not_found',
+          message: `llm provider ${id} not found`,
+        })
+      }
+
+      const result = await refreshProviderModels(
+        {
+          kind: row.kind,
+          baseUrl: row.baseUrl,
+          defaultModel: row.defaultModel,
+          apiKeyEnvelope: row.apiKeyEnvelope,
+        },
+        body,
+      )
+
+      // Persist on success so subsequent reads of `/api/llm-providers`
+      // surface the refreshed list without re-probing. Any DB failure
+      // doesn't fail the request — the operator already has the data
+      // they asked for in the response, and the next refresh will
+      // overwrite cleanly.
+      if (result.ok) {
+        try {
+          await db
+            .update(schema.llmProviders)
+            .set({ modelsJson: result.models })
+            .where(eq(schema.llmProviders.id, id))
+        } catch (err) {
+          console.error(
+            `[llm-providers] failed to persist models_json for ${id}:`,
+            err instanceof Error ? err.message : err,
+          )
+        }
+      }
 
       return c.json({ ok: true as const, result })
     },

@@ -94,6 +94,18 @@ export interface WorkspaceContextValue {
   createLlmProvider: (
     input: LlmProviderCreateInput,
   ) => Promise<LlmProviderResponse>
+  /**
+   * Patch an llm-provider row's `models_json` cache in local state with
+   * a fresh response from the refresh endpoint. Used by the
+   * "Refresh models" affordance on the LLM provider inspector — the
+   * backend has already persisted, so we just sync the in-memory list
+   * so dropdowns elsewhere (agent inspector, wiki button) see the new
+   * choices without a full refetch.
+   */
+  patchLlmProviderModels: (
+    id: string,
+    models: LlmProviderResponse['models'],
+  ) => void
   createMcpConnection: (
     input: McpConnectionCreateInput,
   ) => Promise<McpConnectionResponse>

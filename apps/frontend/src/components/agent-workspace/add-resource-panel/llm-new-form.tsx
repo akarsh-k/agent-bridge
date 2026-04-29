@@ -6,6 +6,7 @@ import {
 } from '@agent-bridge/shared'
 import { useWorkspace } from '../../../lib/workspace-context'
 import { ApiError } from '../../../lib/rpc'
+import { ModelPicker } from '../../common/model-picker'
 import { AddFormActions, ErrorText } from './form-atoms'
 
 const LOCAL_LLM_KINDS: readonly LlmProviderKind[] = [
@@ -135,14 +136,22 @@ export function LlmNewForm({
       ) : null}
       <label className="field">
         <span className="field-label">Default model (optional)</span>
-        <input
-          className="field-mono"
+        {/* Fresh providers have no cached models yet, so the picker
+            renders as a plain text input. After creation the operator
+            can hit "Refresh models" on the inspector to populate the
+            dropdown for future edits. */}
+        <ModelPicker
           value={defaultModel}
-          onChange={(e) => setDefaultModel(e.target.value)}
+          onChange={setDefaultModel}
+          models={[]}
           placeholder="gpt-4.1-mini"
-          maxLength={200}
+          className="field-mono"
           disabled={busy}
+          ariaLabel="Default model id"
         />
+        <span className="field-hint">
+          Refresh the model list after saving to enable autocomplete here.
+        </span>
       </label>
       <label className="field">
         <span className="field-label">API key (optional)</span>

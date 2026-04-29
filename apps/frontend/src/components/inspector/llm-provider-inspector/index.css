@@ -46,3 +46,39 @@
   border-radius: var(--radius);
   overflow-wrap: anywhere;
 }
+
+/* ─── Refresh models block ─────────────────────────────────────────────── */
+
+.refresh-models {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+
+.model-cache-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-hi);
+  font-size: 11.5px;
+  color: var(--text-dim);
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.model-cache-list li {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-cache-list li.muted {
+  color: var(--text-muted);
+  font-style: italic;
+}

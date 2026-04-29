@@ -5,3 +5,4 @@
 
 export { testProvider } from './test-provider.js'
 export type { StoredProvider } from './test-provider.js'
+export { refreshProviderModels } from './refresh-models.js'

@@ -404,6 +404,18 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [],
   )
 
+  const patchLlmProviderModels = useCallback(
+    (id: string, models: LlmProviderResponse['models']): void => {
+      setTopLevel((prev) => ({
+        ...prev,
+        llmProviders: prev.llmProviders.map((p) =>
+          p.id === id ? { ...p, models } : p,
+        ),
+      }))
+    },
+    [],
+  )
+
   const createMcpConnection = useCallback(
     async (
       input: McpConnectionCreateInput,
@@ -600,6 +612,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       attachRepo,
       createRepo,
       createLlmProvider,
+      patchLlmProviderModels,
       createMcpConnection,
       patchMcpConnection,
       removeMcpConnection,
@@ -621,6 +634,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       attachRepo,
       createRepo,
       createLlmProvider,
+      patchLlmProviderModels,
       createMcpConnection,
       patchMcpConnection,
       removeMcpConnection,

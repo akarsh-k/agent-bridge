@@ -41,6 +41,10 @@ const KIND_ICON: Record<RunEventKind, string> = {
   'repo.index.progress': '↻',
   'repo.index.ok': '✓',
   'repo.index.fail': '✕',
+  'repo.wiki.started': '▶',
+  'repo.wiki.progress': '↻',
+  'repo.wiki.ok': '✓',
+  'repo.wiki.fail': '✕',
   ping: '·',
 }
 
@@ -49,7 +53,8 @@ function iconClass(kind: RunEventKind): string {
     kind === 'run.error' ||
     kind === 'worker.error' ||
     kind === 'repo.clone.fail' ||
-    kind === 'repo.index.fail'
+    kind === 'repo.index.fail' ||
+    kind === 'repo.wiki.fail'
   )
     return 'activity-icon err'
   if (
@@ -57,7 +62,8 @@ function iconClass(kind: RunEventKind): string {
     kind === 'worker.finished' ||
     kind === 'run.step.finished' ||
     kind === 'repo.clone.ok' ||
-    kind === 'repo.index.ok'
+    kind === 'repo.index.ok' ||
+    kind === 'repo.wiki.ok'
   )
     return 'activity-icon ok'
   return 'activity-icon'

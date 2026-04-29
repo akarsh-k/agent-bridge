@@ -22,6 +22,7 @@ import {
   type AgentUpdateInput,
 } from '@agent-bridge/shared'
 import { useWorkspace } from '../../../lib/workspace-context'
+import { ModelPicker } from '../../common/model-picker'
 import { ApiError } from '../../../lib/rpc'
 import { navigate } from '../../../lib/router'
 
@@ -31,7 +32,13 @@ type FieldErrors = Partial<
 >
 
 export function AgentInspector({ agent }: { agent: AgentResponse }) {
-  const { patchAgent, removeAgent } = useWorkspace()
+  const { patchAgent, removeAgent, llmProviders } = useWorkspace()
+  // Surface this agent's provider's cached `/v1/models` list so the
+  // model field shows autocomplete choices. Falls back to an empty
+  // array (free-text input) when the agent has no provider yet OR the
+  // provider hasn't been refreshed.
+  const providerModels =
+    llmProviders.find((p) => p.id === agent.llmProviderId)?.models?.models ?? []
 
   const [name, setName] = useState(() => agent.name)
   const [slug, setSlug] = useState(() => agent.slug)
@@ -195,16 +202,18 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
 
         <label className="field">
           <span className="field-label">Model</span>
-          <input
-            type="text"
-            className="field-mono"
+          <ModelPicker
             value={model}
-            onChange={(e) => setModel(e.target.value)}
+            onChange={setModel}
+            models={providerModels}
             placeholder="e.g. gpt-4.1-mini, claude-opus-4, llama3.1-8b"
-            maxLength={200}
+            className="field-mono"
+            ariaLabel="Agent model id"
           />
           <span className="field-hint">
-            Free-form for now; wire to an LLM provider in Phase 3.
+            {providerModels.length > 0
+              ? `Pick from ${providerModels.length} model(s) refreshed from this provider, or type a custom id.`
+              : "Type a model id. Refresh the provider's model list to get autocomplete."}
           </span>
           {fieldErrors.model ? (
             <span className="field-error">{fieldErrors.model}</span>

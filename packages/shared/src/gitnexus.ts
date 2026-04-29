@@ -157,11 +157,31 @@ export async function runGitnexusToCompletion(
 // (the worker) check the return value and throw locally.
 
 const META_RELATIVE_PATH = ['.gitnexus', 'meta.json'] as const
+const WIKI_RELATIVE_DIR = ['.gitnexus', 'wiki'] as const
 
 /** Absolute path to the `meta.json` written by `gitnexus analyze` for a
  *  repo whose cloned source tree lives at `sourceDir`. */
 export function repoMetaJsonPath(sourceDir: string): string {
   return path.join(sourceDir, ...META_RELATIVE_PATH)
+}
+
+/**
+ * Absolute path to the wiki output directory written by `gitnexus wiki`.
+ * Phase 2C plan note: gitnexus's `--storage-path` defaults to
+ * `<sourceDir>/.gitnexus/`, and the wiki command always nests its output
+ * under `<storagePath>/wiki/`. The original Plan.md said
+ * `.agent-bridge-data/workspace/<agent>/<repo>/wiki/`, but per-agent doesn't
+ * make sense for a repo-derived artifact and fights gitnexus's defaults —
+ * we co-locate with `meta.json` instead.
+ */
+export function repoWikiDir(sourceDir: string): string {
+  return path.join(sourceDir, ...WIKI_RELATIVE_DIR)
+}
+
+/** Absolute path to the wiki's bundled HTML viewer. Used by the backend's
+ *  static-serve endpoint to short-circuit "does the wiki exist?" checks. */
+export function repoWikiIndexHtmlPath(sourceDir: string): string {
+  return path.join(repoWikiDir(sourceDir), 'index.html')
 }
 
 /**

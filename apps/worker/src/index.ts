@@ -10,6 +10,7 @@ import { QUEUE_NAMES } from './queues.js'
 import { handlePingJob } from './jobs/ping.js'
 import { handleCloneRepoJob } from './jobs/clone-repo.js'
 import { handleIndexRepoJob } from './jobs/index-repo.js'
+import { handleGenerateWikiJob } from './jobs/generate-wiki.js'
 import { closeProducerQueues } from './jobs/enqueue.js'
 
 /**
@@ -149,8 +150,60 @@ async function main(): Promise<void> {
     )
   })
 
-  const workers = [pingWorker, cloneRepoWorker, indexRepoWorker] as const
-  const queues = [pingQueue, cloneRepoQueue, indexRepoQueue] as const
+  // ── generate-wiki ─────────────────────────────────────────────────────
+  // Concurrency 1: `gitnexus wiki` is LLM-bound — every page is a separate
+  // chat completion against the configured provider. Two parallel wiki
+  // jobs would compete for both rate-limit headroom AND the gitnexus-home
+  // config file (gitnexus persists `--api-key`/`--base-url` flags into
+  // `~/.gitnexus/config.json` per run). Serialising avoids both.
+  const generateWikiQueue = new Queue(QUEUE_NAMES.generateWiki, {
+    connection: createRedisConnection({ role: 'queue' }),
+    defaultJobOptions: {
+      // Wiki gen is LLM-stochastic; one auto-retry can flip a transient
+      // 429/500 into a success without thrashing the budget. Beyond that
+      // the cost-per-attempt is real money — keep it bounded.
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 5_000 },
+      removeOnComplete: { age: 24 * 3_600, count: 200 },
+      removeOnFail: { age: 7 * 24 * 3_600 },
+    },
+  })
+
+  const generateWikiWorker = new Worker(
+    QUEUE_NAMES.generateWiki,
+    handleGenerateWikiJob,
+    {
+      connection: createRedisConnection({ role: 'worker' }),
+      concurrency: 1,
+    },
+  )
+
+  generateWikiWorker.on('ready', () => {
+    console.info(`[worker:${QUEUE_NAMES.generateWiki}] ready (concurrency=1)`)
+  })
+  generateWikiWorker.on('completed', (job) => {
+    console.info(
+      `[worker:${QUEUE_NAMES.generateWiki}] completed job ${job.id}`,
+    )
+  })
+  generateWikiWorker.on('failed', (job, err) => {
+    console.error(
+      `[worker:${QUEUE_NAMES.generateWiki}] job ${job?.id ?? '<unknown>'} failed: ${err.message}`,
+    )
+  })
+
+  const workers = [
+    pingWorker,
+    cloneRepoWorker,
+    indexRepoWorker,
+    generateWikiWorker,
+  ] as const
+  const queues = [
+    pingQueue,
+    cloneRepoQueue,
+    indexRepoQueue,
+    generateWikiQueue,
+  ] as const
 
   await pingQueue.add(
     'boot-smoke',

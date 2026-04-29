@@ -19,6 +19,8 @@ import { hc } from 'hono/client'
 import type { AppType } from 'backend'
 import type {
   ErrorCode,
+  LlmProviderRefreshModelsInput,
+  LlmProviderRefreshModelsResponse,
   LlmProviderTestInput,
   LlmProviderTestResponse,
   McpConnectionDiscoverInput,
@@ -192,6 +194,32 @@ export async function indexRepo(
   return { jobId: res.jobId, streamId: res.streamId }
 }
 
+/**
+ * Kick off a `gitnexus wiki` run for the repo. The caller picks which LLM
+ * provider charges for this run and may override the model per-call;
+ * the backend falls back to `provider.default_model` when `model` is
+ * omitted. `force` skips the up-to-date short-circuit (regenerates every
+ * page even if nothing changed).
+ */
+export async function generateRepoWiki(
+  repoId: string,
+  body: { llmProviderId: string; model?: string; force?: boolean },
+): Promise<RepoJobStartResponse> {
+  const res = await callApi<{ ok: true } & RepoJobStartResponse>(
+    fetch(`${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/wiki`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  )
+  return { jobId: res.jobId, streamId: res.streamId }
+}
+
+/** Absolute URL for the bundled wiki HTML viewer for a given repo. */
+export function repoWikiViewerUrl(repoId: string): string {
+  return `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/wiki/index.html`
+}
+
 // ─── LLM provider helpers ────────────────────────────────────────────────
 
 /**
@@ -207,6 +235,32 @@ export async function testLlmProvider(
 ): Promise<LlmProviderTestResponse> {
   const res = await callApi<{ ok: true; result: LlmProviderTestResponse }>(
     rpc.api['llm-providers'][':id'].test.$post({
+      param: { id },
+      json: overrides,
+    }),
+  )
+  return res.result
+}
+
+/**
+ * Re-fetch `/v1/models` for the provider and persist the result. Same
+ * override pattern as `testLlmProvider` — caller can pass `baseUrl` /
+ * `apiKey` to probe an unsaved draft. The response envelope is a
+ * discriminated union; the inner `LlmProviderRefreshModelsResponse`
+ * carries `{ ok: true, models }` on success or `{ ok: false, code,
+ * message }` for reachability/auth failures (those are NOT thrown
+ * because the backend wraps them as 200s — only transport errors throw
+ * `ApiError`).
+ */
+export async function refreshLlmProviderModels(
+  id: string,
+  overrides: LlmProviderRefreshModelsInput = {},
+): Promise<LlmProviderRefreshModelsResponse> {
+  const res = await callApi<{
+    ok: true
+    result: LlmProviderRefreshModelsResponse
+  }>(
+    rpc.api['llm-providers'][':id'].models.refresh.$post({
       param: { id },
       json: overrides,
     }),

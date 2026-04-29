@@ -24,12 +24,15 @@ import type {
   AttachedRepoResponse,
   RepoResponse,
   RepoStatus,
+  RepoWikiStatus,
 } from '@agent-bridge/shared'
 import type { WorkspaceContextValue } from '../../../lib/workspace-context'
 import { CloneButton } from './clone-button'
 import { IndexButton } from './index-button'
 import { IndexSummary } from './index-summary'
 import { RepoLog } from './repo-log'
+import { WikiButton } from './wiki-button'
+import { WikiSummary } from './wiki-summary'
 
 import './index.css'
 
@@ -44,19 +47,41 @@ export function RepoInspector({
     status: RepoStatus
     basedOnUpdatedAt: string
   } | null>(null)
+  // Wiki overlay is tracked separately because wiki gen doesn't move
+  // `repo.status` — only `repo.wikiStatus`. Sharing the overlay would
+  // make a successful clone (which moves `status` to `cloned`) blow
+  // away an in-flight wiki overlay even though the wiki is still
+  // running.
+  const [wikiOverlay, setWikiOverlay] = useState<{
+    status: RepoWikiStatus
+    basedOnUpdatedAt: string
+  } | null>(null)
 
   const overlayLive =
     statusOverlay !== null && statusOverlay.basedOnUpdatedAt === repo.updatedAt
-  const effective: RepoResponse =
-    overlayLive && statusOverlay
-      ? { ...repo, status: statusOverlay.status }
-      : repo
+  const wikiOverlayLive =
+    wikiOverlay !== null && wikiOverlay.basedOnUpdatedAt === repo.updatedAt
+  const effective: RepoResponse = {
+    ...repo,
+    ...(overlayLive && statusOverlay ? { status: statusOverlay.status } : {}),
+    ...(wikiOverlayLive && wikiOverlay
+      ? { wikiStatus: wikiOverlay.status }
+      : {}),
+  }
 
   const attachments: Array<{
     agentName: string
     agentSlug: string
     attached: AttachedRepoResponse
   }> = []
+  // Track the first attached agent's chosen llmProviderId + model so
+  // the wiki dropdown defaults to a sensible pick. Walking agents in
+  // workspace order makes this deterministic across renders. Provider
+  // and model are tracked independently — an agent might have a
+  // provider set but no model, in which case we surface the provider
+  // hint and let the model fall through to provider.default_model.
+  let preferredProviderId: string | null = null
+  let preferredModel: string | null = null
   for (const agent of workspace.agents) {
     const bundle = workspace.agentResources[agent.id]
     if (!bundle) continue
@@ -67,6 +92,12 @@ export function RepoInspector({
           agentSlug: agent.slug,
           attached: a,
         })
+        if (!preferredProviderId && agent.llmProviderId) {
+          preferredProviderId = agent.llmProviderId
+        }
+        if (!preferredModel && agent.model) {
+          preferredModel = agent.model
+        }
       }
     }
   }
@@ -106,6 +137,19 @@ export function RepoInspector({
             }
             onRevert={() => setStatusOverlay(null)}
           />
+          <WikiButton
+            repo={effective}
+            providers={workspace.llmProviders}
+            preferredProviderId={preferredProviderId}
+            preferredModel={preferredModel}
+            onOptimistic={() =>
+              setWikiOverlay({
+                status: 'generating',
+                basedOnUpdatedAt: repo.updatedAt,
+              })
+            }
+            onRevert={() => setWikiOverlay(null)}
+          />
         </div>
         <div className="read-row">
           <span className="read-label">Remote</span>
@@ -141,6 +185,19 @@ export function RepoInspector({
             <span>Index summary</span>
           </div>
           <IndexSummary summary={effective.indexSummary} />
+        </section>
+      ) : null}
+
+      {effective.wikiStatus !== 'none' ? (
+        <section className="inspector-section">
+          <div className="inspector-section-title">
+            <span>Wiki</span>
+            <span className={`badge ${wikiBadgeClass(effective.wikiStatus)}`}>
+              <span className="badge-dot" />
+              {effective.wikiStatus}
+            </span>
+          </div>
+          <WikiSummary repo={effective} />
         </section>
       ) : null}
 
@@ -200,6 +257,20 @@ function statusBadgeClass(status: RepoStatus): string {
     case 'error':
       return 'badge-error'
     case 'pending':
+    default:
+      return ''
+  }
+}
+
+function wikiBadgeClass(status: RepoWikiStatus): string {
+  switch (status) {
+    case 'ready':
+      return 'badge-success'
+    case 'generating':
+      return 'badge-accent'
+    case 'error':
+      return 'badge-error'
+    case 'none':
     default:
       return ''
   }

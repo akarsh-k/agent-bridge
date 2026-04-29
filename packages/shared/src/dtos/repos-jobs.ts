@@ -48,3 +48,34 @@ export const indexRepoJobSchema = z
   .strict()
 
 export type IndexRepoJob = z.infer<typeof indexRepoJobSchema>
+
+/**
+ * `generateWiki` job payload — kicked off by the
+ * `POST /api/repos/:id/wiki` backend route. Wiki generation is LLM-bound
+ * (each module page is summarised by the configured provider) so the
+ * caller picks which LLM provider charges per run via `llmProviderId`.
+ *
+ * Secrets stay off the payload — the worker re-fetches the provider row
+ * and decrypts `api_key_envelope` at spawn time, same discipline as the
+ * clone job's PAT handling. `mode='force'` maps to `gitnexus wiki --force`
+ * and skips the "wiki is already up to date" short-circuit; `'initial'`
+ * is the default first-run path.
+ */
+export const generateWikiJobSchema = z
+  .object({
+    repoId: z.uuid(),
+    llmProviderId: z.uuid(),
+    /**
+     * Resolved model id. The HTTP body accepts an optional `model`
+     * override that falls back to `llm_providers.default_model`, but
+     * the backend resolves that fallback before enqueueing — so the
+     * worker payload always carries a concrete value. Keeps the
+     * worker's job purely "execute" and the resolution policy in one
+     * place (the route handler).
+     */
+    model: z.string().trim().min(1).max(200),
+    mode: z.enum(['initial', 'force']),
+  })
+  .strict()
+
+export type GenerateWikiJob = z.infer<typeof generateWikiJobSchema>

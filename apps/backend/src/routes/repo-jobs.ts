@@ -1,5 +1,6 @@
 /**
- * `/api/repos/:id/{clone|index}` — enqueue sandboxed clone + index jobs.
+ * `/api/repos/:id/{clone|index|wiki}` — enqueue sandboxed clone, index,
+ * and wiki-gen jobs.
  *
  * Contract:
  *   POST /api/repos/:id/clone
@@ -23,19 +24,43 @@
  *                                        transition to indexing (e.g.
  *                                        pending/cloning/indexing itself).
  *
+ *   POST /api/repos/:id/wiki  body: { llmProviderId, force?: boolean }
+ *     202 { ok: true, jobId, streamId: 'repo:<uuid>' }
+ *       → user-initiated wiki gen. Repo must be `status='ready'` (post-
+ *         index) and `wiki_status` in {none, ready, error}. The body
+ *         picks which LLM provider charges for this run; the backend
+ *         resolves the row, validates `defaultModel` is set, and the
+ *         worker decrypts the apiKey at spawn time.
+ *     404                              — repo or LLM provider not found
+ *     409                              — wiki already generating, or
+ *                                        the repo isn't ready (status !=
+ *                                        ready means there's no meta.json
+ *                                        for gitnexus to read).
+ *     400                              — selected LLM provider has no
+ *                                        defaultModel, OR (for non-openai
+ *                                        kinds) no baseUrl.
+ *
  * Status authority split mirrors the clone route: the HTTP layer CAS-flips
- * exactly one intermediate state (`cloning` or `indexing`) via the helpers
- * in `@agent-bridge/db`; every terminal transition (`cloned`/`ready`/
- * `error`) belongs to the worker.
+ * exactly one intermediate state (`cloning`, `indexing`, or `wiki_status=
+ * generating`) via the helpers in `@agent-bridge/db`; every terminal
+ * transition belongs to the worker.
  */
 
 import { zValidator } from '@hono/zod-validator'
 import { Hono } from 'hono'
-import { repoIdParamSchema, repoStreamId } from '@agent-bridge/shared'
-import { reposRepo } from '@agent-bridge/db'
+import {
+  repoIdParamSchema,
+  repoStreamId,
+  repoWikiInputSchema,
+} from '@agent-bridge/shared'
+import { llmProvidersRepo, reposRepo } from '@agent-bridge/db'
 import { getDb } from '../db.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
-import { enqueueCloneRepo, enqueueIndexRepo } from '../lib/queues.js'
+import {
+  enqueueCloneRepo,
+  enqueueGenerateWiki,
+  enqueueIndexRepo,
+} from '../lib/queues.js'
 
 export const repoJobsRouter = new Hono().post(
   '/:id/clone',
@@ -191,6 +216,127 @@ export const repoJobsRouter = new Hono().post(
         return httpError(c, {
           code: 'internal',
           message: `Failed to enqueue index job: ${message}`,
+        })
+      }
+    },
+  )
+  // ─── POST /api/repos/:id/wiki ────────────────────────────────────────────
+  .post(
+    '/:id/wiki',
+    zValidator('param', repoIdParamSchema, (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    }),
+    zValidator('json', repoWikiInputSchema, (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param')
+      const body = c.req.valid('json')
+      const handle = getDb()
+
+      // Read the repo first so 404 vs 409 messaging stays precise. Same
+      // shape as the clone/index routes.
+      const row = await reposRepo.getForWorker(handle, id)
+      if (!row) {
+        return httpError(c, {
+          code: 'not_found',
+          message: `repo ${id} not found`,
+        })
+      }
+      if (row.wikiStatus === 'generating') {
+        return httpError(c, {
+          code: 'conflict',
+          message: `repo ${id} wiki generation is already running`,
+        })
+      }
+      if (row.status !== 'ready') {
+        return httpError(c, {
+          code: 'conflict',
+          message:
+            `repo ${id} is ${row.status}; wiki generation requires ` +
+            `a successfully indexed repo (status='ready')`,
+        })
+      }
+
+      // Resolve the LLM provider before flipping wiki_status so a 404 /
+      // 400 path doesn't leave the row stuck in 'generating'. The worker
+      // re-fetches at spawn time, but the validations we need here
+      // (model present, baseUrl resolvable) belong on the request edge —
+      // surfacing them as a 400 is much more actionable than a worker
+      // failure landing as wiki_status='error' minutes later.
+      const provider = await llmProvidersRepo.getForWorker(
+        handle,
+        body.llmProviderId,
+      )
+      if (!provider) {
+        return httpError(c, {
+          code: 'not_found',
+          message: `llm_provider ${body.llmProviderId} not found`,
+        })
+      }
+      // Body override wins over the provider's default. We resolve here
+      // (not in the worker) so a missing-model failure is a synchronous
+      // 400 the user sees on the click — not a wiki_status='error' row
+      // they discover minutes later. The Zod schema already trims +
+      // length-checks any override, so by this point a non-null value
+      // is guaranteed non-empty.
+      const effectiveModel = body.model ?? provider.defaultModel ?? null
+      if (!effectiveModel) {
+        return httpError(c, {
+          code: 'validation_failed',
+          message:
+            `No model resolved for wiki generation: provide one in the ` +
+            `request body or set defaultModel on provider "${provider.label}"`,
+        })
+      }
+      if (provider.kind !== 'openai' && !provider.baseUrl) {
+        return httpError(c, {
+          code: 'validation_failed',
+          message:
+            `LLM provider "${provider.label}" (kind=${provider.kind}) ` +
+            `requires a baseUrl for wiki generation`,
+        })
+      }
+
+      // CAS flip; loses if a concurrent click slipped in between the read
+      // and now. Same defence-in-depth pattern as markCloning/markIndexing.
+      const updated = await reposRepo.markWikiGenerating(handle, id)
+      if (!updated) {
+        return httpError(c, {
+          code: 'conflict',
+          message: `repo ${id} wiki transitioned out from under us; retry`,
+        })
+      }
+
+      try {
+        const { jobId } = await enqueueGenerateWiki({
+          repoId: updated.id,
+          llmProviderId: provider.id,
+          model: effectiveModel,
+          mode: body.force ? 'force' : 'initial',
+        })
+        return c.json(
+          {
+            ok: true as const,
+            jobId,
+            streamId: repoStreamId(updated.id),
+          },
+          202,
+        )
+      } catch (err) {
+        // Same recovery shape as the clone/index routes — if the enqueue
+        // fails after we've claimed `wiki_status='generating'`, flip it
+        // back to 'error' so the UI doesn't get stuck on a spinner.
+        const message = err instanceof Error ? err.message : String(err)
+        await reposRepo.finishWiki(handle, updated.id, {
+          status: 'error',
+          lastError: `Failed to enqueue wiki job: ${message}`,
+        })
+        return httpError(c, {
+          code: 'internal',
+          message: `Failed to enqueue wiki job: ${message}`,
         })
       }
     },

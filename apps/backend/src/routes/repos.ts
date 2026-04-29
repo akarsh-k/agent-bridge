@@ -72,6 +72,12 @@ export function toRepoResponse(
     lastError: row.lastError,
     gitPat: envelopeToSentinel(row.gitPatEnvelope),
     indexSummary: summary ?? null,
+    wikiStatus: row.wikiStatus,
+    wikiGeneratedAt: row.wikiGeneratedAt
+      ? row.wikiGeneratedAt.toISOString()
+      : null,
+    wikiPages: row.wikiPages,
+    wikiLastError: row.wikiLastError,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   })

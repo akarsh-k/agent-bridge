@@ -8,6 +8,7 @@
 
 import type { LlmProviderResponse } from '@agent-bridge/shared'
 import type { WorkspaceContextValue } from '../../../lib/workspace-context'
+import { RefreshModelsButton } from './refresh-models'
 import { TestConnection } from './test-connection'
 
 import './index.css'
@@ -64,6 +65,37 @@ export function LlmProviderInspector({
 
       <section className="inspector-section">
         <div className="inspector-section-title">
+          <span>Models</span>
+          {provider.models ? (
+            <span className="muted" style={{ fontSize: 11.5 }}>
+              {provider.models.models.length} cached ·{' '}
+              {formatRelative(provider.models.fetchedAt)}
+            </span>
+          ) : (
+            <span className="muted" style={{ fontSize: 11.5 }}>
+              not refreshed yet
+            </span>
+          )}
+        </div>
+        <RefreshModelsButton providerId={provider.id} />
+        {provider.models && provider.models.models.length > 0 ? (
+          <ul className="model-cache-list">
+            {provider.models.models.slice(0, 12).map((m) => (
+              <li key={m} className="mono">
+                {m}
+              </li>
+            ))}
+            {provider.models.models.length > 12 ? (
+              <li className="muted">
+                +{provider.models.models.length - 12} more
+              </li>
+            ) : null}
+          </ul>
+        ) : null}
+      </section>
+
+      <section className="inspector-section">
+        <div className="inspector-section-title">
           <span>Used by {users.length} agent(s)</span>
         </div>
         {users.length === 0 ? (
@@ -95,4 +127,17 @@ export function LlmProviderInspector({
       </p>
     </div>
   )
+}
+
+function formatRelative(iso: string): string {
+  const ts = Date.parse(iso)
+  if (Number.isNaN(ts)) return iso
+  const delta = Date.now() - ts
+  if (delta < 60_000) return 'just now'
+  const mins = Math.floor(delta / 60_000)
+  if (mins < 60) return `${mins}m ago`
+  const hours = Math.floor(mins / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.floor(hours / 24)
+  return `${days}d ago`
 }

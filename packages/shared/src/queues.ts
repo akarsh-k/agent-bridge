@@ -16,6 +16,7 @@ export const QUEUE_NAMES = {
   ping: 'agent-bridge.ping',
   cloneRepo: 'agent-bridge.clone-repo',
   indexRepo: 'agent-bridge.index-repo',
+  generateWiki: 'agent-bridge.generate-wiki',
 } as const
 
 export type QueueName = (typeof QUEUE_NAMES)[keyof typeof QUEUE_NAMES]

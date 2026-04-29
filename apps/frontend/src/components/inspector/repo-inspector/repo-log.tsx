@@ -38,7 +38,9 @@ export function RepoLog({ repo, workspace }: RepoLogProps) {
     () =>
       events.filter(
         (e) =>
-          e.kind.startsWith('repo.clone.') || e.kind.startsWith('repo.index.'),
+          e.kind.startsWith('repo.clone.') ||
+          e.kind.startsWith('repo.index.') ||
+          e.kind.startsWith('repo.wiki.'),
       ),
     [events],
   )
@@ -152,6 +154,29 @@ function RepoLogRow({ event }: { event: RunEvent }) {
           <span>{describeFail(event)}</span>
         </div>
       )
+    case 'repo.wiki.started':
+      return (
+        <div className="repo-log-row banner">
+          <span className="repo-log-kind">wiki</span>
+          <span>{describeWikiStarted(event)}</span>
+        </div>
+      )
+    case 'repo.wiki.progress':
+      return <ProgressRow event={event} />
+    case 'repo.wiki.ok':
+      return (
+        <div className="repo-log-row banner ok">
+          <span className="repo-log-kind ok">wiki ready</span>
+          <span>{describeWikiOk(event)}</span>
+        </div>
+      )
+    case 'repo.wiki.fail':
+      return (
+        <div className="repo-log-row banner err">
+          <span className="repo-log-kind err">wiki failed</span>
+          <span>{describeFail(event)}</span>
+        </div>
+      )
     default:
       return null
   }
@@ -172,7 +197,9 @@ function isTerminal(e: RunEvent): boolean {
     e.kind === 'repo.clone.ok' ||
     e.kind === 'repo.clone.fail' ||
     e.kind === 'repo.index.ok' ||
-    e.kind === 'repo.index.fail'
+    e.kind === 'repo.index.fail' ||
+    e.kind === 'repo.wiki.ok' ||
+    e.kind === 'repo.wiki.fail'
   )
 }
 
@@ -266,6 +293,38 @@ function describeIndexOk(event: RunEvent): string {
     parts.push(`${d.summary.edges} edges`)
   const stats = parts.length > 0 ? ` · ${parts.join(' · ')}` : ''
   return `index succeeded${ms}${stats}`
+}
+
+function describeWikiStarted(event: RunEvent): string {
+  const d = event.data as
+    | { mode?: string; providerKind?: string }
+    | null
+    | undefined
+  const provider =
+    typeof d?.providerKind === 'string' ? ` via ${d.providerKind}` : ''
+  return d?.mode === 'force'
+    ? `gitnexus wiki --force${provider}`
+    : `gitnexus wiki${provider}`
+}
+
+function describeWikiOk(event: RunEvent): string {
+  const d = event.data as
+    | {
+        durationMs?: number
+        pages?: number | null
+        resultMode?: string | null
+      }
+    | null
+    | undefined
+  const ms =
+    typeof d?.durationMs === 'number' ? ` · ${formatMs(d.durationMs)}` : ''
+  const parts: string[] = []
+  if (typeof d?.resultMode === 'string') parts.push(d.resultMode)
+  if (typeof d?.pages === 'number') {
+    parts.push(`${d.pages} ${d.pages === 1 ? 'page' : 'pages'}`)
+  }
+  const stats = parts.length > 0 ? ` · ${parts.join(' · ')}` : ''
+  return `wiki generated${ms}${stats}`
 }
 
 function describeFail(event: RunEvent): string {
