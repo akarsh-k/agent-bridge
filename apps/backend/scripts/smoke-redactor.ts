@@ -16,7 +16,7 @@
  * regression immediately.
  */
 
-import { createRunRedactor } from '../src/lib/run-redactor.js'
+import { createRunRedactor } from '@agent-bridge/agents'
 
 const SECRET = 'sk-TESTREDACT-01234567ABCDEF'
 const SHORT = 'ab'

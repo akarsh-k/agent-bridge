@@ -1,0 +1,316 @@
+/* ---------------------------------------------------------------------------
+   Bridge view — IDE setup + tools list + runs feed.
+
+   Reuses the same surface tokens as the inspector (var(--surface),
+   var(--border), etc.) so the page looks at home in the workspace shell.
+   Three vertically stacked cards with consistent header/footer rhythm.
+--------------------------------------------------------------------------- */
+
+.bridge-view {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 24px 32px;
+  max-width: 880px;
+  margin: 0 auto;
+  width: 100%;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.bridge-view-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 8px;
+}
+
+.bridge-view-title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.bridge-view-subtitle {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.bridge-view-subtitle code {
+  font-family: var(--font-mono);
+  background: var(--surface-hi);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ─── Card primitive ──────────────────────────────────────────────────── */
+
+.bridge-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.bridge-card-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bridge-card-title {
+  margin: 0;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.bridge-card-subtitle {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.bridge-card-subtitle code {
+  font-family: var(--font-mono);
+  background: var(--surface-hi);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.bridge-card-loading {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.bridge-card-footer {
+  font-size: 11.5px;
+  border-top: 1px dashed var(--border);
+  padding-top: 8px;
+}
+
+.bridge-empty {
+  font-size: 13px;
+  color: var(--text-dim);
+  font-style: italic;
+  padding: 8px 4px;
+}
+
+.bridge-empty code {
+  font-family: var(--font-mono);
+  background: var(--surface-hi);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ─── Setup card ──────────────────────────────────────────────────────── */
+
+.bridge-config-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.bridge-config-meta {
+  font-size: 11.5px;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.bridge-config-textarea {
+  width: 100%;
+  min-height: 120px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  background: var(--surface-hi);
+  color: var(--text);
+  font-size: 12px;
+  font-family: var(--font-mono);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.bridge-setup-steps {
+  margin: 0;
+  padding-left: 24px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+.bridge-setup-steps li {
+  padding: 2px 0;
+}
+
+.bridge-setup-steps code {
+  font-family: var(--font-mono);
+  background: var(--surface-hi);
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ─── Tools list ──────────────────────────────────────────────────────── */
+
+.bridge-tool-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.bridge-tool-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-hi);
+}
+
+.bridge-tool-row-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.bridge-tool-name {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-bg);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.bridge-tool-agent {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bridge-tool-desc {
+  font-size: 12.5px;
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+
+.bridge-tool-desc.muted {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.bridge-tool-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+
+.bridge-tool-meta-model {
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-dim);
+}
+
+/* ─── Runs feed ───────────────────────────────────────────────────────── */
+
+.bridge-runs-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.bridge-run-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-hi);
+}
+
+.bridge-run-row.status-error {
+  border-color: var(--danger-bg);
+}
+
+.bridge-run-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 12px;
+}
+
+.bridge-run-agent {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.bridge-run-agent code {
+  font-family: var(--font-mono);
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.bridge-run-time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.bridge-run-prompt {
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 8em;
+  overflow-y: auto;
+}
+
+.bridge-run-output {
+  font-size: 12px;
+  color: var(--text-dim);
+  border-left: 2px solid var(--accent);
+  padding: 4px 8px;
+  background: var(--surface);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 10em;
+  overflow-y: auto;
+}
+
+.bridge-run-error {
+  font-size: 12px;
+  color: var(--danger);
+  border-left: 2px solid var(--danger);
+  padding: 4px 8px;
+  background: var(--danger-bg);
+  border-radius: 4px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

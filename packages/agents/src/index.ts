@@ -33,3 +33,7 @@ export type {
   DiscoverOAuthProbeResult,
 } from './mcp/discover-probe.js'
 export { DrizzleOAuthStorage } from './mcp/oauth-storage.js'
+export { dispatchRun } from './run-dispatcher.js'
+export type { DispatchRunInput } from './run-dispatcher.js'
+export { createRunRedactor } from './run-redactor.js'
+export type { RunRedactor } from './run-redactor.js'

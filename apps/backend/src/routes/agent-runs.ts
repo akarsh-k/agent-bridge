@@ -46,7 +46,7 @@ import { eq } from 'drizzle-orm'
 import { getDb } from '../db.js'
 import { getEventBus } from '../event-bus.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
-import { dispatchRun } from '../lib/run-dispatcher.js'
+import { dispatchRun } from '@agent-bridge/agents'
 
 export const agentRunsRouter = new Hono().post(
   '/',
@@ -115,6 +115,7 @@ export const agentRunsRouter = new Hono().post(
       eventBus: getEventBus(),
       agentId,
       runId: run.id,
+      streamId,
       prompt: body.prompt,
       ...(body.threadId ? { threadId: body.threadId } : {}),
       ...(body.resourceId ? { resourceId: body.resourceId } : {}),

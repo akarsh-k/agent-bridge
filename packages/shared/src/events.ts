@@ -411,3 +411,15 @@ export interface RunFinishedPayload {
 export function runStreamId(runId: string): string {
   return `run:${runId}`
 }
+
+/**
+ * Build the SSE `streamId` for a run started by the IDE-facing MCP
+ * bridge. Phase 5 uses `bridge:` instead of `run:` so the runs tab
+ * (and any future filter) can distinguish IDE-originated runs from
+ * UI-chat runs without a schema column. The persisted
+ * `runs.stream_id` carries the same prefix; the dispatcher just
+ * plumbs whatever the caller persisted.
+ */
+export function bridgeStreamId(runId: string): string {
+  return `bridge:${runId}`
+}

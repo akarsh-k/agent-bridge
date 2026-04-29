@@ -17,6 +17,7 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import {
+  BRIDGE_TOOL_RESERVED_PREFIX,
   agentUpdateInputSchema,
   type AgentResponse,
   type AgentUpdateInput,
@@ -161,7 +162,21 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
             maxLength={64}
           />
           <span className="field-hint">
-            URL-safe ID. Becomes the MCP tool name exposed to coding agents.
+            URL-safe ID. Becomes the MCP tool name exposed to coding
+            agents:{' '}
+            <code className="mono">
+              {BRIDGE_TOOL_RESERVED_PREFIX}
+              {slug || agent.slug}
+            </code>{' '}
+            (open the{' '}
+            <button
+              type="button"
+              className="link-button"
+              onClick={() => navigate('/bridge')}
+            >
+              Connect IDE
+            </button>{' '}
+            page to copy the config).
           </span>
           {fieldErrors.slug ? (
             <span className="field-error">{fieldErrors.slug}</span>

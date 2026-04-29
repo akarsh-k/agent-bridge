@@ -131,6 +131,37 @@ importers:
         specifier: ^8.0.10
         version: 8.0.10(@types/node@24.12.2)(esbuild@0.27.7)(tsx@4.21.0)
 
+  apps/mcp-bridge:
+    dependencies:
+      '@agent-bridge/agents':
+        specifier: workspace:*
+        version: link:../../packages/agents
+      '@agent-bridge/db':
+        specifier: workspace:*
+        version: link:../../packages/db
+      '@agent-bridge/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(pg@8.20.0)(postgres@3.4.9)
+      zod:
+        specifier: ^4.3.6
+        version: 4.3.6
+    devDependencies:
+      '@types/node':
+        specifier: ^24.12.2
+        version: 24.12.2
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+
   apps/worker:
     dependencies:
       '@agent-bridge/db':

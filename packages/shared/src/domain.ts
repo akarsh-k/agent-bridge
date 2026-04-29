@@ -163,6 +163,39 @@ export type RunStatus = (typeof runStatuses)[number]
 
 // ─── Agent memory ─────────────────────────────────────────────────────────
 
+// ─── Bridge tools (Phase 5 / Phase 7) ─────────────────────────────────────
+
+/**
+ * Marker namespace for "bridge tools" — the tools an agent exposes
+ * outbound to an IDE (Cursor, Claude Code) via the wrapper MCP server
+ * in `apps/mcp-bridge`. Distinct from "agent tools" (the inbound tools
+ * an agent itself uses), which live on `agent_mcp_tools` etc.
+ *
+ * **Phase 5 (1:1):** every agent auto-exposes exactly one bridge tool
+ * — `query_<agent.slug>` derived at runtime, no DB row, the
+ * `query_` prefix is reserved.
+ *
+ * **Phase 7 (1:N):** a `bridge_tools` table will let operators author
+ * multiple curated bridge tools per agent. To keep that migration
+ * additive, this interface is reserved as **empty** in Phase 5 — code
+ * MUST NOT construct it. When Phase 7 fills in required fields
+ * (`name`, `description`, `inputSchema`, `promptTemplate`), no
+ * existing call site needs to change.
+ *
+ * See `docs/PLAN.md` Phase 5 design decision "BridgeToolDescriptor is
+ * a marker only".
+ */
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface BridgeToolDescriptor {}
+
+/**
+ * Reserved tool-name prefix for the auto-derived 1:1 default bridge
+ * tools (`query_<agent.slug>`). Phase 7 `bridge_tools.name` rows must
+ * NOT start with this string — enforced by a CHECK constraint when
+ * the table lands.
+ */
+export const BRIDGE_TOOL_RESERVED_PREFIX = 'query_'
+
 /**
  * Memory scope. `resource` persists memory across all threads for the same
  * `resourceId` (typically a user). `thread` scopes it to one conversation.

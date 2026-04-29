@@ -34,6 +34,7 @@ export function TopBar({
   railOpen,
   activeTab,
   liveConnected,
+  isBridgeRoute = false,
   onToggleRail,
   onSetTab,
   onExitFocus,
@@ -42,6 +43,12 @@ export function TopBar({
   railOpen: boolean
   activeTab: RailTab
   liveConnected: boolean
+  /**
+   * `true` when the user is on the IDE-bridge view. Suppresses the
+   * focus indicator + per-agent rail toggles (none of which apply to
+   * a global page) and pressed-state-styles the Connect IDE link.
+   */
+  isBridgeRoute?: boolean
   onToggleRail: () => void
   onSetTab: (tab: RailTab) => void
   onExitFocus: () => void
@@ -89,7 +96,9 @@ export function TopBar({
           /
         </span>
 
-        {focusedAgent ? (
+        {isBridgeRoute ? (
+          <span className="dim">Connect IDE</span>
+        ) : focusedAgent ? (
           <div className="topbar-focus">
             <span className="topbar-focus-label">Focusing</span>
             <span className="topbar-title" title={focusedAgent.name}>
@@ -119,15 +128,31 @@ export function TopBar({
 
         <button
           type="button"
+          className="topbar-btn"
+          aria-pressed={isBridgeRoute}
+          onClick={() => navigate('/bridge')}
+          title="Connect this workspace to your IDE via MCP"
+        >
+          <span aria-hidden="true">⌘</span>
+          <span>Connect IDE</span>
+        </button>
+
+        <button
+          type="button"
           className="btn btn-primary btn-sm"
           onClick={() => void handleCreate()}
-          disabled={creating}
+          disabled={creating || isBridgeRoute}
+          title={
+            isBridgeRoute
+              ? 'Switch to the workspace canvas to create agents'
+              : undefined
+          }
         >
           <span className="icon-plus" aria-hidden="true" />
           <span>{creating ? 'Creating…' : 'New agent'}</span>
         </button>
 
-        {focusedAgent ? (
+        {!isBridgeRoute && focusedAgent ? (
           <>
             <span className="topbar-divider" aria-hidden="true" />
 

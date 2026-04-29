@@ -1,0 +1,28 @@
+{
+  "name": "mcp-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "IDE-facing MCP bridge — exposes each agent as a `query_<slug>` tool to Cursor / Claude Code via stdio.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "NODE_OPTIONS='--conditions=development' tsx src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "packageManager": "pnpm@10.33.0",
+  "dependencies": {
+    "@agent-bridge/agents": "workspace:*",
+    "@agent-bridge/db": "workspace:*",
+    "@agent-bridge/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "drizzle-orm": "^0.45.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

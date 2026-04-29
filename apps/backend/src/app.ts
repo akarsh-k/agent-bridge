@@ -12,6 +12,7 @@ import { agentMcpToolsRouter } from './routes/agent-mcp-tools.js'
 import { agentReposRouter } from './routes/agent-repos.js'
 import { agentRunsRouter } from './routes/agent-runs.js'
 import { agentsRouter } from './routes/agents.js'
+import { bridgeRouter } from './routes/bridge.js'
 import { eventsRouter } from './routes/events.js'
 import { healthRouter } from './routes/health.js'
 import { llmProvidersRouter } from './routes/llm-providers.js'
@@ -21,6 +22,7 @@ import { repoEdgesRouter } from './routes/repo-edges.js'
 import { repoJobsRouter } from './routes/repo-jobs.js'
 import { repoWikiStaticRouter } from './routes/repo-wiki-static.js'
 import { reposRouter } from './routes/repos.js'
+import { runsRouter } from './routes/runs.js'
 import { skillsRouter } from './routes/skills.js'
 import { toolsRouter } from './routes/tools.js'
 
@@ -67,6 +69,8 @@ const api = new Hono()
   .route('/repos', reposRouter)
   .route('/repos', repoJobsRouter)
   .route('/repos', repoWikiStaticRouter)
+  .route('/runs', runsRouter)
+  .route('/bridge', bridgeRouter)
   .get(
     '/hello',
     zValidator('query', z.object({ name: z.string().trim().min(1).max(200) })),

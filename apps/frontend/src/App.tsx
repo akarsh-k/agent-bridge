@@ -21,8 +21,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { WorkspaceProvider } from './lib/workspace-provider'
 import { useWorkspace } from './lib/workspace-context'
-import { matchAgentDetail, navigate, usePathname } from './lib/router'
+import {
+  matchAgentDetail,
+  matchBridge,
+  navigate,
+  usePathname,
+} from './lib/router'
 import { useSSE } from './lib/use-sse'
+import { BridgeView } from './components/bridge-view'
 import { TopBar } from './components/layout/top-bar'
 import { RightRail } from './components/layout/right-rail'
 import {
@@ -124,10 +130,13 @@ function Workspace() {
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
 
+  const isBridgeRoute = matchBridge(pathname)
+
   // Unknown paths → home (canvas still stays usable).
   useEffect(() => {
     if (pathname === '' || pathname === '/') return
     if (matchAgentDetail(pathname)) return
+    if (matchBridge(pathname)) return
     navigate('/', { replace: true })
   }, [pathname])
 
@@ -270,11 +279,17 @@ function Workspace() {
           railOpen={workPanelOpen}
           activeTab={activeRailTab}
           liveConnected={connected}
+          isBridgeRoute={isBridgeRoute}
           onToggleRail={handleToggleRail}
           onSetTab={handleSetTab}
           onExitFocus={handleExitFocus}
         />
 
+        {isBridgeRoute ? (
+          <div className="main-area">
+            <BridgeView />
+          </div>
+        ) : (
         <div className={`main-area${focusedAgent ? ' is-focused' : ''}`}>
           <div className="agent-workspace-primary">
             <div className="main-area-canvas">
@@ -313,7 +328,9 @@ function Workspace() {
             </div>
           </div>
         </div>
+        )}
 
+        {!isBridgeRoute ? (
         <RightRail
           collapsed={!workPanelOpen}
           tab={activeRailTab}
@@ -326,8 +343,9 @@ function Workspace() {
           activityEvents={events}
           activityConnected={connected}
         />
+        ) : null}
 
-        {addPanel && addPanelAgent ? (
+        {!isBridgeRoute && addPanel && addPanelAgent ? (
           <AddResourcePanel
             agent={addPanelAgent}
             initialKind={addPanel.kind}

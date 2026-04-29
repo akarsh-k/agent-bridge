@@ -220,6 +220,82 @@ export function repoWikiViewerUrl(repoId: string): string {
   return `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/wiki/index.html`
 }
 
+// ─── Bridge view helpers ─────────────────────────────────────────────────
+
+export interface BridgeConfigResponse {
+  readonly command: string
+  readonly args: readonly string[]
+  /**
+   * Env vars the IDE must set when spawning the bridge. Empty in prod;
+   * dev injects `NODE_OPTIONS=--conditions=development` so workspace
+   * imports resolve to each package's `src/`.
+   */
+  readonly env: Readonly<Record<string, string>>
+  /**
+   * `true` when the resolved command + args are runnable on this
+   * machine right now. `false` if the bridge isn't built (prod) or
+   * tsx isn't installed (dev). UI warns before the operator pastes.
+   */
+  readonly ready: boolean
+  /** Human-readable hint when `ready=false`; `null` otherwise. */
+  readonly readyHint: string | null
+  /** Pre-formatted JSON for paste-into-mcp.json. */
+  readonly configBlock: string
+}
+
+/**
+ * Fetch the paste-ready MCP server config for the IDE bridge. The
+ * backend resolves absolute paths from its filesystem so the operator
+ * doesn't have to hand-craft the path to `apps/mcp-bridge/src/index.ts`.
+ *
+ * The resolved command is **always** an absolute node binary path so
+ * the IDE doesn't need anything on its `PATH` to spawn the bridge —
+ * desktop IDEs (Cursor, Claude Code) typically run with a stripped
+ * `PATH` and would otherwise hit `spawn tsx ENOENT`.
+ */
+export async function getBridgeConfig(): Promise<BridgeConfigResponse> {
+  const res = await callApi<{ ok: true } & BridgeConfigResponse>(
+    fetch(`${apiBaseUrl}/api/bridge/config`),
+  )
+  return {
+    command: res.command,
+    args: res.args,
+    env: res.env,
+    ready: res.ready,
+    readyHint: res.readyHint,
+    configBlock: res.configBlock,
+  }
+}
+
+/**
+ * Fetch the global runs feed. Powers the bridge view (filters
+ * `source=bridge`) and a future UI-runs view (`source=ui`).
+ */
+export async function listRuns(
+  query: {
+    readonly source?: 'ui' | 'bridge'
+    readonly limit?: number
+    readonly agentId?: string
+  } = {},
+): Promise<import('@agent-bridge/shared').RunListResponse> {
+  const params = new URLSearchParams()
+  if (query.source) params.set('source', query.source)
+  if (query.limit !== undefined) params.set('limit', String(query.limit))
+  if (query.agentId) params.set('agentId', query.agentId)
+  const qs = params.toString()
+  const url =
+    `${apiBaseUrl}/api/runs` + (qs.length > 0 ? `?${qs}` : '')
+
+  // The runs router is a sub-router off the secondary `.route('/runs',
+  // runsRouter)` mount, so `hc<AppType>` doesn't surface its types
+  // (same Hono-mount limitation as the repo-jobs helpers above).
+  // We type the response via a cast on `callApi`'s generic.
+  const res = await callApi<
+    { ok: true } & import('@agent-bridge/shared').RunListResponse
+  >(fetch(url))
+  return { ok: true, runs: res.runs }
+}
+
 // ─── LLM provider helpers ────────────────────────────────────────────────
 
 /**

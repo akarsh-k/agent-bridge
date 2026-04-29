@@ -59,10 +59,15 @@
  *     and lives only in memory. Phase 3g adds the DB columns.
  */
 
-import { buildAgent, type BuiltAgent } from '@agent-bridge/agents'
+// This file moved from `apps/backend/src/lib/run-dispatcher.ts` to
+// `packages/agents/` in Phase 5 so the IDE-facing MCP bridge
+// (`apps/mcp-bridge`) can dispatch runs without a cross-app import.
+// Both backend route + bridge consume `dispatchRun` from
+// `@agent-bridge/agents`. Behaviour unchanged from the prior location.
+
+import { buildAgent, type BuiltAgent } from './build-agent.js'
 import { runsRepo, type AgentBridgeDb } from '@agent-bridge/db'
 import {
-  runStreamId,
   type RunErrorPayload,
   type RunEvent,
   type RunEventKind,
@@ -106,6 +111,18 @@ export interface DispatchRunInput {
   readonly agentId: string
   readonly runId: string
   readonly prompt: string
+  /**
+   * SSE stream id this run publishes onto. The HTTP route uses
+   * `runStreamId(runId)` ('run:<runId>'); the MCP bridge uses
+   * `bridgeStreamId(runId)` ('bridge:<runId>') so the UI's run tab can
+   * filter by source-prefix without a schema column.
+   *
+   * Required so the dispatcher never invents a streamId that the
+   * caller hasn't already persisted on `runs.stream_id` — the row's
+   * column is the source of truth, the dispatcher just plumbs it into
+   * `publishAndAudit`.
+   */
+  readonly streamId: string
   /** Defaults to `runId` if the agent has memory enabled. */
   readonly threadId?: string
   /** Defaults to `agent:<agentId>` if the agent has memory enabled. */
@@ -119,8 +136,7 @@ export interface DispatchRunInput {
  * itself is unable to record the failure (e.g. DB is down).
  */
 export async function dispatchRun(input: DispatchRunInput): Promise<void> {
-  const { db, eventBus, agentId, runId, prompt } = input
-  const streamId = runStreamId(runId)
+  const { db, eventBus, agentId, runId, prompt, streamId } = input
   const startedAt = Date.now()
 
   let built: BuiltAgent | null = null

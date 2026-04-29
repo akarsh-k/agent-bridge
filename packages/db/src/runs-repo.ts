@@ -57,6 +57,25 @@ import { runEvents, runs, type RunEventRow, type RunRow } from './schema.js'
  * Phase 5 bridge MCP runs reuse this helper with a `bridge:<uuid>`
  * prefix; keeping the prefix caller-controlled avoids a second helper.
  */
+/**
+ * Fetch a run row by id. Used by the Phase 5 MCP bridge after
+ * `dispatchRun` resolves: the dispatcher writes the final accumulated
+ * text to `runs.output_summary`, and the bridge surfaces that as the
+ * MCP tool's text content. Returns `null` when the row was deleted
+ * mid-flight (which the bridge treats as an internal error).
+ */
+export async function getRun(
+  handle: AgentBridgeDb,
+  runId: string,
+): Promise<RunRow | null> {
+  const [row] = await handle.db
+    .select()
+    .from(runs)
+    .where(eq(runs.id, runId))
+    .limit(1)
+  return row ?? null
+}
+
 export async function createRun(
   handle: AgentBridgeDb,
   params: {
