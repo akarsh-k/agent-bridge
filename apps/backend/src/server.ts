@@ -1,4 +1,5 @@
 import { serve } from '@hono/node-server'
+import { builtAgentCache } from '@agent-bridge/agents'
 import {
   getSecretKeyPath,
   loadOrCreateMasterKey,
@@ -18,6 +19,11 @@ loadOrCreateMasterKey()
 console.info(`[server] data-encryption key ready at ${getSecretKeyPath()}`)
 
 async function closeResources(): Promise<void> {
+  // Tear down cached BuiltAgents FIRST so their MCP subprocesses
+  // disconnect cleanly while the DB pool + event bus are still alive
+  // (some teardowns may emit final stderr/audit events). After that
+  // close everything else.
+  await builtAgentCache.dispose()
   await Promise.allSettled([closeEventBus(), closeQueues(), closeDb()])
 }
 

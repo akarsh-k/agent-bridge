@@ -44,7 +44,7 @@ import {
   schema,
   type AgentBridgeDb,
 } from '@agent-bridge/db'
-import { dispatchRun } from '@agent-bridge/agents'
+import { builtAgentCache, dispatchRun } from '@agent-bridge/agents'
 import {
   loadOrCreateMasterKey,
 } from '@agent-bridge/shared/crypto'
@@ -292,6 +292,16 @@ async function main(): Promise<void> {
       await server.close()
     } catch (err) {
       console.error('[mcp-bridge] server.close() error:', err)
+    }
+    // Disconnect any cached BuiltAgents (with their live MCP
+    // subprocesses) before tearing down the DB / event bus they
+    // depend on. dispose() is idempotent so the backend doing the
+    // same thing in its own shutdown is safe — both processes own
+    // their own cache instance regardless.
+    try {
+      await builtAgentCache.dispose()
+    } catch (err) {
+      console.error('[mcp-bridge] builtAgentCache.dispose() error:', err)
     }
     try {
       await eventBus.close()

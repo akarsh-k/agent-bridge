@@ -65,7 +65,8 @@
 // Both backend route + bridge consume `dispatchRun` from
 // `@agent-bridge/agents`. Behaviour unchanged from the prior location.
 
-import { buildAgent, type BuiltAgent } from './build-agent.js'
+import type { BuiltAgent } from './build-agent.js'
+import { builtAgentCache } from './built-agent-cache.js'
 import { runsRepo, type AgentBridgeDb } from '@agent-bridge/db'
 import {
   type RunErrorPayload,
@@ -148,7 +149,15 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
   let redactor: RunRedactor = createRunRedactor([])
 
   try {
-    built = await buildAgent({ db, agentId })
+    // Pull from the process-level cache instead of building fresh on
+    // every turn. First call for this agent pays the spawn cost; every
+    // subsequent run reuses the live MCP subprocesses (matches how
+    // IDE-side MCP clients keep one subprocess alive for the whole
+    // session). The cache compares a content hash of `updated_at`s
+    // and rebuilds automatically when the agent or its resources
+    // change. We do NOT call `disconnect()` in the finally block —
+    // the cache owns the subprocess lifetime now.
+    built = await builtAgentCache.getOrBuild({ db, agentId })
     redactor = createRunRedactor(built.secrets)
 
     // Wire MCP stderr BEFORE `markRunning` so the very first `tool-call`
@@ -423,19 +432,12 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
       }
       unsubscribeMcpLogs = null
     }
-    if (built) {
-      try {
-        await built.disconnect()
-      } catch (disconnectErr) {
-        // Mirror the Phase 3c contract: swallow disconnect errors so
-        // the original failure (if any) isn't masked. Log loud for
-        // debugging.
-        console.error(
-          `[run-dispatcher] disconnect error for run ${runId}:`,
-          disconnectErr,
-        )
-      }
-    }
+    // NOTE: deliberately no `built.disconnect()` here. The
+    // `builtAgentCache` owns the subprocess lifetime now — disconnect
+    // happens at process shutdown (`builtAgentCache.dispose()`) or
+    // when an entry is evicted (TTL, LRU, or version-hash mismatch).
+    // Tearing down per-run was the source of the per-message MCP
+    // cold-start tax we explicitly fixed by moving to a cache.
   }
 }
 

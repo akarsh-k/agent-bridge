@@ -563,10 +563,22 @@ function buildMemory(args: {
       })
     : null
 
+  // Strip `semanticRecall` from the runtime memory options when there's
+  // no vector store wired up. Mastra throws "Semantic recall requires a
+  // vector store to be configured" on the first turn otherwise — and
+  // since Phase 6b auto-seeds `semanticRecall` whenever an operator
+  // flips `memoryEnabled` on, every memory-on agent without an embedder
+  // would hit this. Working-memory + recent-history still work; the UI
+  // already flags `vectorReady=false` so the operator knows to set
+  // `default_embedding_model` on the provider when they want recall.
+  const runtimeConfig = config && !vectorArm
+    ? stripSemanticRecall(config)
+    : config
+
   const memory = new Memory({
     storage,
     ...(vectorArm ? { vector: vectorArm.vector, embedder: vectorArm.embedder } : {}),
-    ...(config ? { options: config as unknown as MemoryOptions } : {}),
+    ...(runtimeConfig ? { options: runtimeConfig as unknown as MemoryOptions } : {}),
   })
 
   return {
@@ -578,6 +590,18 @@ function buildMemory(args: {
       embedderModel: vectorArm ? embedderModelId : null,
     },
   }
+}
+
+/**
+ * Drop `semanticRecall` from a memory config when no vector store is
+ * available. Returns the original object when nothing needs stripping
+ * so we don't churn references unnecessarily.
+ */
+function stripSemanticRecall(config: AgentMemoryConfig): AgentMemoryConfig {
+  if (!config.semanticRecall) return config
+  const { semanticRecall: _stripped, ...rest } = config
+  void _stripped
+  return rest
 }
 
 interface VectorArm {

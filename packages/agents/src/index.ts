@@ -12,7 +12,9 @@ export type {
   BuildAgentInput,
   BuiltAgent,
   BuiltAgentMeta,
+  MemoryMountMeta,
 } from './build-agent.js'
+export { builtAgentCache } from './built-agent-cache.js'
 export type { GitnexusMountMeta } from './mcp/gitnexus-mcp.js'
 export type {
   ExternalMcpsMountMeta,

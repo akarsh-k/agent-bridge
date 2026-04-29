@@ -281,6 +281,38 @@ Local dev (`pnpm dev`):
 Production (future): same four processes, Redis + Postgres managed. MCP
 bridge runs alongside backend if IDE-facing is enabled.
 
+### 6.1 BuiltAgent cache (cross-run subprocess persistence)
+
+`packages/agents/src/built-agent-cache.ts` is a process-level cache,
+keyed by `agentId`, that holds `BuiltAgent` instances — including their
+mounted MCP subprocesses — across runs. Without it, every chat turn
+re-spawned the gitnexus MCP + every external MCP, paid the
+`initialize` + `tools/list` round-trip on each, and tore them down
+again. On a Notion-attached agent that's 4–6 seconds of cold start
+before the LLM sees a one-word prompt.
+
+Mirrors how IDE-side MCP clients (Cursor, Claude Code, Claude Desktop)
+behave: spawn the MCP server once at session start, reuse it for
+every subsequent `tools/call`. The MCP spec is designed for long-lived
+JSON-RPC; treating it as ephemeral was the mismatch.
+
+| Property              | Behaviour                                                                                                                                                                                                            |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Key                   | `agentId`. One cached `BuiltAgent` per agent.                                                                                                                                                                        |
+| Invalidation          | Content hash over `MAX(updated_at)` across `agents`, `skills`, `tools`, `agent_repos`, `repos` (referenced via attachments — repo-status changes drive gitnexus mount), `repo_edges`, `agent_mcp_tools`, `mcp_connections` (referenced via allowlist), and the agent's `llm_provider`. Recomputed every `getOrBuild`; mismatch → tear down + rebuild. |
+| In-flight de-dup      | Two concurrent `getOrBuild`s for the same agent share one build promise. Otherwise a chat-tool-call burst could spawn N parallel Notion subprocesses for the same agent.                                             |
+| Eviction              | LRU bounded by `MAX_ENTRIES = 8`; idle entries past `TTL_MS = 30 min` dropped on access.                                                                                                                             |
+| Process exit          | Backend's graceful shutdown (`server.ts`) and mcp-bridge's stdio-close handler both call `builtAgentCache.dispose()` so MCP subprocesses don't outlive the parent.                                                   |
+| Secrets in memory     | Each cached entry carries decrypted plaintexts (`BuiltAgent.secrets`) for its lifetime. Same trust boundary as the master key file on disk; flagged here because the lifetime is now longer than a single dispatch. |
+
+The dispatcher (`run-dispatcher.ts`) calls
+`builtAgentCache.getOrBuild(...)` instead of `buildAgent(...)`, and
+deliberately **does not** call `built.disconnect()` in its `finally`
+block — disconnect now happens at eviction or process shutdown. Both
+the backend and mcp-bridge run their own copy of the cache singleton
+(it's a module-level instance in `packages/agents`); a single physical
+MCP subprocess belongs to exactly one process.
+
 ## 7. Mastra ownership model
 
 Agent Bridge wraps Mastra — it does not re-implement it. The repo has one
