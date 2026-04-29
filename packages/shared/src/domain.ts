@@ -262,3 +262,26 @@ export interface AgentMemoryConfig {
    */
   generateTitle?: boolean
 }
+
+/**
+ * Canonical default `AgentMemoryConfig` written when an agent flips
+ * `memory_enabled` to `true` for the first time without an existing
+ * config. Mirrors Mastra's documented defaults (see
+ * https://mastra.ai/reference/memory) so a memory-on agent works end to
+ * end without forcing the operator to author a config blob.
+ *
+ * Phase 6b decision: returned as a fresh object every call. Two agents
+ * sharing one frozen reference would surface as a confusing "edit one,
+ * see it everywhere" bug if either side ever mutates the blob (Drizzle
+ * jsonb does not — but the inspector form might pre-fill from this).
+ */
+export function defaultMemoryConfig(): AgentMemoryConfig {
+  return {
+    lastMessages: 10,
+    semanticRecall: {
+      topK: 4,
+      messageRange: { before: 1, after: 1 },
+      scope: 'resource',
+    },
+  }
+}

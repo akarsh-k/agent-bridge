@@ -49,6 +49,12 @@ export function LlmProviderInspector({
           </div>
         ) : null}
         <div className="read-row">
+          <span className="read-label">Embedding model</span>
+          <span className="read-value mono">
+            {provider.defaultEmbeddingModel ?? '—'}
+          </span>
+        </div>
+        <div className="read-row">
           <span className="read-label">API key</span>
           <span className="read-value">
             {provider.apiKey.set ? 'configured' : '—'}

@@ -33,6 +33,7 @@ export function LlmNewForm({
   const [kind, setKind] = useState<LlmProviderKind>('openai')
   const [baseUrl, setBaseUrl] = useState('')
   const [defaultModel, setDefaultModel] = useState('')
+  const [defaultEmbeddingModel, setDefaultEmbeddingModel] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -51,6 +52,7 @@ export function LlmNewForm({
       kind,
       baseUrl: local ? baseUrl.trim() || undefined : undefined,
       defaultModel: defaultModel.trim() || undefined,
+      defaultEmbeddingModel: defaultEmbeddingModel.trim() || undefined,
       apiKey: apiKey.trim()
         ? ({ action: 'set', plaintext: apiKey.trim() } as const)
         : undefined,
@@ -81,6 +83,7 @@ export function LlmNewForm({
     baseUrl,
     createLlmProvider,
     defaultModel,
+    defaultEmbeddingModel,
     kind,
     label,
     local,
@@ -151,6 +154,21 @@ export function LlmNewForm({
         />
         <span className="field-hint">
           Refresh the model list after saving to enable autocomplete here.
+        </span>
+      </label>
+      <label className="field">
+        <span className="field-label">Embedding model (optional)</span>
+        <input
+          className="field-mono"
+          value={defaultEmbeddingModel}
+          onChange={(e) => setDefaultEmbeddingModel(e.target.value)}
+          placeholder="text-embedding-3-small"
+          disabled={busy}
+          maxLength={200}
+        />
+        <span className="field-hint">
+          Required only if you want agents using this provider to enable
+          semantic recall. Leave blank for chat-only providers.
         </span>
       </label>
       <label className="field">

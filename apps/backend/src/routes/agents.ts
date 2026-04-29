@@ -18,6 +18,7 @@ import {
   agentIdParamSchema,
   agentResponseSchema,
   agentUpdateInputSchema,
+  defaultMemoryConfig,
   type AgentResponse,
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
@@ -161,6 +162,26 @@ export const agentsRouter = new Hono()
       if ('model' in body) patch.model = body.model ?? null
       if ('memoryEnabled' in body) patch.memoryEnabled = body.memoryEnabled
       if ('memoryConfig' in body) patch.memoryConfig = body.memoryConfig ?? null
+
+      // Phase 6b — when the operator flips `memoryEnabled` true without
+      // simultaneously authoring a `memoryConfig`, seed Mastra's
+      // documented defaults so the agent works on the next turn without
+      // a second PATCH. We re-read the current row to confirm the
+      // transition (`false → true`) and to honor any existing config —
+      // we never overwrite something the operator already saved.
+      if (patch.memoryEnabled === true && !('memoryConfig' in body)) {
+        const [current] = await db
+          .select({
+            memoryEnabled: schema.agents.memoryEnabled,
+            memoryConfig: schema.agents.memoryConfig,
+          })
+          .from(schema.agents)
+          .where(eq(schema.agents.id, id))
+          .limit(1)
+        if (current && !current.memoryEnabled && current.memoryConfig === null) {
+          patch.memoryConfig = defaultMemoryConfig()
+        }
+      }
 
       try {
         const [row] = await db

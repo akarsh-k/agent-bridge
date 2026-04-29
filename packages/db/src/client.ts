@@ -36,6 +36,13 @@ export interface AgentBridgeDb {
    * `PostgresStore` in `packages/agents`).
    */
   readonly pool: PgPool
+  /**
+   * The connection string the pool was constructed with. Surfaced so
+   * adapters that don't accept a `pg.Pool` directly (notably Mastra's
+   * `PgVector` — see Phase 6a wiring) can spin up their own pool against
+   * the same DB without re-reading `process.env.DATABASE_URL`.
+   */
+  readonly connectionString: string
   close(): Promise<void>
 }
 
@@ -53,6 +60,7 @@ export function createDb(options: CreateDbOptions): AgentBridgeDb {
   return {
     db,
     pool,
+    connectionString: options.connectionString,
     async close() {
       await pool.end()
     },

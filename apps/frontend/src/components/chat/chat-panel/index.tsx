@@ -27,7 +27,15 @@ import {
 } from 'react'
 import type { AgentResponse } from '@agent-bridge/shared'
 import { useChat } from '../../../lib/use-chat'
+import { useWorkspace } from '../../../lib/workspace-context'
 import { ChatMessage } from '../chat-message'
+import {
+  applyMention,
+  buildMentionItems,
+  detectMentionTrigger,
+  rankMentionItems,
+  type MentionItem,
+} from './mentions'
 
 import './index.css'
 
@@ -39,6 +47,30 @@ const SCROLL_STICK_THRESHOLD_PX = 72
 
 export function ChatPanel({ agent }: ChatPanelProps) {
   const chat = useChat({ agentId: agent.id })
+  const workspace = useWorkspace()
+
+  // Build the mention catalogue once per render of the agent's
+  // resources. The hook walks skills + native tools + MCP allowlist +
+  // other agents — see `mentions.ts` for the slug rules. When the agent
+  // has no resources yet (still loading) we pass `[]` and the popover
+  // just doesn't open.
+  const mentionItems = useMemo<readonly MentionItem[]>(() => {
+    const res = workspace.agentResources[agent.id]
+    if (!res) return []
+    return buildMentionItems({
+      agentId: agent.id,
+      skills: res.skills,
+      tools: res.tools,
+      mcpAllowlist: res.mcpAllowlist,
+      mcpConnections: workspace.mcpConnections,
+      agents: workspace.agents,
+    })
+  }, [
+    agent.id,
+    workspace.agentResources,
+    workspace.mcpConnections,
+    workspace.agents,
+  ])
 
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
@@ -145,6 +177,7 @@ export function ChatPanel({ agent }: ChatPanelProps) {
         isStreaming={isStreaming}
         sendError={chat.sendError}
         hasProvider={agentHasProvider}
+        mentionItems={mentionItems}
         onSend={chat.send}
       />
     </div>
@@ -181,6 +214,7 @@ interface ComposerProps {
   readonly isStreaming: boolean
   readonly sendError: string | null
   readonly hasProvider: boolean
+  readonly mentionItems: readonly MentionItem[]
   readonly onSend: (prompt: string) => Promise<void>
 }
 
@@ -189,10 +223,21 @@ function Composer({
   isStreaming,
   sendError,
   hasProvider,
+  mentionItems,
   onSend,
 }: ComposerProps) {
   const [value, setValue] = useState('')
+  const [caret, setCaret] = useState(0)
+  const [mentionIndex, setMentionIndex] = useState(0)
+  // Pairs with `mentionIndex` to reset the highlight whenever the
+  // active query changes — the React 19 "reset state on prop change"
+  // setState-in-render pattern.
+  const [lastMentionQuery, setLastMentionQuery] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  // We need to defer one render after splicing a mention so we can
+  // restore the caret to the position right after the inserted token —
+  // textarea selection is uncontrolled, so React doesn't manage it for us.
+  const pendingCaretRef = useRef<number | null>(null)
 
   // Autogrow: recompute min(scrollHeight, max) on every value change.
   useLayoutEffect(() => {
@@ -201,6 +246,47 @@ function Composer({
     ta.style.height = 'auto'
     ta.style.height = `${Math.min(ta.scrollHeight, 240)}px`
   }, [value])
+
+  // Restore caret after a programmatic mention splice.
+  useLayoutEffect(() => {
+    const ta = textareaRef.current
+    const target = pendingCaretRef.current
+    if (!ta || target === null) return
+    ta.setSelectionRange(target, target)
+    setCaret(target)
+    pendingCaretRef.current = null
+  }, [value])
+
+  // ─── Mention state ─────────────────────────────────────────────────────
+  const trigger = useMemo(
+    () => detectMentionTrigger(value, caret),
+    [value, caret],
+  )
+  const filteredMentions = useMemo(
+    () =>
+      trigger ? rankMentionItems(mentionItems, trigger.query) : [],
+    [trigger, mentionItems],
+  )
+  const mentionOpen = trigger !== null && filteredMentions.length > 0
+
+  // Reset the highlighted item whenever the active query changes — the
+  // setState-in-render pattern keeps the highlight at index 0 for each
+  // new keystroke without scheduling an effect (no cascading renders).
+  const currentQuery = trigger?.query ?? null
+  if (currentQuery !== lastMentionQuery) {
+    setLastMentionQuery(currentQuery)
+    setMentionIndex(0)
+  }
+
+  const insertMention = useCallback(
+    (item: MentionItem) => {
+      if (!trigger) return
+      const { nextValue, nextCaret } = applyMention(value, trigger, item)
+      pendingCaretRef.current = nextCaret
+      setValue(nextValue)
+    },
+    [trigger, value],
+  )
 
   const submit = useCallback(async () => {
     const trimmed = value.trim()
@@ -211,16 +297,70 @@ function Composer({
 
   const onKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
+      if (mentionOpen) {
+        if (e.key === 'ArrowDown') {
+          e.preventDefault()
+          setMentionIndex((i) => (i + 1) % filteredMentions.length)
+          return
+        }
+        if (e.key === 'ArrowUp') {
+          e.preventDefault()
+          setMentionIndex(
+            (i) =>
+              (i - 1 + filteredMentions.length) % filteredMentions.length,
+          )
+          return
+        }
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          const item = filteredMentions[mentionIndex]
+          if (item) {
+            e.preventDefault()
+            insertMention(item)
+            return
+          }
+        }
+        if (e.key === 'Escape') {
+          // Close by collapsing the popover — easiest path is to nudge
+          // the caret left of the `@`. Cheaper: emit a synthetic
+          // selection update through a no-op state nudge so
+          // `detectMentionTrigger` re-runs and returns null. We just
+          // bump caret to start of the @ sign so it's no longer trailing
+          // any query chars.
+          if (trigger) {
+            e.preventDefault()
+            pendingCaretRef.current = trigger.start
+            // Force a re-render — the caret-restore effect will re-evaluate.
+            setValue((v) => v)
+          }
+          return
+        }
+      }
+
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault()
         void submit()
       }
     },
-    [submit],
+    [
+      mentionOpen,
+      filteredMentions,
+      mentionIndex,
+      insertMention,
+      trigger,
+      submit,
+    ],
   )
 
-  const onChange = useCallback(
-    (e: ChangeEvent<HTMLTextAreaElement>) => setValue(e.target.value),
+  const onChange = useCallback((e: ChangeEvent<HTMLTextAreaElement>) => {
+    setValue(e.target.value)
+    setCaret(e.target.selectionStart ?? e.target.value.length)
+  }, [])
+
+  const onSelect = useCallback(
+    (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+      const target = e.currentTarget
+      setCaret(target.selectionStart ?? target.value.length)
+    },
     [],
   )
 
@@ -247,16 +387,21 @@ function Composer({
             hasProvider
               ? isStreaming
                 ? 'Waiting for agent to finish…'
-                : 'Ask something (Shift + Enter for a newline)'
+                : 'Ask something (Shift + Enter for a newline, @ to mention)'
               : 'Attach an LLM provider to chat'
           }
           value={value}
           onChange={onChange}
           onKeyDown={onKeyDown}
+          onSelect={onSelect}
+          onClick={onSelect}
           disabled={disabled || !hasProvider}
           rows={1}
           maxLength={16_000}
           aria-label="Message"
+          aria-autocomplete="list"
+          aria-expanded={mentionOpen}
+          aria-controls={mentionOpen ? 'chat-mention-popover' : undefined}
         />
         <button
           type="submit"
@@ -272,6 +417,61 @@ function Composer({
           )}
         </button>
       </div>
+      {mentionOpen ? (
+        <MentionPopover
+          items={filteredMentions}
+          activeIndex={mentionIndex}
+          onHover={setMentionIndex}
+          onPick={insertMention}
+        />
+      ) : null}
     </form>
+  )
+}
+
+// ─── Mention popover ────────────────────────────────────────────────────
+
+interface MentionPopoverProps {
+  readonly items: readonly MentionItem[]
+  readonly activeIndex: number
+  readonly onHover: (index: number) => void
+  readonly onPick: (item: MentionItem) => void
+}
+
+function MentionPopover({
+  items,
+  activeIndex,
+  onHover,
+  onPick,
+}: MentionPopoverProps) {
+  return (
+    <ul
+      id="chat-mention-popover"
+      className="chat-mention-popover"
+      role="listbox"
+      aria-label="Mention suggestions"
+    >
+      {items.map((item, i) => (
+        <li
+          key={`${item.kind}:${item.token}`}
+          className={`chat-mention-item${i === activeIndex ? ' is-active' : ''}`}
+          role="option"
+          aria-selected={i === activeIndex}
+          onMouseDown={(e) => {
+            // Prevent textarea blur — without this the click steals focus
+            // and the popover closes before our onPick fires.
+            e.preventDefault()
+            onPick(item)
+          }}
+          onMouseEnter={() => onHover(i)}
+        >
+          <span className={`chat-mention-kind chat-mention-kind-${item.kind}`}>
+            {item.kind}
+          </span>
+          <span className="chat-mention-label">{item.label}</span>
+          <span className="chat-mention-hint">{item.hint}</span>
+        </li>
+      ))}
+    </ul>
   )
 }

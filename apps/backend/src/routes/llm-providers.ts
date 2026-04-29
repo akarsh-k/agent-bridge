@@ -55,6 +55,7 @@ function toLlmProviderResponse(row: LlmProviderRow): LlmProviderResponse {
     label: row.label,
     baseUrl: row.baseUrl,
     defaultModel: row.defaultModel,
+    defaultEmbeddingModel: row.defaultEmbeddingModel,
     apiKey: envelopeToSentinel(row.apiKeyEnvelope),
     models: row.modelsJson ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -84,6 +85,7 @@ export const llmProvidersRouter = new Hono()
             label: body.label,
             baseUrl: body.baseUrl ?? null,
             defaultModel: body.defaultModel ?? null,
+            defaultEmbeddingModel: body.defaultEmbeddingModel ?? null,
             apiKeyEnvelope,
           })
           .returning()
@@ -173,6 +175,8 @@ export const llmProvidersRouter = new Hono()
       if ('label' in body) patch.label = body.label
       if ('baseUrl' in body) patch.baseUrl = body.baseUrl ?? null
       if ('defaultModel' in body) patch.defaultModel = body.defaultModel ?? null
+      if ('defaultEmbeddingModel' in body)
+        patch.defaultEmbeddingModel = body.defaultEmbeddingModel ?? null
 
       const nextEnvelope = applySecretInput(body.apiKey)
       if (nextEnvelope !== SECRET_UNCHANGED) {

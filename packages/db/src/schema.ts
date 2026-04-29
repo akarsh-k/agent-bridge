@@ -71,6 +71,16 @@ export const llmProviders = pgTable(
     /** Nullable for vendor APIs; required for local endpoints. */
     baseUrl: text('base_url'),
     defaultModel: text('default_model'),
+    /**
+     * Embedding model id for Mastra's semantic recall vector store
+     * (Phase 6a). Reuses the same provider's `baseUrl` + `apiKeyEnvelope`,
+     * since every supported provider speaks the OpenAI `/embeddings` HTTP
+     * shape. `null` means "this provider has no embedding endpoint" —
+     * agents using it cannot enable `semanticRecall` (working memory
+     * stays usable). No vendor default is invented; the operator picks
+     * the model deliberately to avoid mixing vector spaces.
+     */
+    defaultEmbeddingModel: text('default_embedding_model'),
     /** AES-256-GCM envelope. Nullable for no-auth local endpoints. */
     apiKeyEnvelope: text('api_key_envelope'),
     /**

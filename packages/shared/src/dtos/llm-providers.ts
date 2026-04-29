@@ -45,6 +45,21 @@ const baseFields = {
   label: z.string().trim().min(1).max(120),
   baseUrl: z.url({ message: 'baseUrl must be a valid URL' }).nullable().optional(),
   defaultModel: z.string().trim().min(1).max(200).nullable().optional(),
+  /**
+   * Embedding-model id used by Mastra's semantic-recall vector store
+   * (Phase 6a). Reuses the same provider's `baseUrl` + `apiKey`. Optional:
+   * `null`/absent means "this provider has no embedding endpoint", which
+   * disables `semanticRecall` for any agent using it. We deliberately
+   * do NOT auto-fill a vendor default — silently swapping vector spaces
+   * across runs of the same agent corrupts recall quality.
+   */
+  defaultEmbeddingModel: z
+    .string()
+    .trim()
+    .min(1)
+    .max(200)
+    .nullable()
+    .optional(),
   apiKey: secretInputSchema.optional(),
 } as const
 
@@ -56,6 +71,7 @@ export const llmProviderCreateInputSchema = z
     label: baseFields.label,
     baseUrl: baseFields.baseUrl,
     defaultModel: baseFields.defaultModel,
+    defaultEmbeddingModel: baseFields.defaultEmbeddingModel,
     apiKey: baseFields.apiKey,
   })
   .strict()
@@ -92,6 +108,7 @@ export const llmProviderUpdateInputSchema = z
     label: baseFields.label.optional(),
     baseUrl: baseFields.baseUrl,
     defaultModel: baseFields.defaultModel,
+    defaultEmbeddingModel: baseFields.defaultEmbeddingModel,
     apiKey: baseFields.apiKey,
   })
   .strict()
@@ -120,6 +137,11 @@ export const llmProviderResponseSchema = z.object({
   label: z.string(),
   baseUrl: z.string().nullable(),
   defaultModel: z.string().nullable(),
+  /**
+   * Embedding model id used for Mastra semantic-recall (Phase 6a).
+   * `null` means the provider doesn't expose an embeddings endpoint.
+   */
+  defaultEmbeddingModel: z.string().nullable(),
   /** Presence-only sentinel. Never contains plaintext. */
   apiKey: secretSentinelSchema,
   /** Cached `/v1/models` response or `null` if never refreshed. */

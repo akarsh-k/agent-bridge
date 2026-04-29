@@ -11,10 +11,13 @@
  *     has a green pulse when the SSE stream is open.
  */
 
-import { useCallback, useState } from 'react'
-import type { AgentResponse } from '@agent-bridge/shared'
+import { useCallback, useRef, useState } from 'react'
+import {
+  agentExportBundleSchema,
+  type AgentResponse,
+} from '@agent-bridge/shared'
 import { useWorkspace } from '../../../lib/workspace-context'
-import { ApiError } from '../../../lib/rpc'
+import { ApiError, importAgentBundle } from '../../../lib/rpc'
 import { navigate } from '../../../lib/router'
 
 import './index.css'
@@ -53,9 +56,11 @@ export function TopBar({
   onSetTab: (tab: RailTab) => void
   onExitFocus: () => void
 }) {
-  const { agents, createAgent } = useWorkspace()
+  const { agents, createAgent, refresh } = useWorkspace()
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const [importing, setImporting] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const handleCreate = useCallback(async () => {
     setCreateError(null)
@@ -76,6 +81,70 @@ export function TopBar({
       setCreating(false)
     }
   }, [agents, createAgent])
+
+  const handleImportFile = useCallback(
+    async (file: File) => {
+      setCreateError(null)
+      setImporting(true)
+      try {
+        const text = await file.text()
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(text)
+        } catch {
+          throw new Error('Selected file is not valid JSON')
+        }
+        const validated = agentExportBundleSchema.safeParse(parsed)
+        if (!validated.success) {
+          throw new Error(
+            'File does not look like an agent export bundle: ' +
+              (validated.error.issues[0]?.message ?? 'invalid shape'),
+          )
+        }
+
+        // First try with the bundle's own slug. If the slug already
+        // exists locally, retry with a deterministic disambiguator so
+        // the operator doesn't need to write one by hand for the common
+        // case (re-importing a clone into the same install).
+        const slugs = new Set(agents.map((a) => a.slug))
+        const wantedSlug = validated.data.agent.slug
+        const slugOverride = slugs.has(wantedSlug)
+          ? `${wantedSlug}-imported-${Date.now().toString(36).slice(-4)}`
+          : undefined
+
+        const result = await importAgentBundle({
+          bundle: validated.data,
+          ...(slugOverride ? { slugOverride } : {}),
+        })
+
+        if (result.warnings.length > 0) {
+          // Surface warnings non-fatally — the import succeeded; the
+          // caller just needs to know some allowlist entries were
+          // skipped (typically: missing MCP connections on this install).
+          setCreateError(
+            `Imported with warnings:\n${result.warnings.join('\n')}`,
+          )
+        }
+
+        // Bump the workspace refresh tick so the imported agent shows
+        // up in the sidebar + canvas. Then navigate — the route renders
+        // a loading state if the agent's resources haven't fetched yet.
+        refresh()
+        navigate(`/agents/${result.agentId}`)
+      } catch (err) {
+        setCreateError(
+          err instanceof ApiError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'Failed to import agent',
+        )
+      } finally {
+        setImporting(false)
+      }
+    },
+    [agents, refresh],
+  )
 
   return (
     <header className="topbar">
@@ -136,6 +205,30 @@ export function TopBar({
           <span aria-hidden="true">⌘</span>
           <span>Connect IDE</span>
         </button>
+
+        <button
+          type="button"
+          className="topbar-btn"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={importing || isBridgeRoute}
+          title="Import an agent JSON bundle (no secrets, no thread ids)"
+        >
+          <span aria-hidden="true">↑</span>
+          <span>{importing ? 'Importing…' : 'Import'}</span>
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="application/json,.json"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            // Reset the input so the operator can re-upload the same file
+            // after dismissing an error.
+            e.target.value = ''
+            if (file) void handleImportFile(file)
+          }}
+        />
 
         <button
           type="button"

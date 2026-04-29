@@ -66,13 +66,14 @@
 
 import { Agent } from '@mastra/core/agent'
 import type { MastraModelConfig } from '@mastra/core/llm'
+import { ModelRouterEmbeddingModel } from '@mastra/core/llm'
 import type { Tool } from '@mastra/core/tools'
 import { Memory } from '@mastra/memory'
-import { PostgresStore } from '@mastra/pg'
+import { PgVector, PostgresStore } from '@mastra/pg'
 import { and, asc, eq } from 'drizzle-orm'
 import type { AgentBridgeDb } from '@agent-bridge/db'
 import { schema } from '@agent-bridge/db'
-import type { SkillRow } from '@agent-bridge/db/schema'
+import type { LlmProviderRow, SkillRow } from '@agent-bridge/db/schema'
 import { decryptSecret } from '@agent-bridge/shared/crypto'
 import type { AgentMemoryConfig, LlmProviderKind } from '@agent-bridge/shared'
 
@@ -172,6 +173,21 @@ export interface BuiltAgentMeta {
   readonly skillCount: number
   readonly memoryEnabled: boolean
   /**
+   * Memory mount status (Phase 6a). `enabled: false` means the agent's
+   * `memory_enabled` column is off — Mastra is not constructed and
+   * thread/recall don't apply. When `enabled: true`, `vectorReady`
+   * tells the UI whether semantic recall is actually wired up:
+   *   - `vectorReady: true` → `PgVector` + embedder mounted; semantic
+   *     recall calls return real results.
+   *   - `vectorReady: false` → working-memory + recent-history work,
+   *     but `semanticRecall` (if set in `memory_config`) will fail at
+   *     runtime. Caused by the agent's provider lacking a
+   *     `default_embedding_model`. UI should flag this as a config gap.
+   * `embedderProvider` / `embedderModel` are NULL when no embedder was
+   * configured.
+   */
+  readonly memory: MemoryMountMeta
+  /**
    * GitNexus MCP mount status. `mounted: false` with `repoCount: 0`
    * means the agent has no indexed repos (LLM-only agent). `mounted:
    * false` with `repoCount > 0` means the caller passed
@@ -185,6 +201,23 @@ export interface BuiltAgentMeta {
    * so the UI can flag stale allowlist rows.
    */
   readonly externalMcps: ExternalMcpsMountMeta
+}
+
+export interface MemoryMountMeta {
+  /** Mirrors `agents.memory_enabled`. */
+  readonly enabled: boolean
+  /**
+   * `true` iff `enabled` AND the agent's provider supplied an embedding
+   * model id. When `false` with `enabled: true`, semantic recall is
+   * unavailable but other memory features (thread history, working
+   * memory) still work — the agent just won't pull semantically-similar
+   * messages. Use this to render a "memory: thread only" hint in the UI.
+   */
+  readonly vectorReady: boolean
+  /** Provider kind of the embedder. NULL when `vectorReady` is false. */
+  readonly embedderProvider: LlmProviderKind | null
+  /** Embedder model id (e.g. `text-embedding-3-small`). NULL when off. */
+  readonly embedderModel: string | null
 }
 
 // ─── Config constants ────────────────────────────────────────────────────
@@ -299,9 +332,19 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     ...(apiKey ? { apiKey } : {}),
   }
 
-  const memory = agentRow.memoryEnabled
-    ? buildMemory(db, agentRow.memoryConfig)
-    : undefined
+  const memoryMount = agentRow.memoryEnabled
+    ? buildMemory({
+        db,
+        provider: providerRow,
+        baseUrl,
+        apiKey,
+        config: agentRow.memoryConfig,
+      })
+    : null
+  const memory = memoryMount?.memory
+  const memoryMeta: MemoryMountMeta = memoryMount
+    ? memoryMount.meta
+    : { enabled: false, vectorReady: false, embedderProvider: null, embedderModel: null }
 
   // Mount MCP sources BEFORE constructing the Agent: Mastra's Agent
   // locks its tool set at construction time, so the merged dict has to
@@ -394,6 +437,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
       },
       skillCount: skillRows.length,
       memoryEnabled: agentRow.memoryEnabled,
+      memory: memoryMeta,
       gitnexus: gitnexusMeta,
       externalMcps: externalMcpsMeta,
     },
@@ -461,6 +505,11 @@ function resolveBaseUrl(
   return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`
 }
 
+interface BuiltMemory {
+  readonly memory: Memory
+  readonly meta: MemoryMountMeta
+}
+
 /**
  * Construct the Mastra `Memory` module bound to the shared pg pool. We
  * pass our typed `AgentMemoryConfig` blob straight through — its shape is
@@ -470,16 +519,30 @@ function resolveBaseUrl(
  * type at the boundary. If Mastra's shape ever drifts, that cast is the
  * single failure point — TypeScript will flag everything around it.
  *
- * Semantic recall and vector-store wiring are deliberately NOT configured
- * yet: Phase 3b only promises thread history + working memory. Attempting
- * to enable `semanticRecall` without a vector store will fail at runtime
- * (Mastra's decision, not ours) with a clear error, which is the right
- * breadcrumb for Phase 3c.
+ * Phase 6a — semantic recall:
+ *   - When the agent's provider has `default_embedding_model` set, we
+ *     mount a process-level `PgVector` singleton + a
+ *     `ModelRouterEmbeddingModel` that reuses the SAME `baseUrl` +
+ *     `apiKey` already decrypted for the language model. This means
+ *     enabling semantic recall does not require a second provider key
+ *     on file — the local-first stance from Phase 6's design notes.
+ *   - When the provider lacks an embedding model, working memory +
+ *     thread history still work; only `semanticRecall` from the agent's
+ *     `memory_config` is unavailable. Mastra surfaces this at the first
+ *     vector-write attempt as a clear error; we don't try to fall back
+ *     to a different embedder silently — that would mix vector spaces
+ *     across runs and corrupt recall quality (Phase 6 design decision
+ *     "openai_compatible caveat is the operator's problem").
  */
-function buildMemory(
-  db: AgentBridgeDb,
-  config: AgentMemoryConfig | null,
-): Memory {
+function buildMemory(args: {
+  db: AgentBridgeDb
+  provider: LlmProviderRow
+  baseUrl: string
+  apiKey: string | undefined
+  config: AgentMemoryConfig | null
+}): BuiltMemory {
+  const { db, provider, baseUrl, apiKey, config } = args
+
   const storage = new PostgresStore({
     id: MASTRA_STORE_ID,
     pool: db.pool,
@@ -489,12 +552,79 @@ function buildMemory(
   type MemoryArg = ConstructorParameters<typeof Memory>[0]
   type MemoryOptions = NonNullable<MemoryArg>['options']
 
-  return new Memory({
+  const embedderModelId = provider.defaultEmbeddingModel?.trim() || null
+  const vectorArm = embedderModelId
+    ? buildVectorArm({
+        db,
+        provider,
+        baseUrl,
+        apiKey,
+        embedderModelId,
+      })
+    : null
+
+  const memory = new Memory({
     storage,
-    ...(config
-      ? { options: config as unknown as MemoryOptions }
-      : {}),
+    ...(vectorArm ? { vector: vectorArm.vector, embedder: vectorArm.embedder } : {}),
+    ...(config ? { options: config as unknown as MemoryOptions } : {}),
   })
+
+  return {
+    memory,
+    meta: {
+      enabled: true,
+      vectorReady: vectorArm !== null,
+      embedderProvider: vectorArm ? provider.kind : null,
+      embedderModel: vectorArm ? embedderModelId : null,
+    },
+  }
+}
+
+interface VectorArm {
+  readonly vector: PgVector
+  readonly embedder: ModelRouterEmbeddingModel
+}
+
+function buildVectorArm(args: {
+  db: AgentBridgeDb
+  provider: LlmProviderRow
+  baseUrl: string
+  apiKey: string | undefined
+  embedderModelId: string
+}): VectorArm {
+  const { db, provider, baseUrl, apiKey, embedderModelId } = args
+
+  // Process-level singleton — Mastra's PgVector is namespaced internally
+  // by the Memory instance's resource/thread ids, so cross-agent leakage
+  // is not possible from sharing it. Saves one connection pool + one
+  // constructor per `buildAgent` call (Phase 6 design decision).
+  const vector = getProcessPgVector(db.connectionString)
+
+  // Reuse the language-model's `baseUrl` + `apiKey`. Every supported
+  // provider speaks the OpenAI `/embeddings` HTTP shape (this is the
+  // definition of `llmProviderKinds`), so the embedder routes through
+  // the same provider configuration the LLM uses.
+  const embedder = new ModelRouterEmbeddingModel({
+    providerId: provider.kind,
+    modelId: embedderModelId,
+    url: baseUrl,
+    ...(apiKey ? { apiKey } : {}),
+  })
+
+  return { vector, embedder }
+}
+
+const PG_VECTOR_ID = 'agent-bridge-vector'
+let processPgVector: PgVector | null = null
+
+function getProcessPgVector(connectionString: string): PgVector {
+  if (processPgVector) return processPgVector
+  processPgVector = new PgVector({
+    id: PG_VECTOR_ID,
+    connectionString,
+    schemaName: MASTRA_SCHEMA_NAME,
+  })
+  return processPgVector
 }
 
 /**

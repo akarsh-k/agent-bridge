@@ -8,6 +8,7 @@ import { logger } from 'hono/logger'
 import { secureHeaders } from 'hono/secure-headers'
 import { z } from 'zod'
 import { onUnhandledError, httpError } from './lib/errors.js'
+import { agentExportRouter } from './routes/agent-export.js'
 import { agentMcpToolsRouter } from './routes/agent-mcp-tools.js'
 import { agentReposRouter } from './routes/agent-repos.js'
 import { agentRunsRouter } from './routes/agent-runs.js'
@@ -43,21 +44,47 @@ const requestLogger: MiddlewareHandler = env.isProd
     }
   : logger()
 
+// Default body-limit for the API group. Phase 6e's `/agents/import`
+// endpoint legitimately accepts larger bundles (skill markdown +
+// configJson can reach hundreds of KB across many rows), so we route
+// the larger cap through that one path and keep the conservative
+// 64 KiB cap for everything else. See `1c-skills-tools` lesson in
+// `docs/PLAN.md` — the cap is set defensively so per-field Zod errors
+// surface before the global 413 ever fires.
+const SMALL_BODY_LIMIT = 64 * 1024
+const IMPORT_BODY_LIMIT = 4 * 1024 * 1024
+const onBodyLimitError: Parameters<typeof bodyLimit>[0]['onError'] = (c) =>
+  httpError(c, {
+    code: 'validation_failed',
+    message: 'Payload too large',
+    status: 413,
+  })
+const smallBodyLimit = bodyLimit({
+  maxSize: SMALL_BODY_LIMIT,
+  onError: onBodyLimitError,
+})
+const importBodyLimit = bodyLimit({
+  maxSize: IMPORT_BODY_LIMIT,
+  onError: onBodyLimitError,
+})
+
 const api = new Hono()
-  .use(
-    '*',
-    bodyLimit({
-      maxSize: 64 * 1024,
-      onError: (c) =>
-        httpError(c, {
-          code: 'validation_failed',
-          message: 'Payload too large',
-          status: 413,
-        }),
-    }),
-  )
+  .use('*', async (c, next) => {
+    // Path-aware body-limit dispatcher. `c.req.path` includes the `/api`
+    // prefix because we mount this Hono router under that path on the
+    // outer app — match against the suffix to stay decoupled from the
+    // mount point.
+    if (
+      c.req.path === '/api/agents/import' ||
+      c.req.path.endsWith('/agents/import')
+    ) {
+      return importBodyLimit(c, next)
+    }
+    return smallBodyLimit(c, next)
+  })
   .route('/health', healthRouter)
   .route('/agents', agentsRouter)
+  .route('/agents', agentExportRouter)
   .route('/agents/:agentId/repos', agentReposRouter)
   .route('/agents/:agentId/repo-edges', repoEdgesRouter)
   .route('/agents/:agentId/mcp-tools', agentMcpToolsRouter)

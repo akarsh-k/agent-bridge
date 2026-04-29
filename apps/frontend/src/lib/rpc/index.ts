@@ -18,6 +18,9 @@
 import { hc } from 'hono/client'
 import type { AppType } from 'backend'
 import type {
+  AgentExportBundle,
+  AgentImportInput,
+  AgentImportResponse,
   ErrorCode,
   LlmProviderRefreshModelsInput,
   LlmProviderRefreshModelsResponse,
@@ -218,6 +221,32 @@ export async function generateRepoWiki(
 /** Absolute URL for the bundled wiki HTML viewer for a given repo. */
 export function repoWikiViewerUrl(repoId: string): string {
   return `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/wiki/index.html`
+}
+
+// ─── Agent export / import helpers ───────────────────────────────────────
+
+export async function exportAgentBundle(
+  agentId: string,
+): Promise<AgentExportBundle> {
+  const res = await callApi<{ ok: true; bundle: AgentExportBundle }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/export`,
+      { method: 'GET' },
+    ),
+  )
+  return res.bundle
+}
+
+export async function importAgentBundle(
+  input: AgentImportInput,
+): Promise<AgentImportResponse> {
+  return callApi<AgentImportResponse>(
+    fetch(`${apiBaseUrl}/api/agents/import`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }),
+  )
 }
 
 // ─── Bridge view helpers ─────────────────────────────────────────────────

@@ -19,13 +19,16 @@ import { useCallback, useMemo, useState } from 'react'
 import {
   BRIDGE_TOOL_RESERVED_PREFIX,
   agentUpdateInputSchema,
+  defaultMemoryConfig,
+  type AgentMemoryConfig,
   type AgentResponse,
   type AgentUpdateInput,
 } from '@agent-bridge/shared'
 import { useWorkspace } from '../../../lib/workspace-context'
 import { ModelPicker } from '../../common/model-picker'
-import { ApiError } from '../../../lib/rpc'
+import { ApiError, exportAgentBundle } from '../../../lib/rpc'
 import { navigate } from '../../../lib/router'
+import { MemorySection } from './memory-section'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 type FieldErrors = Partial<
@@ -38,8 +41,9 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
   // model field shows autocomplete choices. Falls back to an empty
   // array (free-text input) when the agent has no provider yet OR the
   // provider hasn't been refreshed.
-  const providerModels =
-    llmProviders.find((p) => p.id === agent.llmProviderId)?.models?.models ?? []
+  const providerRow = llmProviders.find((p) => p.id === agent.llmProviderId)
+  const providerModels = providerRow?.models?.models ?? []
+  const providerHasEmbedder = !!providerRow?.defaultEmbeddingModel
 
   const [name, setName] = useState(() => agent.name)
   const [slug, setSlug] = useState(() => agent.slug)
@@ -47,9 +51,28 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
   const [systemPrompt, setSystemPrompt] = useState(() => agent.systemPrompt)
   const [model, setModel] = useState(() => agent.model ?? '')
   const [memoryEnabled, setMemoryEnabled] = useState(() => agent.memoryEnabled)
+  const [memoryConfig, setMemoryConfig] = useState<AgentMemoryConfig | null>(
+    () => agent.memoryConfig,
+  )
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [serverError, setServerError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
+
+  // Toggling `memoryEnabled` ON for the first time pre-fills the
+  // canonical defaults so the operator sees what's about to be saved.
+  // We don't write the defaults to the DB until they save — a no-op
+  // toggle followed by Discard leaves the row untouched. The backend
+  // also seeds defaults defensively (`apps/backend/src/routes/agents.ts`)
+  // so a curl client gets the same behaviour.
+  const handleMemoryEnabledToggle = useCallback(
+    (next: boolean) => {
+      setMemoryEnabled(next)
+      if (next && memoryConfig === null && agent.memoryConfig === null) {
+        setMemoryConfig(defaultMemoryConfig())
+      }
+    },
+    [memoryConfig, agent.memoryConfig],
+  )
 
   const patch = useMemo<AgentUpdateInput>(() => {
     const out: Record<string, unknown> = {}
@@ -62,6 +85,8 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
     const prevModel = agent.model ?? ''
     if (model !== prevModel) out.model = model.length ? model : null
     if (memoryEnabled !== agent.memoryEnabled) out.memoryEnabled = memoryEnabled
+    if (!shallowEqualMemory(memoryConfig, agent.memoryConfig))
+      out.memoryConfig = memoryConfig
     return out as AgentUpdateInput
   }, [
     name,
@@ -70,6 +95,7 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
     systemPrompt,
     model,
     memoryEnabled,
+    memoryConfig,
     agent,
   ])
 
@@ -131,6 +157,36 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
       )
     }
   }, [agent.id, agent.name, removeAgent])
+
+  const [exporting, setExporting] = useState(false)
+  const handleExport = useCallback(async () => {
+    setExporting(true)
+    setServerError(null)
+    try {
+      const bundle = await exportAgentBundle(agent.id)
+      const blob = new Blob([JSON.stringify(bundle, null, 2)], {
+        type: 'application/json',
+      })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `agent-${agent.slug}.json`
+      a.click()
+      // Defer revoke so the download has time to start. URL.revokeObjectURL
+      // is sync so no need to await; 1s is comfortable across browsers.
+      setTimeout(() => URL.revokeObjectURL(url), 1_000)
+    } catch (err) {
+      setServerError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Failed to export agent',
+      )
+    } finally {
+      setExporting(false)
+    }
+  }, [agent.id, agent.slug])
 
   return (
     <div className="inspector">
@@ -240,10 +296,10 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
             <input
               type="checkbox"
               checked={memoryEnabled}
-              onChange={(e) => setMemoryEnabled(e.target.checked)}
+              onChange={(e) => handleMemoryEnabledToggle(e.target.checked)}
               style={{ marginRight: 6 }}
             />
-            Enable working memory
+            Enable agent memory
           </span>
           <span className="field-hint">
             Uses Mastra's working memory + semantic recall against the shared
@@ -251,6 +307,19 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
           </span>
         </label>
       </section>
+
+      {memoryEnabled ? (
+        <section className="inspector-section">
+          <div className="inspector-section-title">
+            <span>Memory</span>
+          </div>
+          <MemorySection
+            value={memoryConfig}
+            onChange={setMemoryConfig}
+            providerHasEmbedder={providerHasEmbedder}
+          />
+        </section>
+      ) : null}
 
       {serverError ? (
         <div className="banner banner-error" role="alert">
@@ -266,6 +335,15 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
       ) : null}
 
       <div className="form-actions">
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => void handleExport()}
+          disabled={exporting}
+          title="Download a JSON snapshot of this agent (no secrets)"
+        >
+          {exporting ? 'Exporting…' : 'Export'}
+        </button>
         <button
           type="button"
           className="btn btn-danger"
@@ -284,6 +362,7 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
             setSystemPrompt(agent.systemPrompt)
             setModel(agent.model ?? '')
             setMemoryEnabled(agent.memoryEnabled)
+            setMemoryConfig(agent.memoryConfig)
             setFieldErrors({})
             setServerError(null)
           }}
@@ -301,4 +380,21 @@ export function AgentInspector({ agent }: { agent: AgentResponse }) {
       </div>
     </div>
   )
+}
+
+/**
+ * Cheap structural equality for `AgentMemoryConfig`. JSON.stringify is
+ * unstable across key orderings in theory, but every code path that
+ * builds the blob (defaultMemoryConfig + memory-section.tsx) uses the
+ * same shape, so JSON ordering is deterministic in practice. Returns
+ * `true` when the two values are byte-equal so the patch builder can
+ * skip emitting `memoryConfig` on no-op edits.
+ */
+function shallowEqualMemory(
+  a: AgentMemoryConfig | null,
+  b: AgentMemoryConfig | null,
+): boolean {
+  if (a === b) return true
+  if (a === null || b === null) return false
+  return JSON.stringify(a) === JSON.stringify(b)
 }
