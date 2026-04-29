@@ -19,6 +19,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
+import { agentStreamId } from '@agent-bridge/shared'
 import { WorkspaceProvider } from './lib/workspace-provider'
 import { useWorkspace } from './lib/workspace-context'
 import {
@@ -191,8 +192,13 @@ function Workspace() {
     }
   }, [railOpen, selection])
 
-  // Activity stream id = focused agent (phases 2+ may broaden this).
-  const streamId = focusedAgent?.id ?? null
+  // Activity stream id = the per-agent fan-out channel
+  // (`agent:<agentId>`). The dispatcher mirrors every per-run event onto
+  // this channel so the right-rail Activity panel sees a single
+  // continuous timeline across many runs without tracking individual run
+  // ids. See `runStreamId` / `agentStreamId` in `@agent-bridge/shared`
+  // and `docs/ARCHITECTURE.md` §5 for the fan-out rule.
+  const streamId = focusedAgent ? agentStreamId(focusedAgent.id) : null
   const { connected, events } = useSSE(streamId, { cap: 200 })
   const activeRailTab: RailTab =
     focusedAgent || railTab !== 'chat' ? railTab : 'inspector'

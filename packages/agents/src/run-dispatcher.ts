@@ -69,6 +69,7 @@ import type { BuiltAgent } from './build-agent.js'
 import { builtAgentCache } from './built-agent-cache.js'
 import { runsRepo, type AgentBridgeDb } from '@agent-bridge/db'
 import {
+  agentStreamId as buildAgentStreamId,
   type RunErrorPayload,
   type RunEvent,
   type RunEventKind,
@@ -138,6 +139,11 @@ export interface DispatchRunInput {
  */
 export async function dispatchRun(input: DispatchRunInput): Promise<void> {
   const { db, eventBus, agentId, runId, prompt, streamId } = input
+  // Per-agent fan-out channel for the right-rail Activity panel. Every
+  // event we publish onto the per-run `streamId` is mirrored here so
+  // the operator sees one continuous timeline for the focused agent
+  // across multiple runs (chat turns, IDE-bridge calls, …).
+  const agentStreamId = buildAgentStreamId(agentId)
   const startedAt = Date.now()
 
   let built: BuiltAgent | null = null
@@ -185,7 +191,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
           line: log.line,
         } satisfies RunMcpLogPayload,
       }
-      publishAndAudit(db, eventBus, redactor, streamId, runId, event).catch(
+      publishAndAudit(db, eventBus, redactor, streamId, agentStreamId, runId, event).catch(
         (err) => {
           console.error(
             `[run-dispatcher] mcp.log publish failed for run ${runId}:`,
@@ -242,7 +248,15 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
         mastraResourceId: memoryIds?.mastraResourceId ?? null,
       } satisfies RunStartedPayload,
     }
-    await publishAndAudit(db, eventBus, redactor, streamId, runId, startedEvent)
+    await publishAndAudit(
+      db,
+      eventBus,
+      redactor,
+      streamId,
+      agentStreamId,
+      runId,
+      startedEvent,
+    )
 
     batcher = new TokenBatcher({
       db,
@@ -250,6 +264,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
       redactor,
       runId,
       streamId,
+      agentStreamId,
       flushIntervalMs: TOKEN_BATCH_FLUSH_MS,
     })
     batcher.start()
@@ -288,12 +303,19 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
           text: redactor.redactString(raw.text),
         }
         accumulatedText += payload.text
-        await eventBus.publish({
+        const tokenEvent: RunEvent = {
           kind: 'run.token',
           ts: mapped.ts,
           streamId,
           data: payload,
-        })
+        }
+        // Live frame for the chat panel + mirror onto the agent
+        // stream so the Activity panel sees the token cadence too.
+        // No audit row — `run.token` is high-frequency; the batched
+        // `run.token.batch` (via TokenBatcher → publishAndAudit) is
+        // the durable history.
+        await eventBus.publish(tokenEvent)
+        await eventBus.publish({ ...tokenEvent, streamId: agentStreamId })
         batcher.push(payload)
         continue
       }
@@ -335,12 +357,20 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
         continue
       }
 
-      await publishAndAudit(db, eventBus, redactor, streamId, runId, {
-        kind: mapped.kind,
-        ts: mapped.ts,
+      await publishAndAudit(
+        db,
+        eventBus,
+        redactor,
         streamId,
-        data: mapped.data,
-      })
+        agentStreamId,
+        runId,
+        {
+          kind: mapped.kind,
+          ts: mapped.ts,
+          streamId,
+          data: mapped.data,
+        },
+      )
     }
 
     // Drain the final token batch BEFORE publishing run.finished so a
@@ -349,7 +379,15 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
     batcher = null
 
     if (errorThrown) {
-      await finalizeError(db, eventBus, redactor, streamId, runId, errorThrown)
+      await finalizeError(
+        db,
+        eventBus,
+        redactor,
+        streamId,
+        agentStreamId,
+        runId,
+        errorThrown,
+      )
       return
     }
 
@@ -376,7 +414,15 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
     }
 
     await runsRepo.markCompleted(db, runId, { outputSummary })
-    await publishAndAudit(db, eventBus, redactor, streamId, runId, finishedEvent)
+    await publishAndAudit(
+      db,
+      eventBus,
+      redactor,
+      streamId,
+      agentStreamId,
+      runId,
+      finishedEvent,
+    )
   } catch (err) {
     // Includes: buildAgent failures, markRunning CAS failures, and
     // any exception thrown during stream iteration that Mastra didn't
@@ -388,10 +434,15 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
         await batcher.flushAndStop()
         batcher = null
       }
-      await finalizeError(db, eventBus, redactor, streamId, runId, {
-        message,
-        kind,
-      })
+      await finalizeError(
+        db,
+        eventBus,
+        redactor,
+        streamId,
+        agentStreamId,
+        runId,
+        { message, kind },
+      )
     } catch (auditErr) {
       console.error(
         `[run-dispatcher] could not persist terminal error for run ${runId}:`,
@@ -672,6 +723,7 @@ async function publishAndAudit(
   eventBus: EventBus,
   redactor: RunRedactor,
   streamId: string,
+  agentStreamId: string,
   runId: string,
   event: RunEvent,
 ): Promise<void> {
@@ -680,9 +732,16 @@ async function publishAndAudit(
   // scrub for each sink would be redundant and risks drift if a future
   // caller bypasses one.
   const scrubbed = redactor.redactEvent(event)
-  // Publish first: in the worst case where audit fails, the browser
-  // still sees the frame. Audit failures are logged below.
+  // Publish to the per-run stream first (chat panel subscribes here).
+  // In the worst case where audit fails, the browser still sees the
+  // frame. Audit failures are logged below.
   await eventBus.publish(scrubbed)
+  // Fan out to the per-agent stream so the Activity panel sees a
+  // single timeline across multiple runs without having to track
+  // individual run ids. Same scrubbed payload, different `streamId`.
+  // Audit row stays single (keyed by `runId`) — the agent stream is
+  // a derived broadcast, not a second source of truth.
+  await eventBus.publish({ ...scrubbed, streamId: agentStreamId })
   try {
     await runsRepo.appendEvent(db, {
       runId,
@@ -703,6 +762,7 @@ async function finalizeError(
   eventBus: EventBus,
   redactor: RunRedactor,
   streamId: string,
+  agentStreamId: string,
   runId: string,
   err: { message: string; kind: RunErrorPayload['kind'] },
 ): Promise<void> {
@@ -722,7 +782,15 @@ async function finalizeError(
       kind: err.kind,
     } satisfies RunErrorPayload,
   }
-  await publishAndAudit(db, eventBus, redactor, streamId, runId, event)
+  await publishAndAudit(
+    db,
+    eventBus,
+    redactor,
+    streamId,
+    agentStreamId,
+    runId,
+    event,
+  )
 }
 
 function truncateText(text: string, maxChars: number): string {
@@ -804,6 +872,7 @@ interface TokenBatcherInput {
   readonly redactor: RunRedactor
   readonly runId: string
   readonly streamId: string
+  readonly agentStreamId: string
   readonly flushIntervalMs: number
 }
 
@@ -887,6 +956,7 @@ class TokenBatcher {
       this.input.eventBus,
       this.input.redactor,
       this.input.streamId,
+      this.input.agentStreamId,
       this.input.runId,
       event,
     )

@@ -423,3 +423,21 @@ export function runStreamId(runId: string): string {
 export function bridgeStreamId(runId: string): string {
   return `bridge:${runId}`
 }
+
+/**
+ * Build the SSE `streamId` for the per-agent activity feed. Every
+ * dispatcher event for an agent's runs (and, in the future, every
+ * worker event for repos attached to that agent) is fanned out onto
+ * this channel in ADDITION to the per-run / per-repo channel. The
+ * Activity panel in the right rail subscribes here so it sees the
+ * full timeline for the focused agent across many runs without
+ * having to know individual run ids.
+ *
+ * NOT persisted on `runs.stream_id` — that column tracks the per-run
+ * channel the chat panel subscribes to. The agent channel is a
+ * derived fan-out; the audit log already captures the full sequence
+ * keyed by `run_id`.
+ */
+export function agentStreamId(agentId: string): string {
+  return `agent:${agentId}`
+}

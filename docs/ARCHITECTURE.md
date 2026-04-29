@@ -268,6 +268,20 @@ ioredis pub/sub — one subscriber connection per SSE client.
 tokens into `run.token.batch` rows in the audit log, so a late subscriber
 can fetch a compact history without replaying thousands of token deltas.
 
+**Per-agent fan-out (Activity panel).** Every dispatcher event is published
+to TWO channels: the per-run channel `run:<runId>` (chat panel subscribes
+here) AND a per-agent channel `agent:<agentId>` (right-rail Activity
+panel subscribes here). Same scrubbed payload, different `streamId`.
+The audit row in `run_events` is written ONCE — keyed by `runId` — so
+the agent stream is a derived broadcast, not a second source of truth.
+This lets the Activity tab render a continuous timeline across many
+runs (chat turns, IDE-bridge calls, …) for the focused agent without
+having to track individual run ids. Helper: `agentStreamId(agentId)` in
+`@agent-bridge/shared/events`. Repo-job events (clone/index/wiki) are
+NOT yet fanned to the agent stream — they remain on `repo:<repoId>`
+because a repo can attach to multiple agents and per-target fan-out
+needs an attachment-aware publish path; future work.
+
 ## 6. Process + deployment topology
 
 Local dev (`pnpm dev`):

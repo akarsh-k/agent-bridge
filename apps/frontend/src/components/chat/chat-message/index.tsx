@@ -67,6 +67,18 @@ function AssistantBubble({ message }: { message: ChatMessageType }) {
   const isPlainStreamingNoText = isStreaming && message.text.length === 0
   const showDetailsToggle = message.steps.length > 0 || totalUsage !== null
 
+  // Filter out info-level MCP logs from the chat surface. These are
+  // protocol traces and `mcp-remote` startup spam (`tools/list`,
+  // `initialize`, npm warnings, OAuth handshake banners) — useful for
+  // debugging but pure noise in a conversation. Warn + error stay
+  // because they signal something actionable (auth failure, upstream
+  // rate-limit, etc.). The full feed remains in `run_events` for
+  // forensic replay.
+  const visibleMcpLogs = useMemo(
+    () => filterRelevantLogs(message.mcpLogs),
+    [message.mcpLogs],
+  )
+
   return (
     <div className="chat-msg chat-msg-assistant">
       <div className={`chat-msg-bubble${hasErrored ? ' has-error' : ''}`}>
@@ -110,16 +122,18 @@ function AssistantBubble({ message }: { message: ChatMessageType }) {
               <ToolCallCard
                 key={call.toolCallId}
                 call={call}
-                mcpLogs={logsForToolCall(call, message.toolCalls, message.mcpLogs)}
+                mcpLogs={filterRelevantLogs(
+                  logsForToolCall(call, message.toolCalls, visibleMcpLogs),
+                )}
               />
             ))}
           </div>
         ) : null}
 
-        {orphanMcpLogs(message.toolCalls, message.mcpLogs).length > 0 ? (
+        {orphanMcpLogs(message.toolCalls, visibleMcpLogs).length > 0 ? (
           <div className="chat-msg-tools chat-msg-tools-orphan">
             {groupLogsByConnection(
-              orphanMcpLogs(message.toolCalls, message.mcpLogs),
+              orphanMcpLogs(message.toolCalls, visibleMcpLogs),
             ).map((group) => (
               <McpLogsStandaloneCard
                 key={group.connectionId}
@@ -439,6 +453,34 @@ function McpLogList({ logs }: { logs: readonly ChatMcpLog[] }) {
         .join('\n')}
     </pre>
   )
+}
+
+/**
+ * Filter MCP log lines for the chat surface. Currently returns an
+ * empty array — chat is for the conversation, not subprocess stderr.
+ *
+ * Why a hard zero, not "warn+error only":
+ *   - `info` is dominated by `mcp-remote`'s JSON-RPC trace
+ *     (`initialize`, `tools/list`, `Connecting to remote server: …`)
+ *     and OAuth handshake banners.
+ *   - `warn` is dominated by npm-config noise from the Node wrapper
+ *     around `mcp-remote` (`npm warn Unknown env config …`) — it
+ *     comes from the CLI shell, not the upstream MCP, so the
+ *     operator can't act on it from this UI.
+ *   - Real failures the user CAN act on — auth errors, tool-call
+ *     errors, run errors — already surface via:
+ *       (a) the tool card flipping to `tool-call-error` with an
+ *           error message, and
+ *       (b) the assistant bubble's red `run.error` banner.
+ *   - The full unfiltered feed remains in `run_events`. A future
+ *     "Show MCP logs in chat" setting can flip this gate without
+ *     touching the audit log path.
+ */
+function filterRelevantLogs(
+  logs: readonly ChatMcpLog[],
+): ChatMcpLog[] {
+  void logs
+  return []
 }
 
 function highestLevel(
