@@ -1359,6 +1359,85 @@ button.ab-list-row {
   background: var(--accent-bg-hi);
 }
 
+/* System-tools expandable row. The tool catalog comes back from the
+ * backend with descriptions that range from one sentence ("semantic +
+ * keyword search across attached repositories") to a full README
+ * (gitnexus_cypher: schema docs + 8 example queries). We show the
+ * first sentence on the row and let users click to expand the full
+ * text in a preformatted block — keeps the System defaults card
+ * scannable without hiding what each tool actually does. */
+.ab-system-tool {
+  border-bottom: 1px solid var(--border);
+}
+.ab-system-tool:last-child {
+  border-bottom: none;
+}
+.ab-system-tool-summary {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 18px;
+  width: 100%;
+  background: transparent;
+  border: none;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out);
+}
+.ab-system-tool-summary:hover {
+  background: var(--surface-hover);
+}
+.ab-system-tool-summary:disabled {
+  cursor: default;
+}
+.ab-system-tool-summary:disabled:hover {
+  background: transparent;
+}
+.ab-system-tool-summary .ab-list-row-sub {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ab-system-tool-chevron {
+  transition:
+    transform var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+.ab-system-tool-summary[aria-expanded='true'] .ab-system-tool-chevron {
+  transform: rotate(180deg);
+  color: var(--accent-300);
+}
+.ab-system-tool-detail {
+  padding: 4px 18px 14px 56px;
+}
+.ab-system-tool-detail pre {
+  margin: 0;
+  padding: 12px 14px;
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-dim);
+  max-height: 320px;
+  overflow-y: auto;
+}
+/* When the row is expanded, dampen its hover state so the bright
+ * surface-hover bg of the summary button doesn't visually slam into
+ * the detail panel sitting directly underneath. The chevron rotation
+ * + open panel already convey "this row is active" — we don't need
+ * a strong hover tint on top of that. */
+.ab-system-tool-summary[aria-expanded='true']:hover {
+  background: transparent;
+}
+
 /* Custom checkbox indicator — token-driven, no native input. */
 .ab-checkbox {
   width: 18px;

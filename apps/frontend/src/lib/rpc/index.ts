@@ -588,3 +588,59 @@ export async function deleteAgentThread(
     ),
   )
 }
+
+// ─── System tools (read-only catalog of auto-mounted MCP tools) ─────────
+
+import type { GitnexusSystemToolsResponse } from '@agent-bridge/shared'
+
+/**
+ * Fetch the gitnexus tool catalog. The backend caches the result for
+ * the lifetime of its process — calling this repeatedly is cheap and
+ * always returns the same payload until the backend restarts (or the
+ * gitnexus CLI version changes, which requires a backend restart).
+ *
+ * Bypasses `callApi` because the `{ ok: false }` branch here is a
+ * legitimate "gitnexus unavailable" state we want to render in the UI,
+ * not an error envelope to throw on.
+ */
+export async function getGitnexusSystemTools(): Promise<GitnexusSystemToolsResponse> {
+  let res: Response
+  try {
+    res = await fetch(`${apiBaseUrl}/api/system/tools/gitnexus`, {
+      method: 'GET',
+    })
+  } catch (err) {
+    throw new ApiError({
+      code: 'network',
+      status: 0,
+      message:
+        err instanceof Error
+          ? `Network error: ${err.message}`
+          : 'Network error',
+    })
+  }
+  let parsed: unknown
+  try {
+    parsed = await res.json()
+  } catch {
+    throw new ApiError({
+      code: 'malformed_response',
+      status: res.status,
+      message: `Expected JSON from ${res.url} (HTTP ${res.status})`,
+    })
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    !('ok' in parsed) ||
+    typeof (parsed as { ok: unknown }).ok !== 'boolean'
+  ) {
+    throw new ApiError({
+      code: 'malformed_response',
+      status: res.status,
+      message: 'Response did not match the API envelope shape',
+      details: parsed,
+    })
+  }
+  return parsed as GitnexusSystemToolsResponse
+}

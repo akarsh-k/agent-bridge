@@ -49,3 +49,10 @@ export type {
   AgentThreadMessage,
   AgentThreadMessageRole,
 } from './threads.js'
+export { loadGitnexusToolDefinitions } from './system-tools.js'
+export type {
+  SystemToolDefinition,
+  GitnexusSystemToolsResult,
+  GitnexusSystemToolsOk,
+  GitnexusSystemToolsErr,
+} from './system-tools.js'
