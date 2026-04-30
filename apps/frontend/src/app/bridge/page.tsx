@@ -6,7 +6,7 @@
  * every 4s.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   BRIDGE_TOOL_RESERVED_PREFIX,
   type BridgeToolResponse,
@@ -21,27 +21,34 @@ import {
   type BridgeConfigResponse,
 } from '../../lib/rpc'
 import { PageHeader } from '../_chrome/page-header'
-import { Button } from '../../ui/button'
 import { Pill } from '../../ui/pill'
 import { Tabs } from '../../ui/tabs'
 import { EmptyState } from '../../ui/empty'
-import { BridgeIcon } from '../../ui/icons'
+import { BridgeIcon, CheckIcon, CopyIcon } from '../../ui/icons'
 
 const RUNS_POLL_MS = 4_000
 const RUNS_LIMIT = 50
 
 export function BridgePage() {
+  // Hash-to-scroll: when the user lands here from `/bridge#runs` (the
+  // notifications flyout's "See all activity in Bridge" button), scroll
+  // the runs section into view. Defer to next paint so the lazy
+  // `<RunsCard />` content has had a chance to mount.
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const id = window.location.hash.slice(1)
+    if (!id) return
+    requestAnimationFrame(() => {
+      const el = document.getElementById(id)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    })
+  }, [])
+
   return (
     <div className="ab-page">
       <PageHeader
         title="Bridge"
-        subtitle={
-          <>
-            Wire your agents into your IDE over MCP. Once configured, every
-            agent shows up as <code className="ab-mono">@query_&lt;slug&gt;</code>
-            in Cursor / Claude Code / Codex / OpenCode.
-          </>
-        }
+        subtitle="Wire your agents into your IDE over MCP. Each agent becomes a callable tool in Cursor, Claude Code, Codex, and OpenCode."
       />
       <SetupCard />
       <ToolsCard />
@@ -94,10 +101,10 @@ function SetupCard() {
   return (
     <div className="ab-card ab-card-pad ab-form-section">
       <div className="ab-section-head">
-        <div className="ab-section-title">1 · MCP server config</div>
+        <div className="ab-section-title">MCP server config</div>
         <div className="ab-section-sub">
-          Paste into <code className="ab-mono">~/.cursor/mcp.json</code> or
-          your IDE's MCP config file.
+          Paste the snippet below into your IDE's MCP config file, then
+          restart the IDE.
         </div>
       </div>
       {error && (
@@ -114,58 +121,21 @@ function SetupCard() {
         </div>
       )}
       {config ? (
-        <>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-              marginBottom: 10,
-            }}
-          >
-            <Button variant="primary" onClick={() => void handleCopy()}>
-              {copied ? 'Copied!' : 'Copy config'}
-            </Button>
-            <span className="ab-mono" style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-              {config.command} {config.args.join(' ')}
-            </span>
+        <div className="ab-codeblock">
+          <div className="ab-codeblock-head">
+            <span className="ab-codeblock-filename">~/.cursor/mcp.json</span>
+            <button
+              type="button"
+              className={`ab-codeblock-copy${copied ? ' is-copied' : ''}`}
+              onClick={() => void handleCopy()}
+              aria-live="polite"
+            >
+              {copied ? <CheckIcon /> : <CopyIcon />}
+              {copied ? 'Copied' : 'Copy'}
+            </button>
           </div>
-          <pre
-            className="ab-mono"
-            style={{
-              background: 'var(--surface-hi)',
-              border: '1px solid var(--border)',
-              borderRadius: 'var(--radius-lg)',
-              padding: 16,
-              margin: 0,
-              fontSize: 12.5,
-              lineHeight: 1.6,
-              whiteSpace: 'pre',
-              overflowX: 'auto',
-              color: 'var(--text)',
-              maxHeight: 320,
-            }}
-          >
-            {config.configBlock}
-          </pre>
-          <ol
-            style={{
-              fontSize: 13,
-              color: 'var(--text-dim)',
-              lineHeight: 1.7,
-              marginTop: 14,
-              paddingLeft: 20,
-            }}
-          >
-            <li>Paste the JSON above into your IDE's MCP config.</li>
-            <li>Restart the IDE so it picks up the new server.</li>
-            <li>
-              Call <code className="ab-mono">@query_&lt;slug&gt;</code> from a
-              chat — the agent runs with its repos, skills, and MCP tools just
-              like in the workspace UI.
-            </li>
-          </ol>
-        </>
+          <pre className="ab-codeblock-body">{config.configBlock}</pre>
+        </div>
       ) : !error ? (
         <div style={{ color: 'var(--text-muted)', padding: '8px 0' }}>
           Loading config…
@@ -207,7 +177,7 @@ function ToolsCard() {
   return (
     <div className="ab-card ab-card-pad ab-form-section">
       <div className="ab-section-head">
-        <div className="ab-section-title">2 · Exposed tools</div>
+        <div className="ab-section-title">Exposed tools</div>
         <div className="ab-section-sub">
           {exposed.length} agent{exposed.length === 1 ? '' : 's'} ready
           {skipped > 0 && ` · ${skipped} skipped (no LLM provider)`}
@@ -268,18 +238,28 @@ function ExposedAgentRow({
   >(null)
   const [loadingBridgeTools, setLoadingBridgeTools] = useState(false)
   const [bridgeToolsErr, setBridgeToolsErr] = useState<string | null>(null)
+  // Tracks which agent we've already fetched for. A ref (not state) so
+  // marking "done" doesn't re-fire the effect — the previous version
+  // had `bridgeTools` and `loadingBridgeTools` in its dep array, which
+  // turned the first `setLoadingBridgeTools(true)` into a re-run that
+  // tripped the early-return guard and orphaned the fetch. Result:
+  // stuck on "Loading…" forever.
+  const fetchedForRef = useRef<string | null>(null)
 
   // Lazy-fetch the per-agent bridge tools the first time the row opens.
   useEffect(() => {
-    if (!open || bridgeTools !== null || loadingBridgeTools) return
+    if (!open) return
+    if (fetchedForRef.current === agent.id) return
     let alive = true
+    setLoadingBridgeTools(true)
+    setBridgeToolsErr(null)
     void (async () => {
-      if (!alive) return
-      setLoadingBridgeTools(true)
-      setBridgeToolsErr(null)
       try {
         const list = await listBridgeTools(agent.id)
-        if (alive) setBridgeTools(list)
+        if (alive) {
+          setBridgeTools(list)
+          fetchedForRef.current = agent.id
+        }
       } catch (err) {
         if (alive) {
           setBridgeToolsErr(
@@ -297,7 +277,7 @@ function ExposedAgentRow({
     return () => {
       alive = false
     }
-  }, [open, agent.id, bridgeTools, loadingBridgeTools])
+  }, [open, agent.id])
 
   return (
     <div
@@ -537,13 +517,13 @@ function RunsCard() {
   }, [groupBy, runs])
 
   return (
-    <div className="ab-card ab-card-pad ab-form-section">
+    <div id="runs" className="ab-card ab-card-pad ab-form-section">
       <div
         className="ab-section-head"
         style={{ display: 'flex', alignItems: 'center', gap: 12 }}
       >
         <div style={{ flex: 1 }}>
-          <div className="ab-section-title">3 · Recent IDE runs</div>
+          <div className="ab-section-title">Recent IDE runs</div>
           <div className="ab-section-sub">
             {loading
               ? 'Loading…'

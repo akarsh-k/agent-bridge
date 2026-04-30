@@ -361,6 +361,14 @@
 
 .ab-topbar {
   height: 56px;
+  /* `.ab-main` is `display: flex; flex-direction: column`, which
+   * defaults its children to `flex-shrink: 1`. Without this lock the
+   * topbar shrinks below 56px on pages whose content stack hits a
+   * particular height/timing (the Bridge page is the obvious culprit:
+   * the async-loading SetupCard + polling RunsCard caused the column
+   * to compress the sticky header). `min-height` belt-and-braces. */
+  flex-shrink: 0;
+  min-height: 56px;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1674,6 +1682,96 @@ button.ab-list-row {
 
 .ab-form-section {
   margin-bottom: 22px;
+}
+
+/* Code block with a header bar that carries the file name on the
+ * left and a copy button on the right. Used on the Bridge page's
+ * MCP-config card so the "what file goes here" cue lives next to
+ * the "give me the snippet" action — instead of a floating button
+ * above raw <pre> text. */
+.ab-codeblock {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background: var(--bg-canvas);
+}
+.ab-codeblock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  background: var(--surface-hi);
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.ab-codeblock-filename {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ab-codeblock-filename::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--text-muted);
+  opacity: 0.5;
+  flex-shrink: 0;
+}
+.ab-codeblock-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: var(--radius);
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition:
+    color var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
+}
+.ab-codeblock-copy:hover {
+  color: var(--text);
+  background: var(--surface);
+  border-color: var(--border);
+}
+.ab-codeblock-copy.is-copied {
+  color: var(--success);
+  border-color: rgba(52, 211, 153, 0.32);
+  background: var(--success-bg);
+}
+.ab-codeblock-copy svg {
+  width: 13px;
+  height: 13px;
+}
+.ab-codeblock-body {
+  margin: 0;
+  padding: 14px 16px;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre;
+  overflow-x: auto;
+  max-height: 360px;
+  /* Custom scrollbar inside the code block — matches the page-wide
+   * theme but tighter to fit the constrained area. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
 }
 .ab-section-head {
   margin-bottom: 12px;

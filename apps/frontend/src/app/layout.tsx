@@ -153,7 +153,7 @@ function RouterOutlet() {
 
   return (
     <>
-      <Topbar crumbs={crumbs} liveLabel="Bridge connected" />
+      <Topbar crumbs={crumbs} />
       {route.kind === 'home' && <HomePage />}
       {route.kind === 'agents' && <AgentsListPage />}
       {route.kind === 'agent-detail' && (

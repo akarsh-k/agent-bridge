@@ -19,10 +19,8 @@ export interface Crumb {
 
 export function Topbar({
   crumbs,
-  liveLabel,
 }: {
   crumbs: ReadonlyArray<Crumb>
-  liveLabel?: string
 }) {
   const { runningCount, errorCount, runs } = useNotificationCounts()
   const totalDot = runningCount + errorCount > 0
@@ -77,12 +75,6 @@ export function Topbar({
         })}
       </nav>
       <div className="ab-topbar-spacer" />
-      {liveLabel && (
-        <span className="ab-live-chip">
-          <span className="ab-pulse-dot" />
-          {liveLabel}
-        </span>
-      )}
       <div ref={flyoutRef} style={{ position: 'relative' }}>
         <Tooltip label={tooltip} side="bottom">
           <button
@@ -322,7 +314,7 @@ function NotificationFlyout({
           type="button"
           onClick={() => {
             onClose()
-            navigate('/bridge')
+            navigate('/bridge#runs')
           }}
           style={{
             width: '100%',
