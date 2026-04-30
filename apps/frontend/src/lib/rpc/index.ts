@@ -522,3 +522,69 @@ export async function pollMcpTest(
   )
   return res.result
 }
+
+// ─── Agent threads (multi-conversation) ─────────────────────────────────
+
+import type {
+  AgentThreadSummary as _AgentThreadSummary,
+  AgentThreadMessage as _AgentThreadMessage,
+} from '@agent-bridge/shared'
+
+/**
+ * List past chat threads for an agent. The chat tab uses this to
+ * render the conversation switcher. Threads come back newest-first
+ * with their `messageCount` and a derived `title` (Mastra's stored
+ * title or the first user message clipped to ~60 chars).
+ */
+export async function listAgentThreads(
+  agentId: string,
+): Promise<readonly _AgentThreadSummary[]> {
+  const res = await callApi<{
+    ok: true
+    threads: readonly _AgentThreadSummary[]
+  }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/threads`,
+      { method: 'GET' },
+    ),
+  )
+  return res.threads
+}
+
+/**
+ * Replay the messages of a past thread for the chat UI. Returns a
+ * flattened text-only view (Mastra's structured parts joined per
+ * message); tool-call detail isn't surfaced in replay.
+ */
+export async function getAgentThreadMessages(
+  agentId: string,
+  threadId: string,
+): Promise<readonly _AgentThreadMessage[]> {
+  const res = await callApi<{
+    ok: true
+    threadId: string
+    messages: readonly _AgentThreadMessage[]
+  }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/threads/${encodeURIComponent(threadId)}/messages`,
+      { method: 'GET' },
+    ),
+  )
+  return res.messages
+}
+
+/**
+ * Delete a thread + every message in it. Mastra cascades the
+ * `mastra.messages` rows.
+ */
+export async function deleteAgentThread(
+  agentId: string,
+  threadId: string,
+): Promise<void> {
+  await callApi<{ ok: true }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/threads/${encodeURIComponent(threadId)}`,
+      { method: 'DELETE' },
+    ),
+  )
+}

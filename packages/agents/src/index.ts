@@ -39,3 +39,13 @@ export { dispatchRun } from './run-dispatcher.js'
 export type { DispatchRunInput } from './run-dispatcher.js'
 export { createRunRedactor } from './run-redactor.js'
 export type { RunRedactor } from './run-redactor.js'
+export {
+  listAgentThreads,
+  getAgentThreadMessages,
+  deleteAgentThread,
+} from './threads.js'
+export type {
+  AgentThreadSummary,
+  AgentThreadMessage,
+  AgentThreadMessageRole,
+} from './threads.js'

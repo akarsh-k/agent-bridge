@@ -50,7 +50,14 @@ import type {
   RunToolResultPayload,
 } from '@agent-bridge/shared'
 import { runStreamId } from '@agent-bridge/shared'
-import { ApiError, apiBaseUrl, callApi } from '../rpc'
+import {
+  ApiError,
+  apiBaseUrl,
+  callApi,
+  deleteAgentThread as rpcDeleteAgentThread,
+  getAgentThreadMessages as rpcGetAgentThreadMessages,
+  listAgentThreads as rpcListAgentThreads,
+} from '../rpc'
 import { useSSE } from '../use-sse'
 
 // ─── Public types ────────────────────────────────────────────────────────
@@ -134,6 +141,15 @@ export interface ChatMessage {
   readonly lastTokenIndex: number
 }
 
+/** Thread metadata as surfaced to the chat UI's switcher. */
+export interface ChatThreadMeta {
+  readonly threadId: string
+  readonly title: string | null
+  readonly createdAt: number
+  readonly updatedAt: number
+  readonly messageCount: number
+}
+
 export interface UseChatResult {
   readonly messages: readonly ChatMessage[]
   readonly threadId: string
@@ -142,8 +158,21 @@ export interface UseChatResult {
   readonly sending: boolean
   readonly sendError: string | null
   readonly sseConnected: boolean
+  /** All past threads for the agent — newest-first. */
+  readonly threads: readonly ChatThreadMeta[]
+  /** True while fetching messages on a thread switch. */
+  readonly loadingMessages: boolean
+  /** True while a thread fetch failed (so the UI can show a retry). */
+  readonly threadsError: string | null
   send(prompt: string): Promise<void>
-  resetThread(): void
+  /** Mint a new thread + switch to it; the old thread stays on the server. */
+  newThread(): void
+  /** Switch to an existing thread and replay its messages. */
+  switchThread(threadId: string): Promise<void>
+  /** Delete a thread + every message in it; switches to next thread if active. */
+  deleteThread(threadId: string): Promise<void>
+  /** Force a re-fetch of the threads list (e.g. after a run finishes). */
+  refreshThreads(): Promise<void>
 }
 
 interface UseChatInput {
@@ -155,42 +184,49 @@ interface UseChatInput {
 export function useChat(input: UseChatInput): UseChatResult {
   const { agentId } = input
 
-  // Per-agent persistence. We keep the thread id + the rendered
-  // message list in localStorage keyed by agent so the user can
-  // reload the page (or come back tomorrow) and see the conversation
-  // where they left it. Memory-enabled agents also benefit because
-  // the same thread id keeps Mastra's server-side history aligned.
+  // Per-agent persistence. Mastra owns the message + thread storage
+  // server-side; we only persist the *active* thread id locally so the
+  // user lands on the same conversation after a reload. Messages
+  // themselves are fetched from the backend on switch / mount.
   const [agentKey, setAgentKey] = useState<string | null>(agentId)
-  const [threadId, setThreadId] = useState(() =>
-    loadPersistedThreadId(agentId) ?? crypto.randomUUID(),
+  const [threadId, setThreadId] = useState(
+    () => loadActiveThreadId(agentId) ?? crypto.randomUUID(),
   )
-  const [messages, setMessages] = useState<ChatMessage[]>(() =>
-    loadPersistedMessages(agentId),
-  )
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
+  const [threads, setThreads] = useState<ChatThreadMeta[]>([])
+  const [loadingMessages, setLoadingMessages] = useState(false)
+  const [threadsError, setThreadsError] = useState<string | null>(null)
+  // Tracks "we've loaded messages for this threadId" — see the
+  // load-messages effect for why this is state instead of a ref.
+  const [messagesLoadedFor, setMessagesLoadedFor] = useState<string | null>(
+    null,
+  )
 
   // Sync state to the current agent using the canonical
   // setState-in-render "reset-on-prop-change" pattern: avoids the
   // single-frame flash you get if you reset inside an effect.
   if (agentKey !== agentId) {
     setAgentKey(agentId)
-    setThreadId(loadPersistedThreadId(agentId) ?? crypto.randomUUID())
-    setMessages(loadPersistedMessages(agentId))
+    setThreadId(loadActiveThreadId(agentId) ?? crypto.randomUUID())
+    setMessages([])
     setActiveRunId(null)
     setSending(false)
     setSendError(null)
+    setThreads([])
+    setLoadingMessages(false)
+    setThreadsError(null)
+    setMessagesLoadedFor(null)
   }
 
-  // Persist whenever thread / messages change. Skip when we're mid-
-  // stream so we don't pay the cost on every token frame; the next
-  // commit (after the run terminates) writes the final state.
+  // Persist active thread id whenever it changes. Tiny key (no
+  // message data), so this is cheap — no need to gate on `activeRunId`.
   useEffect(() => {
     if (!agentId) return
-    if (activeRunId) return
-    persistThread(agentId, threadId, messages)
-  }, [agentId, activeRunId, threadId, messages])
+    persistActiveThreadId(agentId, threadId)
+  }, [agentId, threadId])
 
   const streamId = activeRunId ? runStreamId(activeRunId) : null
   const { connected, events } = useSSE(streamId, { cap: 600 })
@@ -325,14 +361,215 @@ export function useChat(input: UseChatInput): UseChatResult {
     [agentId, activeRunId, resourceId, sending, threadId],
   )
 
-  const resetThread = useCallback(() => {
+  // ─── Thread management ──────────────────────────────────────────
+
+  const refreshThreads = useCallback(async () => {
+    if (!agentId) return
+    try {
+      const list = await rpcListAgentThreads(agentId)
+      setThreads(
+        list.map((t) => ({
+          threadId: t.threadId,
+          title: t.title,
+          createdAt: Date.parse(t.createdAt),
+          updatedAt: Date.parse(t.updatedAt),
+          messageCount: t.messageCount,
+        })),
+      )
+      setThreadsError(null)
+    } catch (err) {
+      setThreadsError(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Failed to load conversations',
+      )
+    }
+  }, [agentId])
+
+  // On mount / agent switch: load the thread list, then resolve which
+  // thread to land on (saved active id if it still exists, else most
+  // recent, else fresh new). Messages for that thread are loaded by
+  // the next effect.
+  //
+  // No "did we initialise for this agentId yet" guard ref — that
+  // pattern races against React 18 Strict Mode's double-mount in dev:
+  // the first mount's cleanup sets `alive = false`, the second mount
+  // skips because the ref is already set, and we end up with no
+  // population. Instead we rely on the `[agentId]` dep + the `alive`
+  // flag — Strict Mode's second pass refetches and wins. In prod
+  // (single mount) it's a single fetch.
+  useEffect(() => {
+    if (!agentId) return
+    let alive = true
+    void (async () => {
+      try {
+        const list = await rpcListAgentThreads(agentId)
+        if (!alive) return
+        const mapped: ChatThreadMeta[] = list.map((t) => ({
+          threadId: t.threadId,
+          title: t.title,
+          createdAt: Date.parse(t.createdAt),
+          updatedAt: Date.parse(t.updatedAt),
+          messageCount: t.messageCount,
+        }))
+        setThreads(mapped)
+        const saved = loadActiveThreadId(agentId)
+        const exists = saved && mapped.some((t) => t.threadId === saved)
+        const nextActive = exists
+          ? saved
+          : mapped[0]?.threadId ?? threadId // keep current if list empty
+        if (nextActive !== threadId) setThreadId(nextActive)
+      } catch (err) {
+        if (alive) {
+          setThreadsError(
+            err instanceof ApiError
+              ? err.message
+              : err instanceof Error
+                ? err.message
+                : 'Failed to load conversations',
+          )
+        }
+      }
+    })()
+    return () => {
+      alive = false
+    }
+    // threadId is intentionally NOT in deps — we only want this to
+    // run once per agent change. Re-fetches happen via refreshThreads.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentId])
+
+  // Load messages for the active thread. Skipped while a run is
+  // streaming (it's already filling `messages`) and when the thread
+  // is brand-new with no backend record yet (no entry in `threads`).
+  //
+  // Tracks "last loaded for" via STATE (`messagesLoadedFor`, declared
+  // with the other state at the top) not a ref — refs don't survive
+  // React 18 Strict Mode's double-mount cycle.
+  useEffect(() => {
+    if (!agentId) return
+    if (activeRunId) return
+    if (messagesLoadedFor === threadId) return
+    const meta = threads.find((t) => t.threadId === threadId)
+    // Brand-new thread (no server record) → nothing to fetch. The
+    // `newThread()` / `switchThread()` actions already cleared messages
+    // synchronously before changing `threadId`, so we return without
+    // touching state here (avoids react-hooks/set-state-in-effect).
+    if (!meta) return
+    let alive = true
+    void (async () => {
+      // Flip loading inside the microtask so the lint rule sees the
+      // setState as part of the async work, not a synchronous side
+      // effect of mounting the effect.
+      if (alive) setLoadingMessages(true)
+      try {
+        const list = await rpcGetAgentThreadMessages(agentId, threadId)
+        if (!alive) return
+        const mapped: ChatMessage[] = list.map((m) => ({
+          id: m.id,
+          role: m.role === 'user' ? 'user' : 'assistant',
+          createdAt: Date.parse(m.createdAt),
+          text: m.text,
+          status: 'done',
+          toolCalls: [],
+          steps: [],
+          mcpLogs: [],
+          lastTokenIndex: -1,
+        }))
+        setMessages(mapped)
+        setMessagesLoadedFor(threadId)
+      } catch (err) {
+        if (alive) {
+          setSendError(
+            err instanceof ApiError
+              ? err.message
+              : err instanceof Error
+                ? err.message
+                : 'Failed to load messages',
+          )
+        }
+      } finally {
+        if (alive) setLoadingMessages(false)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [agentId, threadId, threads, activeRunId, messagesLoadedFor])
+
+  // After a run terminates, refresh the thread list — the new thread
+  // (if it was first message of a fresh conversation) needs to show
+  // up in the sidebar; existing threads need their `updatedAt` /
+  // `messageCount` bumped. Also mark the active thread as
+  // "loaded" so the load-messages effect (which watches `threads`)
+  // doesn't immediately re-fetch and overwrite the just-streamed
+  // messages with the simpler backend replay.
+  const lastRunIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (activeRunId) {
+      lastRunIdRef.current = activeRunId
+      return
+    }
+    if (!lastRunIdRef.current) return
+    lastRunIdRef.current = null
+    setMessagesLoadedFor(threadId)
+    void refreshThreads()
+  }, [activeRunId, refreshThreads, threadId])
+
+  const newThread = useCallback(() => {
     if (activeRunId || sending) return
     const fresh = crypto.randomUUID()
     setThreadId(fresh)
     setMessages([])
     setSendError(null)
-    if (agentId) persistThread(agentId, fresh, [])
-  }, [activeRunId, sending, agentId])
+    // Mark fresh as "loaded" so the load-messages effect doesn't try
+    // to fetch a thread that doesn't exist on the backend yet.
+    setMessagesLoadedFor(fresh)
+  }, [activeRunId, sending])
+
+  const switchThread = useCallback(
+    async (next: string): Promise<void> => {
+      if (activeRunId || sending) return
+      if (next === threadId) return
+      setThreadId(next)
+      setMessages([])
+      setSendError(null)
+      // The load-messages effect will fire when threadId changes.
+    },
+    [activeRunId, sending, threadId],
+  )
+
+  const deleteThread = useCallback(
+    async (target: string): Promise<void> => {
+      if (!agentId) return
+      try {
+        await rpcDeleteAgentThread(agentId, target)
+      } catch (err) {
+        setThreadsError(
+          err instanceof ApiError
+            ? err.message
+            : err instanceof Error
+              ? err.message
+              : 'Failed to delete conversation',
+        )
+        return
+      }
+      const remaining = threads.filter((t) => t.threadId !== target)
+      setThreads(remaining)
+      if (target === threadId) {
+        const nextActive = remaining[0]?.threadId ?? crypto.randomUUID()
+        setThreadId(nextActive)
+        setMessages([])
+        // If we fell back to a fresh new thread (no remaining), mark
+        // it as loaded so the effect skips. Otherwise null so the
+        // existing thread's messages get fetched.
+        setMessagesLoadedFor(remaining.length > 0 ? null : nextActive)
+      }
+    },
+    [agentId, threads, threadId],
+  )
 
   return {
     messages,
@@ -342,8 +579,14 @@ export function useChat(input: UseChatInput): UseChatResult {
     sending,
     sendError,
     sseConnected: connected,
+    threads,
+    loadingMessages,
+    threadsError,
     send,
-    resetThread,
+    newThread,
+    switchThread,
+    deleteThread,
+    refreshThreads,
   }
 }
 
@@ -603,63 +846,36 @@ function applyRunFinished(
 }
 
 // ─── Persistence ─────────────────────────────────────────────────────────
+//
+// Local persistence is now intentionally minimal: just the active
+// thread id per agent, so a reload lands the user back on the same
+// conversation. Messages + thread metadata live on the backend
+// (`mastra.threads` / `mastra.messages`). The pre-multi-thread version
+// of this file mirrored every message into localStorage; that's gone
+// — Mastra is the single source of truth now.
 
-const STORAGE_PREFIX = 'ab.chat:'
-const MAX_PERSISTED = 80
+const STORAGE_PREFIX = 'ab.chat-active:'
 
-function persistKey(agentId: string): string {
+function activeKey(agentId: string): string {
   return `${STORAGE_PREFIX}${agentId}`
 }
 
-interface Persisted {
-  v: 1
-  threadId: string
-  messages: ChatMessage[]
-}
-
-function loadPersisted(agentId: string | null): Persisted | null {
+function loadActiveThreadId(agentId: string | null): string | null {
   if (!agentId) return null
   try {
-    const raw = localStorage.getItem(persistKey(agentId))
+    const raw = localStorage.getItem(activeKey(agentId))
     if (!raw) return null
-    const data = JSON.parse(raw) as Partial<Persisted>
-    if (
-      data &&
-      data.v === 1 &&
-      typeof data.threadId === 'string' &&
-      Array.isArray(data.messages)
-    ) {
-      return data as Persisted
-    }
+    return raw.length > 0 ? raw : null
   } catch {
-    /* localStorage disabled / quota / corrupted JSON — ignore */
+    /* localStorage disabled / quota — ignore */
   }
   return null
 }
 
-function loadPersistedThreadId(agentId: string | null): string | null {
-  return loadPersisted(agentId)?.threadId ?? null
-}
-
-function loadPersistedMessages(agentId: string | null): ChatMessage[] {
-  return loadPersisted(agentId)?.messages ?? []
-}
-
-function persistThread(
-  agentId: string,
-  threadId: string,
-  messages: ChatMessage[],
-): void {
-  // Trim to the most recent N messages so localStorage doesn't bloat
-  // forever. Newer is at the tail; we slice from the end.
-  const trimmed =
-    messages.length <= MAX_PERSISTED
-      ? messages
-      : messages.slice(messages.length - MAX_PERSISTED)
+function persistActiveThreadId(agentId: string, threadId: string): void {
   try {
-    const payload: Persisted = { v: 1, threadId, messages: trimmed }
-    localStorage.setItem(persistKey(agentId), JSON.stringify(payload))
+    localStorage.setItem(activeKey(agentId), threadId)
   } catch {
-    /* private mode / quota / JSON cycle — best-effort */
+    /* private mode / quota — best-effort */
   }
 }

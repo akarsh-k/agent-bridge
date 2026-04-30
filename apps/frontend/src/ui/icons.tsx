@@ -100,6 +100,14 @@ export const CheckIcon = base(<polyline points="20 6 9 17 4 12" />)
 export const ArrowRightIcon = base(<path d="M5 12h14M13 6l6 6-6 6" />)
 export const PlayIcon = base(<polygon points="5 3 19 12 5 21 5 3" />)
 export const CloseIcon = base(<path d="M18 6L6 18M6 6l12 12" />)
+export const TrashIcon = base(
+  <>
+    <polyline points="3 6 5 6 21 6" />
+    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+    <path d="M10 11v6M14 11v6" />
+    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+  </>,
+)
 export const SunIcon = base(
   <>
     <circle cx={12} cy={12} r={5} />

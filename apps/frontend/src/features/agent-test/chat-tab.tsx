@@ -15,10 +15,15 @@ import {
 import { createPortal } from 'react-dom'
 import { useWorkspace } from '../../lib/workspace-context'
 import { useChat, type ChatMessage } from '../../lib/use-chat'
-import { Button } from '../../ui/button'
 import { Markdown } from '../../ui/markdown'
-import { ArrowRightIcon, RefreshIcon, SearchIcon } from '../../ui/icons'
-import { confirmDialog } from '../../ui/dialog-store'
+import {
+  ArrowRightIcon,
+  PlusIcon,
+  RefreshIcon,
+  SearchIcon,
+  TrashIcon,
+} from '../../ui/icons'
+import type { ChatThreadMeta } from '../../lib/use-chat'
 
 interface MentionItem {
   kind: 'repo' | 'skill' | 'tool' | 'mcp'
@@ -28,6 +33,20 @@ interface MentionItem {
   token: string
 }
 
+const KIND_GROUP_LABEL: Record<MentionItem['kind'], string> = {
+  repo: 'Repos',
+  skill: 'Skills',
+  tool: 'Tools',
+  mcp: 'MCP tools',
+}
+
+const KIND_CHIP_GLYPH: Record<MentionItem['kind'], string> = {
+  repo: 'R',
+  skill: 'S',
+  tool: 'T',
+  mcp: 'M',
+}
+
 export function ChatTab({ agentId }: { agentId: string }) {
   const { agents, agentResources } = useWorkspace()
   const agent = agents.find((a) => a.id === agentId)
@@ -35,6 +54,7 @@ export function ChatTab({ agentId }: { agentId: string }) {
   const [draft, setDraft] = useState('')
   const threadRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const mentionPopoverRef = useRef<HTMLDivElement | null>(null)
   const noProvider = !!agent && !agent.llmProviderId
 
   // Mention picker state — driven by the cursor position relative to
@@ -72,14 +92,61 @@ export function ChatTab({ agentId }: { agentId: string }) {
     return out
   }, [agentResources, agentId])
 
+  // Sort the catalog by kind (repo → skill → tool → mcp) so the flat
+  // index that drives keyboard navigation matches the visual order
+  // when grouped into sections in the popover.
+  const KIND_ORDER: Record<MentionItem['kind'], number> = {
+    repo: 0,
+    skill: 1,
+    tool: 2,
+    mcp: 3,
+  }
   const filteredMentions = useMemo(() => {
     if (!mention) return [] as MentionItem[]
     const q = mention.query.toLowerCase()
-    if (!q) return mentionItems.slice(0, 12)
-    return mentionItems
-      .filter((m) => m.label.toLowerCase().includes(q))
-      .slice(0, 12)
+    // Match against kind label too — typing `@tool` should surface
+    // every tool-kind item even if "tool" doesn't appear in the
+    // resource's name. Same for "repo", "skill", "mcp".
+    const matched = q
+      ? mentionItems.filter((m) => {
+          const haystack = `${m.kind} ${KIND_GROUP_LABEL[m.kind].toLowerCase()} ${m.label.toLowerCase()}`
+          return haystack.includes(q)
+        })
+      : mentionItems
+    return matched
+      .slice()
+      .sort((a, b) => {
+        const k = KIND_ORDER[a.kind] - KIND_ORDER[b.kind]
+        return k !== 0 ? k : a.label.localeCompare(b.label)
+      })
+      .slice(0, 16)
+    // KIND_ORDER is a stable literal — safe to omit from deps.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mention, mentionItems])
+
+  // Group filtered items by kind for rendering. Each item carries its
+  // flat index so the active-row highlight + click handler line up
+  // with what the keyboard navigation tracks.
+  const mentionGroups = useMemo(() => {
+    const out: Array<{
+      kind: MentionItem['kind']
+      label: string
+      items: Array<{ item: MentionItem; flatIndex: number }>
+    }> = []
+    filteredMentions.forEach((item, flatIndex) => {
+      const last = out[out.length - 1]
+      if (last && last.kind === item.kind) {
+        last.items.push({ item, flatIndex })
+      } else {
+        out.push({
+          kind: item.kind,
+          label: KIND_GROUP_LABEL[item.kind],
+          items: [{ item, flatIndex }],
+        })
+      }
+    })
+    return out
+  }, [filteredMentions])
 
   // Auto-scroll to the bottom on new messages / streamed tokens.
   useEffect(() => {
@@ -88,6 +155,19 @@ export function ChatTab({ agentId }: { agentId: string }) {
       behavior: 'smooth',
     })
   }, [chat.messages, chat.sending])
+
+  // Keep the active mention row visible when the user arrow-keys past
+  // the popover's max-height. Querying by the .is-active class keeps
+  // this independent of the rendered structure (groups, headers, etc.).
+  useEffect(() => {
+    if (!mention) return
+    const popover = mentionPopoverRef.current
+    if (!popover) return
+    const activeEl = popover.querySelector<HTMLElement>(
+      '.ab-mention-item.is-active',
+    )
+    activeEl?.scrollIntoView({ block: 'nearest' })
+  }, [mention])
 
   const send = () => {
     const text = draft.trim()
@@ -198,6 +278,16 @@ export function ChatTab({ agentId }: { agentId: string }) {
 
   return (
     <div className="ab-chat-shell">
+      <div className="ab-chat-with-threads">
+      <ThreadRail
+        threads={chat.threads}
+        activeThreadId={chat.threadId}
+        onNew={() => chat.newThread()}
+        onSwitch={(id) => void chat.switchThread(id)}
+        onDelete={(id) => void chat.deleteThread(id)}
+        error={chat.threadsError}
+        disabled={chat.activeRunId !== null || chat.sending}
+      />
       <div className="ab-chat-main">
         <div className="ab-chat-thread" ref={threadRef}>
           {chat.messages.length === 0 ? (
@@ -220,6 +310,7 @@ export function ChatTab({ agentId }: { agentId: string }) {
                 key={m.id}
                 msg={m}
                 agentInitial={(agent?.name ?? 'A').charAt(0).toUpperCase()}
+                mentionTokens={mentionItems.map((mi) => mi.token)}
               />
             ))
           )}
@@ -255,71 +346,68 @@ export function ChatTab({ agentId }: { agentId: string }) {
         </div>
 
         <div className="ab-chat-input-bar">
-          <textarea
-            ref={textareaRef}
-            className="ab-chat-input"
-            value={draft}
-            onChange={(e) => handleDraftChange(e.target.value)}
-            onKeyDown={handleKeyDown}
-            onClick={() => updateMentionState(draft, textareaRef.current)}
-            onBlur={() => {
-              // Defer so click-on-popover still fires before close.
-              setTimeout(() => setMention(null), 120)
-            }}
-            placeholder={
-              noProvider
-                ? 'No LLM provider assigned — configure on the Configure tab.'
-                : chat.activeRunId
-                  ? 'Streaming…'
-                  : `Ask ${agent?.name ?? 'the agent'} anything…  (type @ to mention)`
-            }
-            rows={1}
-            disabled={
-              chat.activeRunId !== null || chat.sending || noProvider
-            }
-          />
-          <Button
-            variant="ghost"
-            onClick={async () => {
-              if (chat.messages.length === 0) {
-                chat.resetThread()
-                return
+          <div className="ab-chat-input-pill">
+            <textarea
+              ref={textareaRef}
+              className="ab-chat-input"
+              value={draft}
+              onChange={(e) => handleDraftChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              onClick={() => updateMentionState(draft, textareaRef.current)}
+              onBlur={() => {
+                // Defer so click-on-popover still fires before close.
+                setTimeout(() => setMention(null), 120)
+              }}
+              placeholder={
+                noProvider
+                  ? 'No LLM provider assigned — configure on the Configure tab.'
+                  : chat.activeRunId
+                    ? 'Streaming…'
+                    : `Ask ${agent?.name ?? 'the agent'} anything…  (type @ to mention)`
               }
-              const ok = await confirmDialog({
-                title: 'Reset thread?',
-                body: `Clears the ${chat.messages.length} message${
-                  chat.messages.length === 1 ? '' : 's'
-                } with ${agent?.name ?? 'this agent'} from this view. The agent's memory store keeps any persisted facts on the server.`,
-                confirmLabel: 'Reset thread',
-                kind: 'warning',
-              })
-              if (ok) chat.resetThread()
-            }}
-            leading={<RefreshIcon />}
-            disabled={chat.activeRunId !== null || chat.messages.length === 0}
-          >
-            Reset
-          </Button>
-          <Button
-            variant="primary"
-            onClick={send}
-            disabled={
-              !draft.trim() ||
-              chat.sending ||
-              chat.activeRunId !== null ||
-              noProvider
-            }
-            trailing={<ArrowRightIcon strokeWidth={2.4} />}
-          >
-            Send
-          </Button>
+              rows={1}
+              disabled={
+                chat.activeRunId !== null || chat.sending || noProvider
+              }
+            />
+            <div className="ab-chat-input-actions">
+              <button
+                type="button"
+                className="ab-chat-input-icon-btn"
+                aria-label="New conversation"
+                title="New conversation"
+                onClick={() => chat.newThread()}
+                disabled={
+                  chat.activeRunId !== null || chat.messages.length === 0
+                }
+              >
+                <RefreshIcon />
+              </button>
+              <button
+                type="button"
+                className="ab-chat-input-send"
+                aria-label="Send"
+                onClick={send}
+                disabled={
+                  !draft.trim() ||
+                  chat.sending ||
+                  chat.activeRunId !== null ||
+                  noProvider
+                }
+              >
+                <ArrowRightIcon strokeWidth={2.4} />
+              </button>
+            </div>
+          </div>
         </div>
+      </div>
       </div>
 
       {mention &&
         filteredMentions.length >= 0 &&
         createPortal(
           <div
+            ref={mentionPopoverRef}
             className="ab-mention-popover"
             style={{
               top: mention.anchor.top,
@@ -332,26 +420,50 @@ export function ChatTab({ agentId }: { agentId: string }) {
               <div className="ab-mention-empty">
                 {mentionItems.length === 0
                   ? 'No resources attached. Visit the Resources tab to attach repos, skills, tools, or MCPs.'
-                  : 'No matches'}
+                  : `No matches for "${mention.query}"`}
               </div>
             ) : (
               <>
-                <div className="ab-mention-group-label">Resources</div>
-                {filteredMentions.map((item, i) => (
-                  <button
-                    key={`${item.kind}:${item.label}`}
-                    type="button"
-                    className={`ab-mention-item${
-                      i === mention.activeIndex ? ' is-active' : ''
-                    }`}
-                    onMouseEnter={() =>
-                      setMention((m) => (m ? { ...m, activeIndex: i } : m))
-                    }
-                    onClick={() => insertMention(item)}
-                  >
-                    <span className="ab-mention-item-name">{item.label}</span>
-                    <span className="ab-mention-item-kind">{item.kind}</span>
-                  </button>
+                {mentionGroups.map((group) => (
+                  <div className="ab-mention-group" key={group.kind}>
+                    <div className="ab-mention-group-label">
+                      <span>{group.label}</span>
+                      <span className="ab-mention-group-count">
+                        {group.items.length}
+                      </span>
+                    </div>
+                    {group.items.map(({ item, flatIndex }) => {
+                      const active = flatIndex === mention.activeIndex
+                      return (
+                        <button
+                          key={`${item.kind}:${item.label}`}
+                          type="button"
+                          className={`ab-mention-item${active ? ' is-active' : ''}`}
+                          onMouseEnter={() =>
+                            setMention((m) =>
+                              m ? { ...m, activeIndex: flatIndex } : m,
+                            )
+                          }
+                          onClick={() => insertMention(item)}
+                        >
+                          <span
+                            className={`ab-mention-kind-chip is-${item.kind}`}
+                            aria-hidden="true"
+                          >
+                            {KIND_CHIP_GLYPH[item.kind]}
+                          </span>
+                          <span className="ab-mention-item-body">
+                            <span className="ab-mention-item-name">
+                              {renderMatch(item.label, mention.query)}
+                            </span>
+                            <span className="ab-mention-item-token">
+                              {item.token}
+                            </span>
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
                 ))}
               </>
             )}
@@ -396,9 +508,11 @@ function ThinkingDots() {
 function MessageRow({
   msg,
   agentInitial,
+  mentionTokens,
 }: {
   msg: ChatMessage
   agentInitial: string
+  mentionTokens: ReadonlyArray<string>
 }) {
   return (
     <div className={`ab-msg ab-msg-${msg.role === 'user' ? 'user' : 'bot'}`}>
@@ -437,7 +551,7 @@ function MessageRow({
               className="ab-msg-bubble"
               style={{ whiteSpace: 'pre-wrap' }}
             >
-              {renderUserText(msg.text)}
+              {renderUserText(msg.text, mentionTokens)}
               {msg.status === 'streaming' && (
                 <span style={{ opacity: 0.5 }}> ▍</span>
               )}
@@ -489,24 +603,77 @@ function MessageRow({
   )
 }
 
-/** Highlight `@thing:value` tokens inside user messages. */
-function renderUserText(text: string): React.ReactNode {
+/** Highlight `@thing:value` tokens inside user messages.
+ *
+ * Matches against a live catalog of known tokens (sorted longest-first
+ * so a `@skill:Code Review` token wins over `@skill:Code`) so a
+ * resource name with spaces stays one pill. Falls back to a strict
+ * regex (`[\w./:-]+` value class) for tokens that don't appear in
+ * the catalog — e.g., a message replayed from history whose skill
+ * has since been renamed. */
+function renderUserText(
+  text: string,
+  knownTokens: ReadonlyArray<string>,
+): React.ReactNode {
+  // Sort longest-first so `@skill:Code` doesn't mask `@skill:Code Review`.
+  const sortedTokens = [...knownTokens].sort((a, b) => b.length - a.length)
   const parts: React.ReactNode[] = []
-  const re = /@(repo|skill|tool|mcp):([\w./:-]+)/g
-  let last = 0
-  let m: RegExpExecArray | null
   let i = 0
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) parts.push(text.slice(last, m.index))
-    parts.push(
-      <span key={`m${i++}`} className="ab-msg-mention">
-        @{m[1]}:{m[2]}
-      </span>,
-    )
-    last = m.index + m[0].length
+  let key = 0
+  while (i < text.length) {
+    if (text[i] === '@') {
+      // 1) Try the live catalog first — handles spaces in names.
+      const hit = sortedTokens.find(
+        (t) => t.length > 0 && text.startsWith(t, i),
+      )
+      if (hit) {
+        parts.push(
+          <span key={`m${key++}`} className="ab-msg-mention">
+            {hit}
+          </span>,
+        )
+        i += hit.length
+        continue
+      }
+      // 2) Fallback: strict-regex token (no spaces) for replayed
+      //    messages whose catalog item no longer exists.
+      const tail = text.slice(i)
+      const m = tail.match(/^@(repo|skill|tool|mcp):([\w./:-]+)/)
+      if (m) {
+        parts.push(
+          <span key={`m${key++}`} className="ab-msg-mention">
+            {m[0]}
+          </span>,
+        )
+        i += m[0].length
+        continue
+      }
+    }
+    // Coalesce a run of plain text into one string node.
+    let j = i + 1
+    while (j < text.length && text[j] !== '@') j++
+    parts.push(text.slice(i, j))
+    i = j
   }
-  if (last < text.length) parts.push(text.slice(last))
   return parts.length > 0 ? parts : text
+}
+
+/** Highlight the typed query inside a label — case-insensitive match. */
+function renderMatch(label: string, query: string): React.ReactNode {
+  const q = query.trim()
+  if (!q) return label
+  const lower = label.toLowerCase()
+  const idx = lower.indexOf(q.toLowerCase())
+  if (idx === -1) return label
+  return (
+    <>
+      {label.slice(0, idx)}
+      <span className="ab-mention-item-match">
+        {label.slice(idx, idx + q.length)}
+      </span>
+      {label.slice(idx + q.length)}
+    </>
+  )
 }
 
 function shortRepoName(remoteUrl: string): string {
@@ -529,4 +696,94 @@ function compactJson(v: unknown): string {
   } catch {
     return String(v)
   }
+}
+
+function ThreadRail({
+  threads,
+  activeThreadId,
+  onNew,
+  onSwitch,
+  onDelete,
+  error,
+  disabled,
+}: {
+  threads: readonly ChatThreadMeta[]
+  activeThreadId: string
+  onNew: () => void
+  onSwitch: (threadId: string) => void
+  onDelete: (threadId: string) => void
+  error: string | null
+  disabled: boolean
+}) {
+  return (
+    <aside className="ab-thread-rail" aria-label="Conversations">
+      <div className="ab-thread-rail-head">
+        <span>Conversations</span>
+        <span>{threads.length}</span>
+      </div>
+      <button
+        type="button"
+        className="ab-thread-rail-new"
+        onClick={onNew}
+        disabled={disabled}
+      >
+        <PlusIcon strokeWidth={2.4} />
+        New conversation
+      </button>
+      {error && <div className="ab-thread-rail-error">{error}</div>}
+      {threads.length === 0 && !error && (
+        <div className="ab-thread-rail-empty">
+          No past conversations yet. Send a message to start one.
+        </div>
+      )}
+      {threads.map((t) => (
+        <button
+          type="button"
+          key={t.threadId}
+          className={`ab-thread-row${t.threadId === activeThreadId ? ' is-active' : ''}`}
+          onClick={() => onSwitch(t.threadId)}
+          disabled={disabled && t.threadId !== activeThreadId}
+        >
+          <span className="ab-thread-row-title">
+            {t.title ?? 'Untitled'}
+          </span>
+          <span className="ab-thread-row-meta">
+            {t.messageCount} msg · {formatRelativeShort(t.updatedAt)}
+          </span>
+          <span
+            role="button"
+            tabIndex={0}
+            className="ab-thread-row-delete"
+            aria-label="Delete conversation"
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete(t.threadId)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                e.stopPropagation()
+                onDelete(t.threadId)
+              }
+            }}
+          >
+            <TrashIcon />
+          </span>
+        </button>
+      ))}
+    </aside>
+  )
+}
+
+function formatRelativeShort(ts: number): string {
+  if (Number.isNaN(ts)) return ''
+  const delta = Date.now() - ts
+  if (delta < 60_000) return 'now'
+  const m = Math.floor(delta / 60_000)
+  if (m < 60) return `${m}m`
+  const h = Math.floor(m / 60)
+  if (h < 24) return `${h}h`
+  const d = Math.floor(h / 24)
+  if (d < 30) return `${d}d`
+  return `${Math.floor(d / 30)}mo`
 }
