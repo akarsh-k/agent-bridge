@@ -18,5 +18,36 @@ export default defineConfig([
     languageOptions: {
       globals: globals.browser,
     },
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        {
+          name: 'alert',
+          message: 'Use the toast store (ui/toast-store) instead.',
+        },
+        {
+          name: 'confirm',
+          message: 'Use confirmDialog from ui/dialog-store instead.',
+        },
+        {
+          name: 'prompt',
+          message: 'Use a Sheet or Dialog primitive instead.',
+        },
+      ],
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "JSXOpeningElement[name.name='select']",
+          message: 'Use the Dropdown primitive (ui/dropdown) instead of native <select>.',
+        },
+      ],
+    },
+  },
+  {
+    files: ['src/ui/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-globals': 'off',
+      'no-restricted-syntax': 'off',
+    },
   },
 ])

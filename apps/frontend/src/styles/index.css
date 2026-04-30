@@ -1,19 +1,16 @@
 /* =============================================================================
    Shared style entry. Imports load in cascade order:
-   1) tokens        — CSS custom properties (dark + light schemes).
-   2) reset         — box-sizing, base typography, body background, scrollbar.
-   3) app-shell     — grid/flex scaffolding for the workspace layout.
-   4) react-flow    — canvas-level overrides for the React Flow chrome.
-   5) shared-node   — the `.node` card base class + per-kind glyph colours.
-   6) primitives    — badges, fields, buttons, banners, overlays, utilities.
-
-   Component-specific styling lives next to the component in its folder
-   (eg. `components/layout/top-bar/index.css`).
+   1) tokens      — CSS custom properties (dark + light schemes).
+   2) reset       — box-sizing, base typography, body background, scrollbars.
+   3) react-flow  — canvas-level overrides for the React Flow graph modal.
+   4) primitives  — fields, buttons, banners, overlay scaffolding shared
+                    across primitives.
+   5) shell       — sidebar/topbar/page-header chrome + most feature
+                    component styles. Token-driven, no inline styles.
 ============================================================================= */
 
 @import './tokens.css';
 @import './reset.css';
-@import './app-shell.css';
 @import './react-flow.css';
-@import './shared-node.css';
 @import './primitives.css';
+@import './shell.css';

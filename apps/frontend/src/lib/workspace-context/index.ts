@@ -25,19 +25,25 @@ import type {
   AllowlistEntry,
   AllowlistEntryResponse,
   AttachRepoInput,
+  AttachRepoUpdateInput,
   AttachedRepoResponse,
   LlmProviderCreateInput,
   LlmProviderResponse,
+  LlmProviderUpdateInput,
   McpConnectionCreateInput,
   McpConnectionResponse,
   McpConnectionUpdateInput,
   RepoCreateInput,
+  RepoEdgeCreateInput,
   RepoEdgeResponse,
   RepoResponse,
+  RepoUpdateInput,
   SkillCreateInput,
   SkillResponse,
+  SkillUpdateInput,
   ToolCreateInput,
   ToolResponse,
+  ToolUpdateInput,
 } from '@agent-bridge/shared'
 
 export type WorkspaceStatus = 'loading' | 'ready' | 'error'
@@ -78,14 +84,37 @@ export interface WorkspaceContextValue {
     agentId: string,
     input: SkillCreateInput,
   ) => Promise<SkillResponse>
+  patchSkill: (
+    agentId: string,
+    skillId: string,
+    patch: SkillUpdateInput,
+  ) => Promise<SkillResponse>
+  removeSkill: (agentId: string, skillId: string) => Promise<void>
   createTool: (
     agentId: string,
     input: ToolCreateInput,
   ) => Promise<ToolResponse>
+  patchTool: (
+    agentId: string,
+    toolId: string,
+    patch: ToolUpdateInput,
+  ) => Promise<ToolResponse>
+  removeTool: (agentId: string, toolId: string) => Promise<void>
   attachRepo: (
     agentId: string,
     input: AttachRepoInput,
   ) => Promise<AttachedRepoResponse>
+  patchAttachedRepo: (
+    agentId: string,
+    repoId: string,
+    patch: AttachRepoUpdateInput,
+  ) => Promise<AttachedRepoResponse>
+  detachRepo: (agentId: string, repoId: string) => Promise<void>
+  createRepoEdge: (
+    agentId: string,
+    input: RepoEdgeCreateInput,
+  ) => Promise<RepoEdgeResponse>
+  removeRepoEdge: (agentId: string, edgeId: string) => Promise<void>
 
   // Shared-resource mutations (net-new rows usable from any quick-add picker)
   createRepo: (
@@ -106,6 +135,13 @@ export interface WorkspaceContextValue {
     id: string,
     models: LlmProviderResponse['models'],
   ) => void
+  patchLlmProvider: (
+    id: string,
+    patch: LlmProviderUpdateInput,
+  ) => Promise<LlmProviderResponse>
+  removeLlmProvider: (id: string) => Promise<void>
+  patchRepo: (id: string, patch: RepoUpdateInput) => Promise<RepoResponse>
+  removeRepo: (id: string) => Promise<void>
   createMcpConnection: (
     input: McpConnectionCreateInput,
   ) => Promise<McpConnectionResponse>

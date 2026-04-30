@@ -155,13 +155,18 @@ interface UseChatInput {
 export function useChat(input: UseChatInput): UseChatResult {
   const { agentId } = input
 
-  // Per-agent state. Switching agents blows the conversation away — the
-  // next agent gets a fresh thread, message list, and run subscription.
-  // This is intentional for 3e; 3g may persist threads and let us
-  // restore them on reselect.
+  // Per-agent persistence. We keep the thread id + the rendered
+  // message list in localStorage keyed by agent so the user can
+  // reload the page (or come back tomorrow) and see the conversation
+  // where they left it. Memory-enabled agents also benefit because
+  // the same thread id keeps Mastra's server-side history aligned.
   const [agentKey, setAgentKey] = useState<string | null>(agentId)
-  const [threadId, setThreadId] = useState(() => crypto.randomUUID())
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [threadId, setThreadId] = useState(() =>
+    loadPersistedThreadId(agentId) ?? crypto.randomUUID(),
+  )
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    loadPersistedMessages(agentId),
+  )
   const [activeRunId, setActiveRunId] = useState<string | null>(null)
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
@@ -171,12 +176,21 @@ export function useChat(input: UseChatInput): UseChatResult {
   // single-frame flash you get if you reset inside an effect.
   if (agentKey !== agentId) {
     setAgentKey(agentId)
-    setThreadId(crypto.randomUUID())
-    setMessages([])
+    setThreadId(loadPersistedThreadId(agentId) ?? crypto.randomUUID())
+    setMessages(loadPersistedMessages(agentId))
     setActiveRunId(null)
     setSending(false)
     setSendError(null)
   }
+
+  // Persist whenever thread / messages change. Skip when we're mid-
+  // stream so we don't pay the cost on every token frame; the next
+  // commit (after the run terminates) writes the final state.
+  useEffect(() => {
+    if (!agentId) return
+    if (activeRunId) return
+    persistThread(agentId, threadId, messages)
+  }, [agentId, activeRunId, threadId, messages])
 
   const streamId = activeRunId ? runStreamId(activeRunId) : null
   const { connected, events } = useSSE(streamId, { cap: 600 })
@@ -313,10 +327,12 @@ export function useChat(input: UseChatInput): UseChatResult {
 
   const resetThread = useCallback(() => {
     if (activeRunId || sending) return
-    setThreadId(crypto.randomUUID())
+    const fresh = crypto.randomUUID()
+    setThreadId(fresh)
     setMessages([])
     setSendError(null)
-  }, [activeRunId, sending])
+    if (agentId) persistThread(agentId, fresh, [])
+  }, [activeRunId, sending, agentId])
 
   return {
     messages,
@@ -583,5 +599,67 @@ function applyRunFinished(
     finishReason: payload.finishReason,
     durationMs: payload.durationMs,
     ...(payload.usage ? { usage: payload.usage } : {}),
+  }
+}
+
+// ─── Persistence ─────────────────────────────────────────────────────────
+
+const STORAGE_PREFIX = 'ab.chat:'
+const MAX_PERSISTED = 80
+
+function persistKey(agentId: string): string {
+  return `${STORAGE_PREFIX}${agentId}`
+}
+
+interface Persisted {
+  v: 1
+  threadId: string
+  messages: ChatMessage[]
+}
+
+function loadPersisted(agentId: string | null): Persisted | null {
+  if (!agentId) return null
+  try {
+    const raw = localStorage.getItem(persistKey(agentId))
+    if (!raw) return null
+    const data = JSON.parse(raw) as Partial<Persisted>
+    if (
+      data &&
+      data.v === 1 &&
+      typeof data.threadId === 'string' &&
+      Array.isArray(data.messages)
+    ) {
+      return data as Persisted
+    }
+  } catch {
+    /* localStorage disabled / quota / corrupted JSON — ignore */
+  }
+  return null
+}
+
+function loadPersistedThreadId(agentId: string | null): string | null {
+  return loadPersisted(agentId)?.threadId ?? null
+}
+
+function loadPersistedMessages(agentId: string | null): ChatMessage[] {
+  return loadPersisted(agentId)?.messages ?? []
+}
+
+function persistThread(
+  agentId: string,
+  threadId: string,
+  messages: ChatMessage[],
+): void {
+  // Trim to the most recent N messages so localStorage doesn't bloat
+  // forever. Newer is at the tail; we slice from the end.
+  const trimmed =
+    messages.length <= MAX_PERSISTED
+      ? messages
+      : messages.slice(messages.length - MAX_PERSISTED)
+  try {
+    const payload: Persisted = { v: 1, threadId, messages: trimmed }
+    localStorage.setItem(persistKey(agentId), JSON.stringify(payload))
+  } catch {
+    /* private mode / quota / JSON cycle — best-effort */
   }
 }

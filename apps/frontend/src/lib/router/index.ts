@@ -61,12 +61,33 @@ export function navigate(to: string, opts: { replace?: boolean } = {}): void {
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-export function matchAgentDetail(path: string): { id: string } | null {
+/**
+ * Recognised sub-tabs for the agent detail page. Anything else
+ * after the id falls through to "not found".
+ */
+const AGENT_TABS = [
+  'build',
+  'chat',
+  'test',
+  'memory',
+  'tools',
+  'bridge',
+  'logs',
+] as const
+export type AgentTabSegment = (typeof AGENT_TABS)[number]
+
+export function matchAgentDetail(
+  path: string,
+): { id: string; tab?: AgentTabSegment } | null {
   const parts = path.split('/').filter(Boolean)
-  if (parts.length !== 2 || parts[0] !== 'agents') return null
+  if (parts.length < 2 || parts.length > 3) return null
+  if (parts[0] !== 'agents') return null
   const id = parts[1]!
   if (!UUID_RE.test(id)) return null
-  return { id }
+  if (parts.length === 2) return { id }
+  const tab = parts[2] as string
+  if (!(AGENT_TABS as ReadonlyArray<string>).includes(tab)) return null
+  return { id, tab: tab as AgentTabSegment }
 }
 
 /**
@@ -76,4 +97,44 @@ export function matchAgentDetail(path: string): { id: string } | null {
 export function matchBridge(path: string): boolean {
   const parts = path.split('/').filter(Boolean)
   return parts.length === 1 && parts[0] === 'bridge'
+}
+
+/** Static path helpers for the new shell. */
+export function matchHome(path: string): boolean {
+  return path === '/' || path === ''
+}
+export function matchAgentsList(path: string): boolean {
+  return path === '/agents' || path === '/agents/'
+}
+export function matchSettings(path: string): boolean {
+  return path === '/settings'
+}
+export function matchLibraryProviders(path: string): boolean {
+  return path === '/library' || path === '/library/' || path === '/library/providers'
+}
+export function matchLibraryRepos(path: string): boolean {
+  return path === '/library/repos'
+}
+export function matchLibraryMcp(path: string): boolean {
+  return path === '/library/mcp'
+}
+
+/** Match the OAuth callback route. Pure-static path; query carries the
+ *  upstream callback params which are forwarded by postMessage. */
+export function matchOAuthCallback(path: string): boolean {
+  return path === '/oauth/callback'
+}
+
+/** Match `/library/{providers,repos,mcp}/<uuid>` and return id + section. */
+export function matchLibraryDetail(
+  path: string,
+): { section: 'providers' | 'repos' | 'mcp'; id: string } | null {
+  const parts = path.split('/').filter(Boolean)
+  if (parts.length !== 3 || parts[0] !== 'library') return null
+  const [, section, id] = parts as [string, string, string]
+  if (section !== 'providers' && section !== 'repos' && section !== 'mcp') {
+    return null
+  }
+  if (!UUID_RE.test(id)) return null
+  return { section, id }
 }

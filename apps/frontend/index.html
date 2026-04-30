@@ -4,7 +4,28 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
+    <title>Agent Bridge</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <script>
+      // Synchronous theme bootstrap — runs before React hydrates so
+      // there's no flash of wrong theme. Reads localStorage; falls
+      // through to OS preference when no explicit choice is set.
+      (function () {
+        try {
+          var t = localStorage.getItem('ab.theme')
+          if (t === 'light' || t === 'dark') {
+            document.documentElement.dataset.theme = t
+          }
+        } catch (e) {
+          /* private mode etc — fall through */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

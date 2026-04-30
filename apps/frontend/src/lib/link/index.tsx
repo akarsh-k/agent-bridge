@@ -7,14 +7,18 @@
  * Vite's react-refresh plugin doesn't complain about mixed exports.
  */
 
-import { useCallback, type AnchorHTMLAttributes, type MouseEvent } from 'react'
+import {
+  forwardRef,
+  useCallback,
+  type AnchorHTMLAttributes,
+  type MouseEvent,
+} from 'react'
 import { navigate } from '../router'
 
-export function Link({
-  to,
-  onClick,
-  ...rest
-}: AnchorHTMLAttributes<HTMLAnchorElement> & { to: string }) {
+export const Link = forwardRef<
+  HTMLAnchorElement,
+  AnchorHTMLAttributes<HTMLAnchorElement> & { to: string }
+>(function Link({ to, onClick, ...rest }, ref) {
   const handleClick = useCallback(
     (e: MouseEvent<HTMLAnchorElement>) => {
       onClick?.(e)
@@ -34,5 +38,5 @@ export function Link({
     },
     [to, onClick, rest.target],
   )
-  return <a {...rest} href={to} onClick={handleClick} />
-}
+  return <a ref={ref} {...rest} href={to} onClick={handleClick} />
+})

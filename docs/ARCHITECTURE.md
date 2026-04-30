@@ -551,3 +551,278 @@ See `docs/PLAN.md` Phase 7 for the full migration.
 Type naming convention enforced by code review: agent-side types live under
 `@agent-bridge/shared/domain` prefixed `Tool*` / `Mcp*`; bridge-side types
 (added in Phase 5) live under the same module prefixed `BridgeTool*`.
+
+## 9. Frontend architecture (`apps/frontend`)
+
+### 9.1 Information architecture
+
+The IA mirrors a modern VPS / cloud-platform console (DigitalOcean,
+Vercel, Render). Two clusters of routes:
+
+- **`/agents/*`** — *services you've built* (DO's Droplets / Apps).
+- **`/library/*`** — *raw materials you've registered with the platform*
+  (DO's account-level inventory): LLM providers, repos, MCP connections.
+
+Plus three top-level utilities: `/` (home / onboarding), `/bridge`
+(platform-wide live dashboard), and `/settings`.
+
+The split keeps the user oriented: they always know whether they're
+configuring a *service* (`/agents/<id>/build`) or curating an
+*ingredient* (`/library/providers/<id>`). The sidebar groups routes
+under `NAVIGATE`, `LIBRARY`, `SYSTEM` so this mental model stays visible.
+
+```
+/                                Home (overview / onboarding)
+/agents                          All agents — list view
+/agents/:id                      Agent detail (default tab: Build)
+/agents/:id/chat                 Chat tab — ask the agent questions
+/agents/:id/memory               Memory tab — long-term facts
+/agents/:id/tools                Bridge tools tab — authored fns
+/agents/:id/logs                 Logs tab — all agent activity
+/agents/:id/bridge               Per-agent IDE snippet + run history
+                                 (`/test` is kept as alias → `/chat`)
+/library                         Library home (redirects to providers)
+/library/providers               LLM providers — list
+/library/providers/:id           LLM provider detail
+/library/repos                   Repositories — list
+/library/repos/:id               Repo detail (clone/index/wiki/graph)
+/library/mcp                     MCP connections — list
+/library/mcp/:id                 MCP connection detail
+/bridge                          Cross-agent IDE bridge dashboard
+/settings                        Master key, data root, theme
+```
+
+**Why no node-graph canvas as a primary surface.** The user spends 95%
+of their time in *forms* (system prompts, model picker, MCP allowlist,
+bridge tool authoring) and *streams* (chat tokens, run logs, repo-job
+progress). A canvas optimises for *relationships*; this app optimises
+for *configuration + observation*. Each agent's resources are surfaced
+as structured sections on its Build page — the list IS the graph.
+
+The repo knowledge-graph modal (`features/repo-graph/`) keeps React
+Flow + dagre because it renders gitnexus's actual graph output. It is
+code-split via `lazy()` so the dep cost is paid only on demand.
+
+### 9.2 File layout
+
+```
+apps/frontend/src/
+  app/                    # routes + per-route layouts
+    layout.tsx            # shell: sidebar + topbar + page slot
+    home/page.tsx
+    agents/
+      page.tsx            # /agents
+      [id]/
+        page.tsx          # tab dispatcher (build/chat/memory/tools/bridge/logs)
+        bridge/page.tsx
+        test/             # legacy alias → chat
+    library/
+      _chrome/            # shared library shell
+      providers/{page.tsx, [id]/page.tsx}
+      repos/{page.tsx, [id]/page.tsx}
+      mcp/{page.tsx, [id]/page.tsx}
+    bridge/page.tsx
+    settings/page.tsx
+    oauth/                # MCP OAuth callback page
+    _chrome/              # nav-rail, top-bar, page-header, stub-page
+    _dev/                 # /__ui primitive preview
+
+  ui/                     # design system primitives (no business logic)
+    button, dropdown, dialog, sheet, tabs, pill, toast,
+    tooltip, command-palette, context-menu, row-menu,
+    brand-glyph, bridge-row, markdown, empty, icons, …
+
+  features/               # composite, business-aware components
+    onboarding/                  # first-run checklist + dashboard hero
+    agent-builder/               # Build tab — identity, prompt, model,
+                                 # repos, tools, MCP allowlist
+    agent-test/                  # Chat tab — chat, tool-call card,
+                                 # mention popover, activity rail
+    agent-memory/                # Memory tab
+    agent-tools/                 # Tools tab — bridge tool authoring
+    agent-bridge/                # Bridge tab — IDE snippet + runs
+    agent-bridge-tools/          # Bridge tool listing inside agent
+    agent-logs/                  # Logs tab — streaming run history
+    library/                     # provider/repo/mcp rows + editors
+    repo-graph/                  # graph-modal.tsx + graph-flow-node.tsx
+    bridge-dashboard/            # /bridge — cross-agent runs + config
+    settings/                    # master-key + data-root cards
+
+  lib/                    # RPC, hooks, contexts, router
+    rpc/                  # Hono RPC client wrapping every backend route
+    workspace-context/    # split contexts: agents, library, bridge
+    workspace-provider/   # mounts the contexts that the route needs
+    agents-context/, library-context/, bridge-context/
+    sse/                  # SSEProvider — multiplexed per streamId
+    use-sse/              # subscribe-by-streamId hook
+    use-chat/             # streaming chat hook (Mastra runs)
+    router/               # 60-line history-API router + matchers
+    link/                 # <Link> with prefetch-on-hover
+    layout/               # shared layout helpers
+    theme/                # data-theme attribute manager
+    use-default-provider, use-dirty-close,
+    use-drag-reorder, use-sidebar-state,
+    agent-helpers
+
+  styles/
+    tokens.css            # CSS custom properties (dark + light)
+    reset.css             # base typography + body atmosphere
+    primitives.css        # field/button/banner/overlay scaffolding
+    shell.css             # sidebar/topbar/page-header + feature styles
+    react-flow.css        # graph-modal overrides
+    index.css             # cascade entry
+
+  main.tsx                # mounts <AppLayout /> with the cascade entry
+```
+
+### 9.3 Visual identity (steady-state)
+
+**Aesthetic** — modern resource-management dashboard. Closest analogs:
+DigitalOcean (the mental model maps 1:1: Droplet ↔ agent, attached
+database ↔ attached repo, attached volume ↔ MCP connection, SSH
+keys ↔ LLM providers), Vercel, Render, Linear (for tone), Resend
+(for friendly rounding).
+
+Recurring motifs:
+
+- **Generous rounded corners** — cards `--radius-lg` (14 px), modals /
+  hero panels `--radius-xl` (18 px), inputs/buttons `--radius` (10 px),
+  pills full. The eye should never hit a hard 90° corner.
+- **Soft atmosphere** — `body` carries `var(--atmosphere)`, a layered
+  violet+sky radial-gradient with `background-attachment: fixed`. Do
+  not delete it; it is the single biggest warmth signal.
+- **One confident accent** — `--accent-500: #8b5cf6` is the only
+  "click me" colour. Primary buttons may use a subtle
+  `--accent-500 → --accent-400` gradient.
+- **Phosphor pulse** (soft mint dot) is reserved for connected /
+  streaming status only — never on buttons or cards. Aliased to
+  `--success` in tokens.css; semantics: "this is live right now".
+- **Hairlines + soft shadows together.** Cards have a 1 px
+  `--border` rule AND a `--shadow-1` lift.
+
+Explicit non-goals: crosshair corner markers, display serif fonts
+(Fraunces), italic hero copy, two-tone display titles, mono on UI
+labels / eyebrows / body copy, coordinate badges outside log/run tables.
+
+**Typography.** ONE proportional sans (Inter) for everything. Mono
+(JetBrains Mono) only for code, slugs, file paths, model ids, hashes,
+and tabular numerals in run-history. Type scale lives in `tokens.css`
+as `--fs-xs` (11) … `--fs-3xl` (32).
+
+**Tokens.** Both dark and light themes are first-class; values flip
+via `[data-theme]` on `<html>` with `prefers-color-scheme` as the
+fallback. A 7-line bootstrap script in `index.html` reads
+`localStorage['ab.theme']` BEFORE React hydrates so there's no flash.
+Settings exposes a 3-way toggle (System / Light / Dark) — picking
+System clears the override and restores the media-query fallback.
+
+**Token contracts (enforced in code review):**
+
+- Never hardcode a colour literal in component CSS — every value goes
+  through a token. No `#fff`, no `rgba(...)` outside `tokens.css`.
+- Pick by intent, not hue: `--text-dim` not `--gray-300`.
+- Hairlines, glows, and shadows are theme-aware — go through the
+  token (`--border`, `--shadow-1`, `--shadow-glow`).
+- Inline SVG uses `currentColor` so glyphs invert cleanly.
+
+### 9.4 Cross-cutting decisions
+
+**Routing.** Custom history-API router (`lib/router/`, ~60 LOC).
+Matchers: `matchAgentDetail` (returns `{id, tab?}` for `/agents/:id/:tab`),
+`matchLibraryDetail`, `matchBridge`. `<Link>` does prefetch-on-hover.
+No React Router — the dynamic surface is too small to justify the dep.
+
+**State / data fetching.** Three split providers, mounted on demand by
+`workspace-provider` based on the active route:
+
+- `AgentsProvider` — agents list + per-agent resources. Mounted under
+  `/agents/*` and `/`.
+- `LibraryProvider` — providers + repos + mcps. Mounted under
+  `/library/*` and `/agents/*` (attach pickers need it).
+- `BridgeProvider` — bridge config + run history. Mounted under
+  `/bridge` and `/agents/:id/bridge`.
+
+Each exposes read state + mutators; SWR-style "fetch on mount, mutate
+locally, refetch on focus". No external query layer.
+
+**SSE.** Centralised in `SSEProvider` that multiplexes by `streamId`
+(browsers cap at 6 concurrent EventSources per origin). Consumers
+subscribe via `useStream(streamId)`; the provider ref-counts and
+closes the connection at zero subscribers.
+
+**Theming.** See §9.3 — tokens on `:root` (dark) and `[data-theme='light']`,
+plus a `@media (prefers-color-scheme: light)` block that re-declares
+the light values *only when no dataset attribute is set*. Explicit
+user choice always wins.
+
+**Accessibility floor.** Every interactive element keyboard-reachable.
+`aria-current="page"` on the active nav. Modal traps focus and
+restores it. Form errors linked via `aria-describedby`. Skip-to-content
+link in the shell. `@media (prefers-reduced-motion: reduce)` cuts every
+transition to 0 ms and disables the live phosphor pulse.
+
+### 9.5 No browser-native UI
+
+OS-level chrome (`alert()` / `confirm()` / native `<select>` /
+`title=""` tooltips) shatters the design language the moment it opens.
+Every native overlay or chooser is replaced by a custom primitive in
+`ui/`:
+
+| Native API           | Custom replacement                       |
+| -------------------- | ---------------------------------------- |
+| `window.alert(msg)`  | `toast.error(msg)` from `ui/toast-store` |
+| `window.confirm(msg)`| `confirmDialog(...)` from `ui/dialog-store` |
+| `window.prompt(msg)` | `Sheet` or `Dialog` primitive             |
+| `<select>`           | `Dropdown` primitive (`ui/dropdown`)      |
+| `title=""` tooltip   | `Tooltip` primitive (`ui/tooltip`, portalled to `document.body` to escape backdrop-filter containing blocks) |
+| Native context menu  | `ContextMenu` primitive                   |
+| Default scrollbars   | Themed scrollbars in `primitives.css`     |
+
+**Lint enforcement** — `apps/frontend/eslint.config.js` has
+`no-restricted-globals` blocking `alert` / `confirm` / `prompt` and
+`no-restricted-syntax` blocking JSX `<select>`. The rule is disabled
+under `src/ui/**` so the primitives can use the hidden shims.
+
+### 9.6 No inline styles for static values
+
+Static / theme-token-derived styling lives in CSS classes. Inline
+`style={{...}}` is allowed only when:
+
+1. The value depends on a runtime measurement
+   (`getBoundingClientRect`, mouse coords, drag transforms).
+2. It's a single dynamic prop pass-through (`<Dialog maxWidth={n}>`).
+3. The value is genuinely per-instance and a class-based variant
+   would explode (e.g. dragged item's transform during a drag).
+
+Not enforced by lint (false-positive rate is too high) — enforced in
+code review.
+
+### 9.7 Save / success / failure feedback
+
+A consistent feedback pattern, applied everywhere:
+
+| Outcome                          | Mechanism                              |
+| -------------------------------- | -------------------------------------- |
+| Transient success / copy / test  | `toast.success(msg)`                   |
+| Transient failure (dismissable)  | `toast.error(msg)`                     |
+| Persistent failure (demands fix) | `<StatusStrip kind='error'>` inline    |
+| Long-running progress            | live SSE log lines + phosphor dot      |
+| Catastrophic failure             | `confirmDialog(...)` with retry CTA    |
+
+Components NEVER render an ad-hoc inline "saved!" line. The
+`<ToastHost />` and `<DialogHost />` mount once in `app/layout.tsx`.
+
+### 9.8 Build agent invariants
+
+Long-form forms (Build tab — identity, model, prompt) auto-save with
+800 ms debounce; the `SavedAgo` ticker shows "Saved 3s ago" / "Saved
+5m ago". Side-sheet flows (`AttachMcpSheet`, `CreateAgentSheet`,
+provider/repo/mcp editors) wrap their close handler in
+`useDirtyClose` — an in-flight ref guard prevents double-confirm
+races between the sheet's bubble-phase Esc handler and the dialog's
+capture-phase one.
+
+The dialog store (`ui/dialog-store.ts`) replaces `pending` with a
+fresh array reference on resolve (NOT splice) so React's `Object.is`
+check fires and the host re-renders. Mutating in place is a footgun
+that previously left dialogs hanging.

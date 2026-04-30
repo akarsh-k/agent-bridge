@@ -42,19 +42,25 @@ import type {
   AllowlistEntry,
   AllowlistEntryResponse,
   AttachRepoInput,
+  AttachRepoUpdateInput,
   AttachedRepoResponse,
   LlmProviderCreateInput,
   LlmProviderResponse,
+  LlmProviderUpdateInput,
   McpConnectionCreateInput,
   McpConnectionResponse,
   McpConnectionUpdateInput,
   RepoCreateInput,
+  RepoEdgeCreateInput,
   RepoEdgeResponse,
   RepoResponse,
+  RepoUpdateInput,
   SkillCreateInput,
   SkillResponse,
+  SkillUpdateInput,
   ToolCreateInput,
   ToolResponse,
+  ToolUpdateInput,
 } from '@agent-bridge/shared'
 import {
   WorkspaceContext,
@@ -326,6 +332,216 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [],
   )
 
+  const patchSkill = useCallback(
+    async (
+      agentId: string,
+      skillId: string,
+      patch: SkillUpdateInput,
+    ): Promise<SkillResponse> => {
+      const { skill } = await callApi<{ ok: true; skill: SkillResponse }>(
+        rpc.api.agents[':agentId'].skills[':id'].$patch({
+          param: { agentId, id: skillId },
+          json: patch,
+        }),
+      )
+      setAgentResources((prev) => {
+        const cur = prev[agentId]
+        if (!cur) return prev
+        return {
+          ...prev,
+          [agentId]: {
+            ...cur,
+            skills: cur.skills.map((s) => (s.id === skillId ? skill : s)),
+          },
+        }
+      })
+      return skill
+    },
+    [],
+  )
+
+  const patchTool = useCallback(
+    async (
+      agentId: string,
+      toolId: string,
+      patch: ToolUpdateInput,
+    ): Promise<ToolResponse> => {
+      const { tool } = await callApi<{ ok: true; tool: ToolResponse }>(
+        rpc.api.agents[':agentId'].tools[':id'].$patch({
+          param: { agentId, id: toolId },
+          json: patch,
+        }),
+      )
+      setAgentResources((prev) => {
+        const cur = prev[agentId]
+        if (!cur) return prev
+        return {
+          ...prev,
+          [agentId]: {
+            ...cur,
+            tools: cur.tools.map((t) => (t.id === toolId ? tool : t)),
+          },
+        }
+      })
+      return tool
+    },
+    [],
+  )
+
+  const removeSkill = useCallback(
+    async (agentId: string, skillId: string): Promise<void> => {
+      await callApi<{ ok: true }>(
+        rpc.api.agents[':agentId'].skills[':id'].$delete({
+          param: { agentId, id: skillId },
+        }),
+      )
+      setAgentResources((prev) => {
+        const cur = prev[agentId]
+        if (!cur) return prev
+        return {
+          ...prev,
+          [agentId]: {
+            ...cur,
+            skills: cur.skills.filter((s) => s.id !== skillId),
+          },
+        }
+      })
+    },
+    [],
+  )
+
+  const removeTool = useCallback(
+    async (agentId: string, toolId: string): Promise<void> => {
+      await callApi<{ ok: true }>(
+        rpc.api.agents[':agentId'].tools[':id'].$delete({
+          param: { agentId, id: toolId },
+        }),
+      )
+      setAgentResources((prev) => {
+        const cur = prev[agentId]
+        if (!cur) return prev
+        return {
+          ...prev,
+          [agentId]: {
+            ...cur,
+            tools: cur.tools.filter((t) => t.id !== toolId),
+          },
+        }
+      })
+    },
+    [],
+  )
+
+  const createRepoEdge = useCallback(
+    async (
+      agentId: string,
+      input: RepoEdgeCreateInput,
+    ): Promise<RepoEdgeResponse> => {
+      const { edge } = await callApi<{ ok: true; edge: RepoEdgeResponse }>(
+        rpc.api.agents[':agentId']['repo-edges'].$post({
+          param: { agentId },
+          json: input,
+        }),
+      )
+      setAgentResources((prev) => {
+        const cur = prev[agentId]
+        if (!cur) return prev
+        return {
+          ...prev,
+          [agentId]: {
+            ...cur,
+            repoEdges: [...cur.repoEdges, edge],
+          },
+        }
+      })
+      return edge
+    },
+    [],
+  )
+
+  const removeRepoEdge = useCallback(
+    async (agentId: string, edgeId: string): Promise<void> => {
+      await callApi<{ ok: true }>(
+        rpc.api.agents[':agentId']['repo-edges'][':edgeId'].$delete({
+          param: { agentId, edgeId },
+        }),
+      )
+      setAgentResources((prev) => {
+        const cur = prev[agentId]
+        if (!cur) return prev
+        return {
+          ...prev,
+          [agentId]: {
+            ...cur,
+            repoEdges: cur.repoEdges.filter((e) => e.id !== edgeId),
+          },
+        }
+      })
+    },
+    [],
+  )
+
+  const patchAttachedRepo = useCallback(
+    async (
+      agentId: string,
+      repoId: string,
+      patch: AttachRepoUpdateInput,
+    ): Promise<AttachedRepoResponse> => {
+      const { attachment } = await callApi<{
+        ok: true
+        attachment: AttachedRepoResponse
+      }>(
+        rpc.api.agents[':agentId'].repos[':repoId'].$patch({
+          param: { agentId, repoId },
+          json: patch,
+        }),
+      )
+      setAgentResources((prev) => {
+        const cur = prev[agentId]
+        if (!cur) return prev
+        return {
+          ...prev,
+          [agentId]: {
+            ...cur,
+            attachedRepos: cur.attachedRepos.map((a) =>
+              a.repo.id === repoId ? attachment : a,
+            ),
+          },
+        }
+      })
+      return attachment
+    },
+    [],
+  )
+
+  const detachRepo = useCallback(
+    async (agentId: string, repoId: string): Promise<void> => {
+      await callApi<{ ok: true }>(
+        rpc.api.agents[':agentId'].repos[':repoId'].$delete({
+          param: { agentId, repoId },
+        }),
+      )
+      setAgentResources((prev) => {
+        const cur = prev[agentId]
+        if (!cur) return prev
+        return {
+          ...prev,
+          [agentId]: {
+            ...cur,
+            attachedRepos: cur.attachedRepos.filter(
+              (a) => a.repo.id !== repoId,
+            ),
+            // Also drop edges referencing the detached repo.
+            repoEdges: cur.repoEdges.filter(
+              (e) => e.fromRepoId !== repoId && e.toRepoId !== repoId,
+            ),
+          },
+        }
+      })
+    },
+    [],
+  )
+
   const attachRepo = useCallback(
     async (
       agentId: string,
@@ -415,6 +631,90 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     },
     [],
   )
+
+  const patchLlmProvider = useCallback(
+    async (
+      id: string,
+      patch: LlmProviderUpdateInput,
+    ): Promise<LlmProviderResponse> => {
+      const { llmProvider } = await callApi<{
+        ok: true
+        llmProvider: LlmProviderResponse
+      }>(
+        rpc.api['llm-providers'][':id'].$patch({
+          param: { id },
+          json: patch,
+        }),
+      )
+      setTopLevel((prev) => ({
+        ...prev,
+        llmProviders: prev.llmProviders.map((p) =>
+          p.id === id ? llmProvider : p,
+        ),
+      }))
+      return llmProvider
+    },
+    [],
+  )
+
+  const removeLlmProvider = useCallback(async (id: string): Promise<void> => {
+    await callApi<{ ok: true }>(
+      rpc.api['llm-providers'][':id'].$delete({ param: { id } }),
+    )
+    setTopLevel((prev) => ({
+      ...prev,
+      llmProviders: prev.llmProviders.filter((p) => p.id !== id),
+      // Server cascades agents.llm_provider_id → null. Reflect locally.
+      agents: prev.agents.map((a) =>
+        a.llmProviderId === id
+          ? { ...a, llmProviderId: null, model: null }
+          : a,
+      ),
+    }))
+  }, [])
+
+  const patchRepo = useCallback(
+    async (id: string, patch: RepoUpdateInput): Promise<RepoResponse> => {
+      const { repo } = await callApi<{ ok: true; repo: RepoResponse }>(
+        rpc.api.repos[':id'].$patch({ param: { id }, json: patch }),
+      )
+      setTopLevel((prev) => ({
+        ...prev,
+        repos: prev.repos.map((r) => (r.id === id ? repo : r)),
+      }))
+      return repo
+    },
+    [],
+  )
+
+  const removeRepo = useCallback(async (id: string): Promise<void> => {
+    await callApi<{ ok: true }>(
+      rpc.api.repos[':id'].$delete({ param: { id } }),
+    )
+    setTopLevel((prev) => ({
+      ...prev,
+      repos: prev.repos.filter((r) => r.id !== id),
+    }))
+    // Drop attached-repo entries referencing the deleted repo across all
+    // agents (the FK cascades server-side).
+    setAgentResources((prev) => {
+      let changed = false
+      const next: Record<string, AgentResources> = {}
+      for (const [agentId, bundle] of Object.entries(prev)) {
+        const before = bundle.attachedRepos.length
+        const filtered = bundle.attachedRepos.filter(
+          (a) => a.repo.id !== id,
+        )
+        if (filtered.length === before) {
+          next[agentId] = bundle
+          continue
+        }
+        changed = true
+        next[agentId] = { ...bundle, attachedRepos: filtered }
+      }
+      return changed ? next : prev
+    })
+  }, [])
 
   const createMcpConnection = useCallback(
     async (
@@ -608,11 +908,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       removeAgent,
       getAgent,
       createSkill,
+      patchSkill,
+      removeSkill,
       createTool,
+      patchTool,
+      removeTool,
       attachRepo,
+      patchAttachedRepo,
+      detachRepo,
+      createRepoEdge,
+      removeRepoEdge,
       createRepo,
       createLlmProvider,
+      patchLlmProvider,
+      removeLlmProvider,
       patchLlmProviderModels,
+      patchRepo,
+      removeRepo,
       createMcpConnection,
       patchMcpConnection,
       removeMcpConnection,
@@ -630,11 +942,23 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       removeAgent,
       getAgent,
       createSkill,
+      patchSkill,
+      removeSkill,
       createTool,
+      patchTool,
+      removeTool,
       attachRepo,
+      patchAttachedRepo,
+      detachRepo,
+      createRepoEdge,
+      removeRepoEdge,
       createRepo,
       createLlmProvider,
+      patchLlmProvider,
+      removeLlmProvider,
       patchLlmProviderModels,
+      patchRepo,
+      removeRepo,
       createMcpConnection,
       patchMcpConnection,
       removeMcpConnection,
