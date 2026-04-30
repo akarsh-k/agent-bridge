@@ -67,12 +67,20 @@ function Inner({ onClose }: { onClose: () => void }) {
     if (scopedAgent) {
       out.push(
         {
-          id: 'agent-build',
+          id: 'agent-configure',
           group: `On ${scopedAgent.name}`,
-          label: 'Open Build tab',
-          hint: 'configure',
+          label: 'Open Configure tab',
+          hint: 'identity, prompt, model, memory',
           Icon: AgentsIcon,
           run: () => navigate(`/agents/${scopedAgent.id}`),
+        },
+        {
+          id: 'agent-resources',
+          group: `On ${scopedAgent.name}`,
+          label: 'Open Resources tab',
+          hint: 'repos, MCPs, skills, tools',
+          Icon: AgentsIcon,
+          run: () => navigate(`/agents/${scopedAgent.id}/resources`),
         },
         {
           id: 'agent-chat',

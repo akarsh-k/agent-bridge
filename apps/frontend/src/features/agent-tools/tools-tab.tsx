@@ -80,14 +80,32 @@ export function ToolsTab({ agentId }: { agentId: string }) {
   return (
     <div>
       <div className="ab-card ab-card-pad ab-form-section">
-        <div className="ab-section-head">
-          <div className="ab-section-title">Agent tools</div>
-          <div className="ab-section-sub">
-            Internal tools the agent can call during a run — HTTP requests,
-            shell commands, Mastra built-ins. The LLM picks these mid-turn
-            via tool-calls. (For tools your IDE calls into the agent, see
-            the <strong>Bridge tools</strong> tab.)
+        <div
+          className="ab-section-head"
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div className="ab-section-title">Agent tools</div>
+            <div className="ab-section-sub">
+              {tools.length} attached · internal tools the agent can call
+              during a run (HTTP, shell, Mastra built-ins). For tools the
+              IDE calls into the agent, see the{' '}
+              <strong>Bridge tools</strong> tab.
+            </div>
           </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            leading={<PlusIcon strokeWidth={2.4} />}
+            onClick={openCreate}
+          >
+            Add tool
+          </Button>
         </div>
 
         {tools.length === 0 ? (
@@ -186,15 +204,6 @@ export function ToolsTab({ agentId }: { agentId: string }) {
                   </div>
                 )
               })}
-            </div>
-            <div style={{ marginTop: 14 }}>
-              <Button
-                variant="secondary"
-                leading={<PlusIcon strokeWidth={2.4} />}
-                onClick={openCreate}
-              >
-                Add tool
-              </Button>
             </div>
           </>
         )}

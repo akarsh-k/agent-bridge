@@ -5,9 +5,11 @@
  */
 
 import { lazy, Suspense, useEffect, useState } from 'react'
+import { agentStreamId } from '@agent-bridge/shared'
 import { useWorkspace } from '../../../lib/workspace-context'
 import { ApiError, exportAgentBundle, importAgentBundle } from '../../../lib/rpc'
 import { navigate } from '../../../lib/router'
+import { useSSE } from '../../../lib/use-sse'
 import { Button } from '../../../ui/button'
 import { Pill } from '../../../ui/pill'
 import { Tabs, type TabSpec } from '../../../ui/tabs'
@@ -15,24 +17,22 @@ import { ArrowRightIcon, PlayIcon } from '../../../ui/icons'
 import { agentGlyphKind } from '../../../lib/agent-helpers'
 import { toast } from '../../../ui/toast-store'
 import { confirmDialog } from '../../../ui/dialog-store'
-import { BuildTab } from '../../../features/agent-builder/build-tab'
-
-// Code-split the heavier tabs: chat pulls in the run state machine +
-// SSE plumbing, logs subscribes to a per-agent stream, memory carries
-// its own form.
+// Code-split the heavier tabs: configure pulls in the build / memory
+// forms, resources pulls in the attached-resources panel + tools tab,
+// chat pulls in the run state machine + SSE plumbing.
+const ConfigureTab = lazy(() =>
+  import('../../../features/agent-configure/configure-tab').then((m) => ({
+    default: m.ConfigureTab,
+  })),
+)
+const ResourcesTab = lazy(() =>
+  import('../../../features/agent-resources/resources-tab').then((m) => ({
+    default: m.ResourcesTab,
+  })),
+)
 const ChatTab = lazy(() =>
   import('../../../features/agent-test/chat-tab').then((m) => ({
     default: m.ChatTab,
-  })),
-)
-const MemoryTab = lazy(() =>
-  import('../../../features/agent-memory/memory-tab').then((m) => ({
-    default: m.MemoryTab,
-  })),
-)
-const ToolsTab = lazy(() =>
-  import('../../../features/agent-tools/tools-tab').then((m) => ({
-    default: m.ToolsTab,
   })),
 )
 const BridgeToolsTab = lazy(() =>
@@ -46,57 +46,93 @@ const LogsTab = lazy(() =>
   })),
 )
 
-type TabId =
-  | 'build'
-  | 'chat'
-  | 'memory'
-  | 'tools'
-  | 'bridge'
-  | 'logs'
+type TabId = 'configure' | 'resources' | 'chat' | 'bridge' | 'logs'
 
 const TABS: ReadonlyArray<TabSpec<TabId>> = [
-  { value: 'build', label: 'Build' },
+  { value: 'configure', label: 'Configure' },
+  { value: 'resources', label: 'Resources' },
   { value: 'chat', label: 'Chat' },
-  { value: 'memory', label: 'Memory' },
-  { value: 'tools', label: 'Tools' },
-  { value: 'bridge', label: 'Bridge tools' },
+  { value: 'bridge', label: 'Bridge' },
   { value: 'logs', label: 'Logs' },
 ]
+
+// Legacy URL aliases — `/agents/<id>/build` etc. still work but map
+// to the new tab they got folded into.
+const TAB_ALIASES: Record<string, TabId> = {
+  build: 'configure',
+  memory: 'configure',
+  tools: 'resources',
+  test: 'chat',
+}
+function normalizeTab(raw: string | undefined): TabId {
+  if (!raw) return 'configure'
+  if ((TABS as ReadonlyArray<{ value: string }>).some((t) => t.value === raw)) {
+    return raw as TabId
+  }
+  return TAB_ALIASES[raw] ?? 'configure'
+}
 
 export function AgentDetailPage({
   id,
   initialTab,
 }: {
   id: string
-  initialTab?: TabId
+  /** Raw URL segment — may be a legacy alias like 'build' / 'memory'
+   * which `normalizeTab` folds into the corresponding active tab. */
+  initialTab?: string
 }) {
+  const initial = normalizeTab(initialTab)
   const { agents, removeAgent } = useWorkspace()
   const agent = agents.find((a) => a.id === id)
   const [menuOpen, setMenuOpen] = useState(false)
   const [, setBusy] = useState(false)
+
+  // Hoist the per-agent SSE subscription up to the agent detail page
+  // so it stays alive across tab switches. Without this, switching to
+  // the Logs tab would open a fresh subscription that misses every
+  // event fired while the user was on Build / Chat / etc — the
+  // pre-rewrite App.tsx held this subscription at the shell level
+  // and passed events into the Activity panel as props; the rewrite
+  // accidentally moved it down into LogsTab and lost the persistence.
+  const agentEvents = useSSE(agentStreamId(id), { cap: 400 })
   // Reset the active tab whenever we navigate to a different agent
   // OR the URL's tab segment changes — "adjust state based on
   // props" pattern. Tab clicks also write to the URL via
   // `setTabAndUrl` below so each tab is bookmarkable / linkable.
-  const [tab, setTab] = useState<TabId>(initialTab ?? 'build')
+  const [tab, setTab] = useState<TabId>(initial)
   const [tabAgent, setTabAgent] = useState(id)
-  const [seededTab, setSeededTab] = useState(initialTab ?? 'build')
+  const [seededTab, setSeededTab] = useState<string | undefined>(initialTab)
   if (tabAgent !== id) {
     setTabAgent(id)
-    setTab(initialTab ?? 'build')
-    setSeededTab(initialTab ?? 'build')
-  } else if (initialTab && initialTab !== seededTab) {
+    setTab(initial)
     setSeededTab(initialTab)
-    setTab(initialTab)
+  } else if (initialTab !== seededTab) {
+    setSeededTab(initialTab)
+    setTab(initial)
   }
   const setTabAndUrl = (next: TabId) => {
     setTab(next)
     setSeededTab(next)
-    const path = next === 'build' ? `/agents/${id}` : `/agents/${id}/${next}`
+    const path =
+      next === 'configure' ? `/agents/${id}` : `/agents/${id}/${next}`
     if (window.location.pathname !== path) {
       navigate(path, { replace: true })
     }
   }
+
+  // If the user landed on a legacy URL (`/agents/<id>/build`), rewrite
+  // to the canonical one for the new tab so the URL bar matches.
+  useEffect(() => {
+    if (initialTab && TAB_ALIASES[initialTab]) {
+      const target = TAB_ALIASES[initialTab]
+      const path =
+        target === 'configure' ? `/agents/${id}` : `/agents/${id}/${target}`
+      if (window.location.pathname !== path) {
+        navigate(path, { replace: true })
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTab])
 
   // Single-key tab shortcuts. Only fire when focus is outside form
   // fields so typing into prompt / chat composers doesn't jump tabs.
@@ -114,11 +150,10 @@ export function AgentDetailPage({
         return
       }
       const map: Record<string, TabId> = {
-        b: 'build',
-        c: 'chat',
-        m: 'memory',
-        t: 'tools',
-        g: 'bridge',
+        c: 'configure',
+        r: 'resources',
+        t: 'chat', // mnemonic: Test
+        b: 'bridge',
         l: 'logs',
       }
       const next = map[e.key.toLowerCase()]
@@ -354,11 +389,14 @@ export function AgentDetailPage({
               className="ab-section-sub"
               style={{ marginTop: 2, fontSize: 12 }}
             >
-              {agent.name} can't run yet. Pick a provider on the Build tab,
-              or add one in Library if you haven't.
+              {agent.name} can't run yet. Pick a provider on the Configure
+              tab, or add one in Library if you haven't.
             </div>
           </div>
-          <Button variant="secondary" onClick={() => setTabAndUrl('build')}>
+          <Button
+            variant="secondary"
+            onClick={() => setTabAndUrl('configure')}
+          >
             Configure
           </Button>
         </div>
@@ -366,20 +404,19 @@ export function AgentDetailPage({
 
       <Tabs value={tab} onChange={setTabAndUrl} tabs={TABS} />
 
-      {tab === 'build' && <BuildTab agentId={agent.id} />}
+      {tab === 'configure' && (
+        <Suspense fallback={<TabSpinner />}>
+          <ConfigureTab agentId={agent.id} />
+        </Suspense>
+      )}
+      {tab === 'resources' && (
+        <Suspense fallback={<TabSpinner />}>
+          <ResourcesTab agentId={agent.id} />
+        </Suspense>
+      )}
       {tab === 'chat' && (
         <Suspense fallback={<TabSpinner />}>
           <ChatTab agentId={agent.id} />
-        </Suspense>
-      )}
-      {tab === 'memory' && (
-        <Suspense fallback={<TabSpinner />}>
-          <MemoryTab agentId={agent.id} />
-        </Suspense>
-      )}
-      {tab === 'tools' && (
-        <Suspense fallback={<TabSpinner />}>
-          <ToolsTab agentId={agent.id} />
         </Suspense>
       )}
       {tab === 'bridge' && (
@@ -389,7 +426,11 @@ export function AgentDetailPage({
       )}
       {tab === 'logs' && (
         <Suspense fallback={<TabSpinner />}>
-          <LogsTab agentId={agent.id} />
+          <LogsTab
+            agentId={agent.id}
+            events={agentEvents.events}
+            connected={agentEvents.connected}
+          />
         </Suspense>
       )}
     </div>

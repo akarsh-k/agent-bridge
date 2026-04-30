@@ -378,9 +378,25 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     throw err
   }
 
+  // Two passes:
+  //  (1) Append the repo inventory (label + URL + per-repo description)
+  //      so the LLM knows which repos exist and what each is for.
+  //  (2) Append the operator-defined repo edges so the LLM understands
+  //      how those repos relate to each other ("frontend uses backend",
+  //      "backend deploys to infra"). Skipped entirely when fewer than
+  //      two repos are attached — `repo_edges_distinct_repos` requires
+  //      `from_repo_id <> to_repo_id`, so edges are structurally
+  //      impossible below that threshold and we can avoid the query.
   const instructionsWithRepos = mountedGitnexus
     ? appendGitnexusRepoHint(instructions, mountedGitnexus)
     : instructions
+  const attachedRepoCount = mountedGitnexus
+    ? mountedGitnexus.meta.repoCount
+    : await countReadyRepos(db, agentId)
+  const instructionsWithEdges =
+    attachedRepoCount >= 2
+      ? await appendRepoEdges(instructionsWithRepos, db, agentId)
+      : instructionsWithRepos
 
   const mergedTools = mergeToolDicts(mountedGitnexus, mountedExternal)
 
@@ -388,7 +404,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     id: agentRow.id,
     name: agentRow.name,
     description: agentRow.description ?? undefined,
-    instructions: instructionsWithRepos,
+    instructions: instructionsWithEdges,
     model: modelConfig,
     ...(memory ? { memory } : {}),
     ...(mergedTools ? { tools: mergedTools } : {}),
@@ -396,13 +412,11 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
 
   const gitnexusMeta = mountedGitnexus
     ? mountedGitnexus.meta
-    : emptyGitnexusMountMeta(
-        // `emptyGitnexusMountMeta` still reports the repo count so the
-        // UI can say "1 repo attached, MCP off" when the caller used
-        // `disableGitnexus`. Reuse the helper's query rather than
-        // re-running the join here.
-        await countReadyRepos(db, agentId),
-      )
+    : // `emptyGitnexusMountMeta` still reports the repo count so the
+      // UI can say "1 repo attached, MCP off" when the caller used
+      // `disableGitnexus`. We already computed it for the edges-skip
+      // gate above — reuse it instead of running the join again.
+      emptyGitnexusMountMeta(attachedRepoCount)
 
   const externalMcpsMeta = mountedExternal
     ? mountedExternal.meta
@@ -692,8 +706,14 @@ function appendGitnexusRepoHint(
 ): string {
   if (mounted.meta.repoLabels.length === 0) return instructions
 
+  // Per-repo description (if the operator filled in `agent_repos.description`
+  // via the Edit role sheet) appears inline as " — <desc>". Without it the
+  // line is just label + URL#branch.
   const lines = mounted.meta.repoLabels
-    .map((r) => `- ${r.label}  (${r.remoteUrl}#${r.branch})`)
+    .map((r) => {
+      const head = `- ${r.label}  (${r.remoteUrl}#${r.branch})`
+      return r.description ? `${head} — ${r.description}` : head
+    })
     .join('\n')
 
   const count = mounted.meta.repoLabels.length
@@ -718,6 +738,107 @@ function appendGitnexusRepoHint(
   ].join('\n')
 
   return instructions.length > 0 ? `${instructions}\n\n${block}` : block
+}
+
+/**
+ * Append a `## Repo relationships` block to the instructions describing
+ * how the agent's attached repos relate to each other (the operator
+ * fills these in via the "Repo relations" card on the Resources tab,
+ * stored in `repo_edges`).
+ *
+ * Each edge renders as `- <fromLabel> <connector> <toLabel> [— <description>]`,
+ * where the labels prefer `agent_repos.role` (so they match the inventory
+ * block above) and fall back to a short URL form when role is unset.
+ *
+ * No-op when the agent has no edges or fewer than two attached repos
+ * (in which case there can't be any meaningful edges anyway). Failures
+ * are non-fatal — we log and return the instructions unchanged so an
+ * unrelated DB hiccup can't block agent construction.
+ */
+async function appendRepoEdges(
+  instructions: string,
+  db: AgentBridgeDb,
+  agentId: string,
+): Promise<string> {
+  let edges: Array<{
+    connector: string
+    description: string | null
+    fromRepoId: string
+    toRepoId: string
+  }>
+  let labelByRepoId: Map<string, string>
+  try {
+    edges = await db.db
+      .select({
+        connector: schema.repoEdges.connector,
+        description: schema.repoEdges.description,
+        fromRepoId: schema.repoEdges.fromRepoId,
+        toRepoId: schema.repoEdges.toRepoId,
+      })
+      .from(schema.repoEdges)
+      .where(eq(schema.repoEdges.agentId, agentId))
+
+    if (edges.length === 0) return instructions
+
+    // Resolve repo IDs → human labels using the same role-or-url-tail
+    // rule the gitnexus mount uses, so the edge block reads consistent
+    // with the inventory block above.
+    const labelRows = await db.db
+      .select({
+        repoId: schema.repos.id,
+        remoteUrl: schema.repos.remoteUrl,
+        role: schema.agentRepos.role,
+      })
+      .from(schema.agentRepos)
+      .innerJoin(schema.repos, eq(schema.agentRepos.repoId, schema.repos.id))
+      .where(eq(schema.agentRepos.agentId, agentId))
+
+    labelByRepoId = new Map(
+      labelRows.map((r) => [
+        r.repoId,
+        r.role?.trim() || guessRepoLabelFromUrl(r.remoteUrl),
+      ]),
+    )
+  } catch (err) {
+    console.error(
+      `[build-agent] failed to load repo_edges for agent=${agentId}:`,
+      (err as Error).message,
+    )
+    return instructions
+  }
+
+  const lines = edges
+    .map((e) => {
+      const from = labelByRepoId.get(e.fromRepoId) ?? e.fromRepoId.slice(0, 8)
+      const to = labelByRepoId.get(e.toRepoId) ?? e.toRepoId.slice(0, 8)
+      const desc = e.description?.trim()
+      const head = `- ${from} ${e.connector} ${to}`
+      return desc ? `${head} — ${desc}` : head
+    })
+    .join('\n')
+
+  const block = [
+    `## Repo relationships`,
+    '',
+    'How the attached repositories relate to each other. Use this to',
+    'pick the right repo to consult — e.g. a question about deployment',
+    'should look in the repo on the receiving end of a "deploys to" edge.',
+    '',
+    lines,
+  ].join('\n')
+
+  return instructions.length > 0 ? `${instructions}\n\n${block}` : block
+}
+
+/**
+ * Mirror of the helper in `mcp/gitnexus-mcp.ts` — kept inline here to
+ * avoid pulling another import into the build-agent boundary just for a
+ * 3-line URL slug pull. If the labelling rule ever evolves, change both.
+ */
+function guessRepoLabelFromUrl(remoteUrl: string): string {
+  const clean = remoteUrl.trim().replace(/\.git$/i, '').replace(/\/+$/, '')
+  const segments = clean.split(/[/:]/).filter((s) => s.length > 0)
+  return segments[segments.length - 1] ?? 'repo'
 }
 
 /**

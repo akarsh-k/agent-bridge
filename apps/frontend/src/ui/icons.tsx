@@ -74,6 +74,22 @@ export const SearchIcon = base(
 export const PlusIcon = base(<path d="M12 5v14M5 12h14" />)
 export const ChevronDownIcon = base(<polyline points="6 9 12 15 18 9" />)
 export const ChevronRightIcon = base(<polyline points="9 6 15 12 9 18" />)
+export const AlertIcon = base(
+  <>
+    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+    <line x1={12} y1={9} x2={12} y2={13} />
+    <line x1={12} y1={17} x2={12.01} y2={17} />
+  </>,
+)
+export const CopyIcon = base(
+  <>
+    <rect x={9} y={9} width={13} height={13} rx={2} />
+    <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+  </>,
+)
+export const StopIcon = base(
+  <rect x={6} y={6} width={12} height={12} rx={2} fill="currentColor" />,
+)
 export const PencilIcon = base(
   <>
     <path d="M12 20h9" />

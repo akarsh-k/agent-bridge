@@ -59,13 +59,22 @@ export function EdgesSection({ agentId }: { agentId: string }) {
   }
 
   return (
-    <div className="ab-resource-section">
-      <div className="ab-resource-head">
-        <div>
-          <span className="ab-resource-title">Repo relationships</span>
-          <span className="ab-resource-count">
-            {edges.length} {edges.length === 1 ? 'edge' : 'edges'}
-          </span>
+    <div className="ab-card ab-card-pad ab-form-section">
+      <div
+        className="ab-section-head"
+        style={{
+          display: 'flex',
+          alignItems: 'flex-start',
+          justifyContent: 'space-between',
+          gap: 12,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div className="ab-section-title">Repo relations</div>
+          <div className="ab-section-sub">
+            {edges.length} {edges.length === 1 ? 'edge' : 'edges'} · how
+            attached repos relate (uses, deploys to, depends on …)
+          </div>
         </div>
         <Button
           variant="secondary"
@@ -84,9 +93,9 @@ export function EdgesSection({ agentId }: { agentId: string }) {
       </div>
       {edges.length === 0 ? (
         <div className="ab-field-help">
-          Edges describe how attached repos relate ("frontend depends on
-          shared", "backend deploys to infra"). Optional but useful for
-          retrieval-heavy agents.
+          {attached.length < 2
+            ? 'Attach at least two repositories above before drawing edges between them.'
+            : 'No edges yet. Add one to describe how repos relate — useful for retrieval-heavy agents.'}
         </div>
       ) : (
         <div className="ab-card ab-list-card">

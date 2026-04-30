@@ -218,7 +218,7 @@ function ToolsCard() {
         <EmptyState
           glyph={<BridgeIcon />}
           title="No agents have an LLM provider yet"
-          body="Pick a provider on an agent's Build tab to expose it as a bridge tool."
+          body="Pick a provider on an agent's Configure tab to expose it as a bridge tool."
         />
       ) : (
         <div className="ab-card ab-list-card">

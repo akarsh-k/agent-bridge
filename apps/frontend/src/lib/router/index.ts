@@ -65,14 +65,21 @@ const UUID_RE =
  * Recognised sub-tabs for the agent detail page. Anything else
  * after the id falls through to "not found".
  */
+// Active tabs: configure, resources, chat, bridge, logs.
+// Legacy aliases (build, memory, tools, test) still match here so
+// existing bookmarks resolve; the page-level dispatch redirects them
+// to the new tab they were folded into.
 const AGENT_TABS = [
-  'build',
+  'configure',
+  'resources',
   'chat',
+  'bridge',
+  'logs',
+  // legacy aliases
+  'build',
   'test',
   'memory',
   'tools',
-  'bridge',
-  'logs',
 ] as const
 export type AgentTabSegment = (typeof AGENT_TABS)[number]
 

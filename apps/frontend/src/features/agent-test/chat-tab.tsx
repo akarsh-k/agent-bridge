@@ -267,7 +267,7 @@ export function ChatTab({ agentId }: { agentId: string }) {
             }}
             placeholder={
               noProvider
-                ? 'No LLM provider assigned — configure on the Build tab.'
+                ? 'No LLM provider assigned — configure on the Configure tab.'
                 : chat.activeRunId
                   ? 'Streaming…'
                   : `Ask ${agent?.name ?? 'the agent'} anything…  (type @ to mention)`
@@ -330,7 +330,7 @@ export function ChatTab({ agentId }: { agentId: string }) {
             {filteredMentions.length === 0 ? (
               <div className="ab-mention-empty">
                 {mentionItems.length === 0
-                  ? 'No resources attached. Visit the Build tab to attach repos, skills, tools, or MCPs.'
+                  ? 'No resources attached. Visit the Resources tab to attach repos, skills, tools, or MCPs.'
                   : 'No matches'}
               </div>
             ) : (

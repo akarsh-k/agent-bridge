@@ -64,8 +64,8 @@ function EditForm({
     <Sheet
       open
       onClose={guardedClose}
-      title="Edit attachment"
-      subtitle={`Role + description on ${shortRepoName(attachment.repo.remoteUrl)} for this agent.`}
+      title="Edit role"
+      subtitle={`Role + description for ${shortRepoName(attachment.repo.remoteUrl)} on this agent.`}
       primaryLabel="Save changes"
       onPrimary={submit}
       primaryBusy={busy}
@@ -130,7 +130,7 @@ export function EditAttachedRepoSheet({
   }
   if (!open || !attachment) {
     return (
-      <Sheet open={false} onClose={onClose} title="Edit attachment">
+      <Sheet open={false} onClose={onClose} title="Edit role">
         <></>
       </Sheet>
     )

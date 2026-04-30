@@ -1688,8 +1688,89 @@ button.ab-list-row {
   color: var(--text-dim);
 }
 
+/* Inline error line that sits inside the row's text content stack
+ * (under the URL). No banner, no left bar, no action button — the
+ * "Error" pill on the right + "Open in library" in the kebab menu
+ * handle status + recovery; this just surfaces the message itself
+ * in muted danger color, single-line truncated, full text on hover. */
+.ab-list-row-error {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--danger);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--font-mono);
+}
+
 /* ---- Resource sub-sections ---------------------------------------------- */
 
+/* Flat block — no card wrapper. Lives directly on the page background
+ * with a tracked-caps mono header and rows that share hairline
+ * dividers instead of an outer border. Cuts the "card → card → card →
+ * rows" nesting we used to have on the Build tab. */
+
+.ab-flat-section {
+  margin-top: 22px;
+}
+.ab-flat-section:first-child {
+  margin-top: 0;
+}
+.ab-flat-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 4px 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 4px;
+}
+.ab-flat-section-title {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+.ab-flat-section-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  margin-left: 6px;
+}
+.ab-flat-section-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.ab-flat-list {
+  /* Rows directly on the page; shared hairlines instead of an outer
+   * border. The first/last row have no top/bottom divider so the
+   * block doesn't add extra rules. */
+}
+.ab-flat-list .ab-list-row {
+  border-bottom: 1px solid var(--border);
+  padding-left: 4px;
+  padding-right: 4px;
+}
+.ab-flat-list .ab-list-row:last-child {
+  border-bottom: none;
+}
+
+/* When an empty state lives inside a flat section it shouldn't carry
+ * its own card-like padding chrome — quiet inline copy is enough. */
+.ab-flat-empty {
+  padding: 16px 4px;
+  font-size: 13px;
+  color: var(--text-dim);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* Legacy resource-section block — kept so anything else still using it
+ * doesn't break, but the build tab no longer uses it. */
 .ab-resource-section {
   margin-bottom: 18px;
 }

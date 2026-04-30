@@ -89,6 +89,13 @@ export interface GitnexusRepoLabel {
   readonly label: string
   readonly remoteUrl: string
   readonly branch: string
+  /**
+   * `agent_repos.description` — operator-supplied "what this repo gives
+   * the agent visibility into" hint. Surfaced inline in the system
+   * prompt so the LLM can pick the right repo for a question without
+   * having to introspect file trees.
+   */
+  readonly description?: string
 }
 
 export interface MountedGitnexus {
@@ -211,6 +218,7 @@ export async function mountGitnexusMcp(
         label: r.label,
         remoteUrl: r.remoteUrl,
         branch: r.branch,
+        ...(r.description ? { description: r.description } : {}),
       })),
     },
   }
@@ -223,6 +231,7 @@ interface ReadyRepo {
   readonly remoteUrl: string
   readonly branch: string
   readonly label: string
+  readonly description?: string
 }
 
 /**
@@ -241,6 +250,7 @@ async function loadReadyRepos(
       remoteUrl: schema.repos.remoteUrl,
       branch: schema.repos.branch,
       role: schema.agentRepos.role,
+      description: schema.agentRepos.description,
     })
     .from(schema.agentRepos)
     .innerJoin(schema.repos, eq(schema.agentRepos.repoId, schema.repos.id))
@@ -251,12 +261,16 @@ async function loadReadyRepos(
       ),
     )
 
-  return rows.map((r) => ({
-    repoId: r.repoId,
-    remoteUrl: r.remoteUrl,
-    branch: r.branch,
-    label: r.role?.trim() || guessLabelFromUrl(r.remoteUrl),
-  }))
+  return rows.map((r) => {
+    const desc = r.description?.trim()
+    return {
+      repoId: r.repoId,
+      remoteUrl: r.remoteUrl,
+      branch: r.branch,
+      label: r.role?.trim() || guessLabelFromUrl(r.remoteUrl),
+      ...(desc ? { description: desc } : {}),
+    }
+  })
 }
 
 /**

@@ -5,15 +5,9 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import {
-  agentStreamId,
-  type RunEvent,
-  type RunListRow,
-} from '@agent-bridge/shared'
-import { useSSE } from '../../lib/use-sse'
+import { type RunEvent, type RunListRow } from '@agent-bridge/shared'
 import { ApiError, listRuns } from '../../lib/rpc'
 import { Button } from '../../ui/button'
-import { Pill } from '../../ui/pill'
 import { Tooltip } from '../../ui/tooltip'
 import { ExportIcon, SearchIcon } from '../../ui/icons'
 import { EmptyState } from '../../ui/empty'
@@ -76,11 +70,17 @@ const LEVEL_FROM_KIND: Record<string, LogLevel> = {
   ping: 'info',
 }
 
-export function LogsTab({ agentId }: { agentId: string }) {
+export function LogsTab({
+  agentId,
+  events,
+  connected,
+}: {
+  agentId: string
+  events: readonly RunEvent[]
+  connected: boolean
+}) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
-
-  const { events, connected } = useSSE(agentStreamId(agentId), { cap: 400 })
 
   // Newest first.
   const logRows = useMemo<readonly LogRow[]>(
@@ -281,68 +281,107 @@ function RunHistorySection({
   onExpand: () => void
 }) {
   return (
-    <div className="ab-card ab-card-pad ab-form-section" style={{ marginTop: 16 }}>
-      <div className="ab-section-head">
-        <div className="ab-section-title">Run history</div>
-        <div className="ab-section-sub">
+    <div style={{ marginTop: 24 }}>
+      <div className="ab-logs-section-head">
+        <span className="ab-logs-section-title">Run history</span>
+        <span className="ab-logs-section-sub">
           {loading
-            ? 'Loading runs…'
+            ? 'Loading…'
             : totalCount === 0
-              ? 'No runs yet.'
-              : `Showing ${runs.length} of ${totalCount} recent runs.`}
-        </div>
+              ? 'No past runs'
+              : `${runs.length} of ${totalCount}`}
+        </span>
       </div>
       {err && (
-        <div className="ab-field-help" style={{ color: 'var(--danger)' }}>
+        <div
+          className="ab-field-help"
+          style={{ color: 'var(--danger)', marginBottom: 8 }}
+        >
           {err}
         </div>
       )}
-      {runs.length === 0 ? (
-        <div className="ab-section-sub">No runs yet.</div>
-      ) : (
-        <div className="ab-card ab-list-card">
-          {runs.map((row) => {
-            const kind: Parameters<typeof Pill>[0]['kind'] =
-              row.status === 'completed'
-                ? 'success'
-                : row.status === 'error' || row.status === 'aborted'
-                  ? 'danger'
-                  : 'accent'
-            return (
-              <div className="ab-list-row is-static" key={row.id}>
-                <Pill kind={kind} dot>
-                  {row.status}
-                </Pill>
-                <div className="ab-list-row-head">
-                  <div
-                    className="ab-list-row-title"
-                    style={{
-                      display: '-webkit-box',
-                      WebkitBoxOrient: 'vertical',
-                      WebkitLineClamp: 1,
-                      overflow: 'hidden',
-                    }}
-                  >
-                    {row.inputPromptPreview}
-                  </div>
-                  <div className="ab-list-row-sub ab-mono">
-                    {row.source} · {formatRelative(Date.parse(row.startedAt))}
-                    {row.durationMs !== null &&
-                      ` · ${formatDuration(row.durationMs)}`}
-                  </div>
-                </div>
-              </div>
-            )
-          })}
+      {runs.length > 0 && (
+        <div className="ab-logs-table">
+          {runs.map((row) => (
+            <RunHistoryRow key={row.id} row={row} />
+          ))}
         </div>
       )}
       {canExpand && (
-        <div style={{ marginTop: 12, textAlign: 'center' }}>
-          <Button variant="ghost" onClick={onExpand}>
+        <div style={{ marginTop: 8, textAlign: 'center' }}>
+          <Button variant="ghost" size="sm" onClick={onExpand}>
             Show all {totalCount} runs
           </Button>
         </div>
       )}
+    </div>
+  )
+}
+
+function RunHistoryRow({ row }: { row: RunListRow }) {
+  // Map run status onto the same level/color system as live log rows
+  // so the visual language stays consistent across the whole page.
+  const level: LogLevel =
+    row.status === 'error' || row.status === 'aborted' ? 'error' : 'run'
+  const startedAt = Date.parse(row.startedAt)
+  const meta = [
+    row.source,
+    formatRelative(startedAt),
+    row.durationMs !== null ? formatDuration(row.durationMs) : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  // Reply / failure detail to surface inline under the prompt. Errors
+  // win the slot; otherwise show the agent's outputSummary preview so
+  // the user can scan "what was asked" + "what was answered" inline.
+  const reply = row.errorMessage ?? row.outputSummaryPreview
+  const replyKind: 'error' | 'reply' | null = row.errorMessage
+    ? 'error'
+    : row.outputSummaryPreview
+      ? 'reply'
+      : null
+  return (
+    <div className="ab-log-row">
+      <span className="ab-log-time">
+        {Number.isNaN(startedAt) ? '' : formatTime(startedAt)}
+      </span>
+      <span className={`ab-log-level is-${level}`}>{row.status}</span>
+      <span className="ab-log-msg">
+        <span
+          className="ab-log-source"
+          style={{ marginRight: 8 }}
+          title={row.source}
+        >
+          {meta}
+        </span>
+        <span style={{ color: 'var(--text)' }}>
+          {row.inputPromptPreview}
+        </span>
+        {reply && (
+          <div
+            style={{
+              marginTop: 4,
+              paddingLeft: 14,
+              borderLeft: `2px solid ${
+                replyKind === 'error'
+                  ? 'var(--danger)'
+                  : 'var(--accent-border)'
+              }`,
+              color:
+                replyKind === 'error' ? 'var(--danger)' : 'var(--text-dim)',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              display: '-webkit-box',
+              WebkitBoxOrient: 'vertical',
+              WebkitLineClamp: 3,
+              overflow: 'hidden',
+            }}
+            title={reply}
+          >
+            {reply}
+          </div>
+        )}
+      </span>
     </div>
   )
 }
