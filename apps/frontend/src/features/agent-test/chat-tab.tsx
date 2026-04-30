@@ -16,6 +16,7 @@ import { createPortal } from 'react-dom'
 import { useWorkspace } from '../../lib/workspace-context'
 import { useChat, type ChatMessage } from '../../lib/use-chat'
 import { Button } from '../../ui/button'
+import { Markdown } from '../../ui/markdown'
 import { ArrowRightIcon, RefreshIcon, SearchIcon } from '../../ui/icons'
 import { confirmDialog } from '../../ui/dialog-store'
 
@@ -430,14 +431,25 @@ function MessageRow({
             </div>
           </div>
         ))}
-        {msg.text && (
-          <div className="ab-msg-bubble" style={{ whiteSpace: 'pre-wrap' }}>
-            {msg.role === 'user' ? renderUserText(msg.text) : msg.text}
-            {msg.status === 'streaming' && (
-              <span style={{ opacity: 0.5 }}> ▍</span>
-            )}
-          </div>
-        )}
+        {msg.text &&
+          (msg.role === 'user' ? (
+            <div
+              className="ab-msg-bubble"
+              style={{ whiteSpace: 'pre-wrap' }}
+            >
+              {renderUserText(msg.text)}
+              {msg.status === 'streaming' && (
+                <span style={{ opacity: 0.5 }}> ▍</span>
+              )}
+            </div>
+          ) : (
+            <div className="ab-msg-bubble ab-msg-bubble-md">
+              <Markdown source={msg.text} />
+              {msg.status === 'streaming' && (
+                <span style={{ opacity: 0.5 }}> ▍</span>
+              )}
+            </div>
+          ))}
         {msg.role === 'assistant' &&
           msg.status === 'streaming' &&
           !msg.text &&

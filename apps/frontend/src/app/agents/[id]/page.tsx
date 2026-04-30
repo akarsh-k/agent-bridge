@@ -7,13 +7,13 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { agentStreamId } from '@agent-bridge/shared'
 import { useWorkspace } from '../../../lib/workspace-context'
-import { ApiError, exportAgentBundle, importAgentBundle } from '../../../lib/rpc'
+import { ApiError, exportAgentBundle } from '../../../lib/rpc'
 import { navigate } from '../../../lib/router'
 import { useSSE } from '../../../lib/use-sse'
 import { Button } from '../../../ui/button'
 import { Pill } from '../../../ui/pill'
 import { Tabs, type TabSpec } from '../../../ui/tabs'
-import { ArrowRightIcon, PlayIcon } from '../../../ui/icons'
+import { PlayIcon } from '../../../ui/icons'
 import { agentGlyphKind } from '../../../lib/agent-helpers'
 import { toast } from '../../../ui/toast-store'
 import { confirmDialog } from '../../../ui/dialog-store'
@@ -82,7 +82,7 @@ export function AgentDetailPage({
   initialTab?: string
 }) {
   const initial = normalizeTab(initialTab)
-  const { agents, removeAgent } = useWorkspace()
+  const { agents, removeAgent, status } = useWorkspace()
   const agent = agents.find((a) => a.id === id)
   const [menuOpen, setMenuOpen] = useState(false)
   const [, setBusy] = useState(false)
@@ -167,6 +167,28 @@ export function AgentDetailPage({
   }, [id])
 
   if (!agent) {
+    // Distinguish "still loading" from "doesn't exist". Without this
+    // guard, navigating to a freshly-created agent lands on "not
+    // found" before the workspace refetch has populated the new row.
+    if (status === 'loading') {
+      return (
+        <div className="ab-page">
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              color: 'var(--text-dim)',
+              padding: '20px 0',
+              fontSize: 13,
+            }}
+          >
+            <span className="ab-pulse-dot" />
+            Loading agent…
+          </div>
+        </div>
+      )
+    }
     return (
       <div className="ab-page">
         <div className="ab-card ab-card-pad">
@@ -215,18 +237,11 @@ export function AgentDetailPage({
           style={{ position: 'relative' }}
         >
           <Button
-            variant="ghost"
+            variant="primary"
             leading={<PlayIcon />}
             onClick={() => setTabAndUrl('chat')}
           >
             Test
-          </Button>
-          <Button
-            variant="primary"
-            trailing={<ArrowRightIcon />}
-            onClick={() => navigate(`/bridge#${agent.slug}`)}
-          >
-            Open in IDE
           </Button>
           <Button
             variant="secondary"
@@ -275,37 +290,6 @@ export function AgentDetailPage({
                           : e instanceof Error
                             ? e.message
                             : 'Export failed',
-                      )
-                    } finally {
-                      setBusy(false)
-                    }
-                  }}
-                />
-                <MenuItem
-                  label="Duplicate"
-                  onClick={async () => {
-                    setMenuOpen(false)
-                    setBusy(true)
-                    try {
-                      const bundle = await exportAgentBundle(agent.id)
-                      // Auto-suffix the slug to avoid the unique-key collision.
-                      const slugOverride = nextFreeSlug(
-                        agent.slug,
-                        agents.map((a) => a.slug),
-                      )
-                      const res = await importAgentBundle({
-                        bundle,
-                        slugOverride,
-                      })
-                      toast.success(`Duplicated as ${slugOverride}`)
-                      navigate(`/agents/${res.agentId}`)
-                    } catch (e) {
-                      toast.error(
-                        e instanceof ApiError
-                          ? e.message
-                          : e instanceof Error
-                            ? e.message
-                            : 'Duplicate failed',
                       )
                     } finally {
                       setBusy(false)
@@ -489,16 +473,6 @@ function MenuItem({
       {label}
     </button>
   )
-}
-
-function nextFreeSlug(base: string, existing: ReadonlyArray<string>): string {
-  const set = new Set(existing)
-  if (!set.has(base + '-copy')) return base + '-copy'
-  for (let i = 2; i < 100; i++) {
-    const cand = `${base}-copy-${i}`
-    if (!set.has(cand)) return cand
-  }
-  return `${base}-${Date.now()}`
 }
 
 function downloadJson(data: unknown, filename: string): void {

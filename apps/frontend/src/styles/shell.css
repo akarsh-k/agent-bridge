@@ -2148,6 +2148,18 @@ button.ab-list-row {
   color: white;
   border: 1px solid var(--accent-400);
 }
+
+/* Markdown variant — assistant bubbles render through <Markdown>,
+ * which emits its own <p>/<ul>/<ol>/headings. Strip the trailing
+ * bottom margin on the last block so the bubble doesn't have an
+ * awkward gap before its bottom edge, and tighten the first block's
+ * top margin for the same reason. */
+.ab-msg-bubble-md > .ab-md > :first-child {
+  margin-top: 0;
+}
+.ab-msg-bubble-md > .ab-md > :last-child {
+  margin-bottom: 0;
+}
 .ab-msg-meta {
   font-size: 11px;
   color: var(--text-muted);
