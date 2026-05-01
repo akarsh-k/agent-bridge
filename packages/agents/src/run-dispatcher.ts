@@ -67,7 +67,11 @@
 
 import type { BuiltAgent } from './build-agent.js'
 import { builtAgentCache } from './built-agent-cache.js'
-import { runsRepo, type AgentBridgeDb } from '@agent-bridge/db'
+import {
+  agentConfigEventsRepo,
+  runsRepo,
+  type AgentBridgeDb,
+} from '@agent-bridge/db'
 import {
   agentStreamId as buildAgentStreamId,
   type RunErrorPayload,
@@ -191,14 +195,20 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
           line: log.line,
         } satisfies RunMcpLogPayload,
       }
-      publishAndAudit(db, eventBus, redactor, streamId, agentStreamId, runId, event).catch(
-        (err) => {
-          console.error(
-            `[run-dispatcher] mcp.log publish failed for run ${runId}:`,
-            err,
-          )
-        },
-      )
+      publishAndAudit(
+        db,
+        eventBus,
+        redactor,
+        streamId,
+        agentStreamId,
+        runId,
+        event,
+      ).catch((err) => {
+        console.error(
+          `[run-dispatcher] mcp.log publish failed for run ${runId}:`,
+          err,
+        )
+      })
     })
 
     // Resolve Mastra thread + resource ids up front. For memory-enabled
@@ -217,6 +227,33 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
         // run an orphaned row.
         throw new Error(
           `run ${runId}: setMastraThread found no 'pending'/'running' row to update`,
+        )
+      }
+      // Detect "this is a brand-new thread" by checking whether a row
+      // already exists in mastra.mastra_threads for this id. Mastra
+      // creates the row lazily during the agent's first generation
+      // call, so on a never-before-seen threadId the SELECT returns
+      // 0 rows. Fire a config event in that case so the unified
+      // Activity timeline shows "thread created" alongside runs +
+      // config edits. Best-effort — failure here doesn't block the run.
+      try {
+        const isNew = await isNewMastraThread(db, memoryIds.mastraThreadId)
+        if (isNew) {
+          await publishThreadCreated({
+            db,
+            eventBus,
+            agentId,
+            agentStreamId,
+            threadId: memoryIds.mastraThreadId,
+            source: streamId.startsWith('bridge:') ? 'IDE' : 'chat tab',
+          })
+        }
+      } catch (err) {
+        // Swallow — the diagnostic log is nice-to-have; we never want
+        // it to fail a real run.
+        console.warn(
+          `[run-dispatcher] thread.created publish failed for run ${runId}:`,
+          err,
         )
       }
     }
@@ -338,7 +375,9 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
         // retroactively tainted by a plaintext we're about to hand to
         // `finalizeError`.
         errorThrown = {
-          message: redactor.redactString((mapped.data as RunErrorPayload).message),
+          message: redactor.redactString(
+            (mapped.data as RunErrorPayload).message,
+          ),
           kind: (mapped.data as RunErrorPayload).kind,
         }
         continue
@@ -863,7 +902,11 @@ function classifyMessage(message: string): RunErrorPayload['kind'] {
   if (/\b(429|rate.?limit|too many requests|quota)\b/i.test(message)) {
     return 'upstream'
   }
-  if (/\b(5\d\d|upstream|timeout|ENOTFOUND|ECONNREFUSED|ECONNRESET)\b/i.test(message)) {
+  if (
+    /\b(5\d\d|upstream|timeout|ENOTFOUND|ECONNREFUSED|ECONNRESET)\b/i.test(
+      message,
+    )
+  ) {
     return 'upstream'
   }
   if (/\btool\b/i.test(message)) {
@@ -969,4 +1012,65 @@ class TokenBatcher {
       event,
     )
   }
+}
+
+/**
+ * Check whether a Mastra thread row exists already. Returns `true`
+ * when the thread is brand-new (no row for this id yet). Used by
+ * the dispatcher to decide whether to fire a "thread.created" config
+ * event for the Activity timeline.
+ */
+async function isNewMastraThread(
+  handle: AgentBridgeDb,
+  threadId: string,
+): Promise<boolean> {
+  const result = await handle.pool.query(
+    'SELECT 1 FROM mastra.mastra_threads WHERE id = $1 LIMIT 1',
+    [threadId],
+  )
+  return result.rowCount === 0
+}
+
+/**
+ * Publish + persist an `agent.config.changed` event for a fresh
+ * Mastra thread. Same plumbing the backend's `publishAgentConfig`
+ * uses (SSE frame + agent_config_events row), inlined here so the
+ * dispatcher can emit it without depending on backend's singletons.
+ */
+async function publishThreadCreated(args: {
+  db: AgentBridgeDb
+  eventBus: EventBus
+  agentId: string
+  agentStreamId: string
+  threadId: string
+  source: 'IDE' | 'chat tab'
+}): Promise<void> {
+  const ts = Date.now()
+  const label = args.threadId.slice(0, 8)
+  const detail = `started from ${args.source}`
+
+  // Persist for the unified timeline.
+  await agentConfigEventsRepo.appendConfigEvent(args.db, {
+    agentId: args.agentId,
+    action: 'created',
+    resource: 'thread',
+    label,
+    detail,
+    ts: new Date(ts),
+  })
+
+  // Live SSE for any open Activity panel.
+  const event: RunEvent = {
+    kind: 'agent.config.changed',
+    ts,
+    streamId: args.agentStreamId,
+    data: {
+      agentId: args.agentId,
+      action: 'created',
+      resource: 'thread',
+      label,
+      detail,
+    },
+  }
+  await args.eventBus.publish(event)
 }

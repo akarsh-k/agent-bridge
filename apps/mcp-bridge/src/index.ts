@@ -65,6 +65,30 @@ import {
 
 import { env } from './env.js'
 
+/**
+ * One Mastra thread per bridge subprocess lifetime.
+ *
+ * Pre-Layer-1, every IDE tool call minted a fresh runId AND used it
+ * as the threadId — so the agent treated each call as an independent
+ * one-shot with no memory of prior turns in the same IDE session.
+ * That works for stateless automations but breaks chat-style usage:
+ * a follow-up like "what about the migration?" had no idea what the
+ * previous turn was about.
+ *
+ * Now we mint ONE threadId at process start and reuse it on every
+ * tool call. All calls in the same IDE session share a thread, so
+ * recent-message replay + per-thread working memory + per-thread
+ * semantic recall actually do useful work. Restarting the IDE (or
+ * reloading the MCP server) spawns a new bridge process → new
+ * threadId → fresh slate.
+ *
+ * Limitation we accept for v1: multiple IDE chat tabs in the same
+ * session bleed into one thread because MCP doesn't surface per-tab
+ * context. Workaround: the user restarts the IDE / reloads the MCP
+ * server when they want a fresh slate.
+ */
+const BRIDGE_THREAD_ID = randomUUID()
+
 interface AgentRecord {
   readonly id: string
   readonly slug: string
@@ -319,6 +343,10 @@ async function executeToolCall(
       runId,
       streamId,
       prompt,
+      // Pin every IDE tool call in this bridge process to one Mastra
+      // thread so the agent has continuity across multi-turn IDE
+      // chats. See BRIDGE_THREAD_ID's docstring for the design.
+      threadId: BRIDGE_THREAD_ID,
     })
   } catch (err) {
     // dispatchRun resolves rather than rejects on a normal run-error

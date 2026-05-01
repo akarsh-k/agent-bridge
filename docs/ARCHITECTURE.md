@@ -121,6 +121,53 @@ agent (`query_<agent_slug>`), derived from the `agents` row at runtime. A
 later phase replaces this with the multi-tool `bridge_tools` table (see §8.3
 and `docs/PLAN.md` Phase 7).
 
+#### 2.4.1 Bridge session = one Mastra thread
+
+The bridge mints **one `threadId` at process start** (`BRIDGE_THREAD_ID =
+randomUUID()` in `apps/mcp-bridge/src/index.ts`) and reuses it on every
+`dispatchRun(...)` call for the lifetime of the subprocess.
+
+Why this exists: pre-fix, every IDE tool call minted a fresh runId AND used
+it as the threadId, so each call landed in its own brand-new Mastra thread.
+That works for stateless one-shot automations ("summarize this URL") but
+breaks chat-style usage — a follow-up like *"what about the migration?"*
+had no in-thread history of the previous turn, so recent-message replay,
+per-thread working memory, and per-thread semantic recall all came up
+empty on every call. The agent appeared amnesiac between consecutive IDE
+messages even though the user thought they were having one conversation.
+
+Pinning the threadId per bridge process restores the chat-style mental
+model:
+
+- **Same IDE session** (one bridge subprocess) → all tool calls share one
+  thread → continuous history.
+- **Restart IDE / reload MCP server** → bridge subprocess respawns →
+  fresh threadId.
+
+Limitations we accept for v1:
+
+- **Multi-tab bleed.** MCP doesn't expose per-chat-tab context to the
+  bridge — Cursor with two simultaneous chat tabs sends both tabs'
+  messages through the same stdio pipe, so they end up in one thread.
+  Workaround for users: restart the IDE / reload the MCP server when
+  they want a fresh slate. Future fix: optional `conversationId` field
+  on the bridge tool's input schema (Layer 2), where a capable IDE LLM
+  mints and passes a per-tab id.
+- **No idle auto-rotation.** If the user comes back to the same IDE
+  session after hours, prior context is still loaded. Same workaround
+  (manual reload). Time-based rotation was scoped but deferred.
+- **Per-tab semantic isolation requires per-agent scope.** Because all
+  IDE calls land in one thread, "per thread" working-memory + semantic
+  recall scope effectively scopes to "this IDE session only." For agents
+  that should remember across IDE restarts / chat tabs, pick "per agent"
+  scope (cross-thread, persists across every web chat + IDE call).
+
+The dispatcher's existing `resolveMemoryIds` already honored an explicit
+`threadId` input (`packages/agents/src/run-dispatcher.ts:716` —
+`mastraThreadId: input.threadId ?? input.runId`); the bridge fix is a
+five-line plumbing change (`threadId: BRIDGE_THREAD_ID` on the dispatch
+call). No DB schema change.
+
 ### 2.5 `packages/shared`
 
 Two worlds under one package, separated by `exports`:

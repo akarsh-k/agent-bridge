@@ -468,6 +468,11 @@ export const agentConfigResources = [
   'repo',
   'repo_edge',
   'mcp_allowlist',
+  // Not a config resource in the literal sense, but it ships through
+  // the same persistence + SSE pipeline so the unified Activity log
+  // can show "new thread started" entries alongside config edits.
+  // Fired by the dispatcher the first time it sees a new threadId.
+  'thread',
 ] as const
 export type AgentConfigResource = (typeof agentConfigResources)[number]
 
@@ -485,6 +490,11 @@ export const agentConfigActions = [
   'attached',
   'detached',
   'replaced',
+  // Reserved for thread starts — the dispatcher fires a 'created'
+  // event for `resource: 'thread'` on the first run of a new
+  // threadId. Distinct from 'added' since threads are session-scoped
+  // not user-edited.
+  'created',
 ] as const
 export type AgentConfigAction = (typeof agentConfigActions)[number]
 
