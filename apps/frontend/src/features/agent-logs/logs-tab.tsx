@@ -1,12 +1,18 @@
 /**
- * Logs tab — wired to the real SSE stream for live activity AND to
- * `listRuns({ agentId })` for run history. Together they answer
- * "what's this agent doing right now and what has it done lately?".
+ * Logs tab — single chronological timeline that merges live SSE events
+ * with completed-run history into one feed. A row can be an `event`
+ * (granular: `run.tool.called`, `repo.index.progress`, etc.) or a
+ * `run` (one row per completed agent invocation, with prompt + reply
+ * preview). Both share the same toolbar, filters, and search.
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import { type RunEvent, type RunListRow } from '@agent-bridge/shared'
-import { ApiError, listRuns } from '../../lib/rpc'
+import {
+  type AgentConfigEventResponse,
+  type RunEvent,
+  type RunListRow,
+} from '@agent-bridge/shared'
+import { ApiError, listAgentConfigEvents, listRuns } from '../../lib/rpc'
 import { Button } from '../../ui/button'
 import { Tooltip } from '../../ui/tooltip'
 import { ExportIcon, SearchIcon } from '../../ui/icons'
@@ -35,6 +41,7 @@ const FILTERS = [
   { value: 'all', label: 'All' },
   { value: 'run', label: 'Runs' },
   { value: 'tool', label: 'Tools' },
+  { value: 'config', label: 'Config' },
   { value: 'error', label: 'Errors' },
 ] as const
 type Filter = (typeof FILTERS)[number]['value']
@@ -70,6 +77,28 @@ const LEVEL_FROM_KIND: Record<string, LogLevel> = {
   ping: 'info',
 }
 
+// Discriminated row for the unified timeline. Three sources stitched
+// into one chronological feed:
+//   - `event` rows from the live SSE stream (granular: tool calls,
+//     step starts, repo progress, etc.).
+//   - `run` rows from `listRuns` (one per completed agent invocation,
+//     with prompt + reply preview).
+//   - `config` rows from `listAgentConfigEvents` (persisted history
+//     of agent.config.changed: skill added, repo attached, MCP
+//     allowlist replaced, etc.). Live SSE config frames get deduped
+//     against these by timestamp so we don't show both.
+type UnifiedRow =
+  | { kind: 'event'; id: string; ts: number; row: LogRow }
+  | { kind: 'run'; id: string; ts: number; run: RunListRow }
+  | {
+      kind: 'config'
+      id: string
+      ts: number
+      event: AgentConfigEventResponse
+    }
+
+const ROW_LIMIT_COLLAPSED = 50
+
 export function LogsTab({
   agentId,
   events,
@@ -82,29 +111,40 @@ export function LogsTab({
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
 
-  // Newest first.
-  const logRows = useMemo<readonly LogRow[]>(
+  // Live events from the SSE stream. Drop the noisy ones (per-token,
+  // pings) before mapping — they'd dominate the feed and aren't useful
+  // at this granularity.
+  const eventRows = useMemo<readonly LogRow[]>(
     () =>
-      [...events]
-        .reverse()
-        .filter((e) => e.kind !== 'ping' && e.kind !== 'run.token' && e.kind !== 'run.token.batch')
+      events
+        .filter(
+          (e) =>
+            e.kind !== 'ping' &&
+            e.kind !== 'run.token' &&
+            e.kind !== 'run.token.batch',
+        )
         .map((e) => eventToRow(e)),
     [events],
   )
 
-  // Run history (rolled up at the bottom). The runs API doesn't
-  // expose a cursor, so we cap at 100 (server max) and offer a
-  // collapsible disclosure beyond the top 25.
+  // Past runs + persisted config events from the API. Both are fetched
+  // newest-first (the run-list endpoint caps at 100, the config-events
+  // endpoint at 100 by default). Loading either is independent — a
+  // failure on one shouldn't break the other.
   const [runs, setRuns] = useState<readonly RunListRow[]>([])
+  const [configEvents, setConfigEvents] = useState<
+    readonly AgentConfigEventResponse[]
+  >([])
   const [runsErr, setRunsErr] = useState<string | null>(null)
   const [runsLoading, setRunsLoading] = useState(false)
   const [showAll, setShowAll] = useState(false)
 
-  // Reset stored runs when agent changes — derived state pattern.
+  // Reset cached state when the user navigates between agents.
   const [runsAgentId, setRunsAgentId] = useState(agentId)
   if (runsAgentId !== agentId) {
     setRunsAgentId(agentId)
     setRuns([])
+    setConfigEvents([])
     setShowAll(false)
   }
 
@@ -114,9 +154,13 @@ export function LogsTab({
       if (!alive) return
       setRunsLoading(true)
       try {
-        const res = await listRuns({ agentId, limit: 100 })
+        const [runsRes, configRes] = await Promise.all([
+          listRuns({ agentId, limit: 100 }),
+          listAgentConfigEvents(agentId, 100),
+        ])
         if (!alive) return
-        setRuns(res.runs)
+        setRuns(runsRes.runs)
+        setConfigEvents(configRes)
       } catch (err) {
         if (alive) {
           setRunsErr(
@@ -124,7 +168,7 @@ export function LogsTab({
               ? err.message
               : err instanceof Error
                 ? err.message
-                : 'Failed to load runs',
+                : 'Failed to load activity',
           )
         }
       } finally {
@@ -136,20 +180,118 @@ export function LogsTab({
     }
   }, [agentId])
 
-  const visibleRuns = showAll ? runs : runs.slice(0, 25)
+  // Merge events + runs + persisted config events into one
+  // chronological list.
+  //
+  // Dedupe rules:
+  //   - Live `run.started` / `run.finished` events: drop when the
+  //     run's id already appears in the history list (the run row is
+  //     the canonical summary).
+  //   - Live `agent.config.changed` events: drop when a persisted
+  //     config event has the same ts within ±2s (the SSE frame and
+  //     the audit row come from the same publishAgentConfig call).
+  const unified = useMemo<readonly UnifiedRow[]>(() => {
+    const knownRunIds = new Set(runs.map((r) => r.id))
+    const persistedConfigTs = configEvents.map((e) => Date.parse(e.ts) || 0)
+    const eventEntries: UnifiedRow[] = eventRows
+      .filter((row) => {
+        if (runRowIdCollidesWithKnownRun(row, knownRunIds)) return false
+        if (row.source === 'config') {
+          // Within 2s of any persisted config row → dedupe.
+          for (const ts of persistedConfigTs) {
+            if (Math.abs(ts - row.ts) <= 2000) return false
+          }
+        }
+        return true
+      })
+      .map((row) => ({ kind: 'event', id: row.id, ts: row.ts, row }))
+    const runEntries: UnifiedRow[] = runs.map((run) => ({
+      kind: 'run',
+      id: `run:${run.id}`,
+      ts: Date.parse(run.startedAt) || 0,
+      run,
+    }))
+    const configEntries: UnifiedRow[] = configEvents.map((event) => ({
+      kind: 'config',
+      id: `cfg:${event.id}`,
+      ts: Date.parse(event.ts) || 0,
+      event,
+    }))
+    return [...eventEntries, ...runEntries, ...configEntries].sort(
+      (a, b) => b.ts - a.ts,
+    )
+  }, [eventRows, runs, configEvents])
 
-  const filtered = logRows.filter((row) => {
-    if (filter === 'run' && row.level !== 'run') return false
-    if (filter === 'tool' && row.level !== 'tool') return false
-    if (filter === 'error' && row.level !== 'error' && row.level !== 'warn') {
-      return false
-    }
-    if (query) {
-      const hay = `${row.source} ${row.msg} ${row.detail ?? ''}`.toLowerCase()
-      if (!hay.includes(query.toLowerCase())) return false
-    }
-    return true
-  })
+  const filtered = useMemo(
+    () =>
+      unified
+        .filter((u) => {
+          // Filter chips:
+          //   - 'run'    : live run.* events + run history rows
+          //   - 'tool'   : live tool events only
+          //   - 'config' : config rows + live agent.config.changed events
+          //   - 'error'  : warn/error events + failed/aborted runs
+          if (filter === 'run') {
+            if (u.kind === 'run') return true
+            if (u.kind === 'event' && u.row.level === 'run') return true
+            return false
+          }
+          if (filter === 'tool') {
+            return u.kind === 'event' && u.row.level === 'tool'
+          }
+          if (filter === 'config') {
+            if (u.kind === 'config') return true
+            if (u.kind === 'event' && u.row.source === 'config') return true
+            return false
+          }
+          if (filter === 'error') {
+            if (u.kind === 'event') {
+              return u.row.level === 'error' || u.row.level === 'warn'
+            }
+            if (u.kind === 'run') {
+              return u.run.status === 'error' || u.run.status === 'aborted'
+            }
+            return false
+          }
+          return true
+        })
+        .filter((u) => {
+          if (!query) return true
+          const q = query.toLowerCase()
+          if (u.kind === 'event') {
+            const hay =
+              `${u.row.source} ${u.row.msg} ${u.row.detail ?? ''}`.toLowerCase()
+            return hay.includes(q)
+          }
+          if (u.kind === 'run') {
+            const hay = [
+              u.run.source,
+              u.run.status,
+              u.run.inputPromptPreview,
+              u.run.outputSummaryPreview,
+              u.run.errorMessage,
+            ]
+              .filter(Boolean)
+              .join(' ')
+              .toLowerCase()
+            return hay.includes(q)
+          }
+          const hay = [
+            u.event.action,
+            u.event.resource,
+            u.event.label,
+            u.event.detail,
+          ]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+          return hay.includes(q)
+        }),
+    [unified, filter, query],
+  )
+
+  const visible = showAll ? filtered : filtered.slice(0, ROW_LIMIT_COLLAPSED)
+  const hiddenCount = filtered.length - visible.length
 
   return (
     <div>
@@ -159,7 +301,7 @@ export function LogsTab({
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter logs…"
+            placeholder="Filter activity…"
           />
         </div>
         <div className="ab-filter-chips">
@@ -187,21 +329,25 @@ export function LogsTab({
         </Button>
       </div>
 
+      {runsErr && (
+        <div
+          className="ab-field-help"
+          style={{ color: 'var(--danger)', marginBottom: 8 }}
+        >
+          Couldn't load past runs: {runsErr}
+        </div>
+      )}
+
       {filtered.length === 0 ? (
-        // Three cases:
-        //  (a) An active filter / query yielded no matches — show a
-        //      compact "no matches" hint so the user knows the filter
-        //      is the cause.
-        //  (b) No live events yet, but the run-history card below
-        //      already has rows — skip the big empty state entirely;
-        //      it would contradict the visible history.
-        //  (c) Truly empty agent (no live events, no past runs) — show
-        //      the friendly first-time copy.
         filter !== 'all' || query ? (
           <div className="ab-section-sub" style={{ padding: '24px 4px' }}>
-            No events match this filter.
+            No activity matches this filter.
           </div>
-        ) : runs.length > 0 ? null : (
+        ) : runsLoading ? (
+          <div className="ab-section-sub" style={{ padding: '24px 4px' }}>
+            Loading run history…
+          </div>
+        ) : (
           <EmptyState
             glyph={<SearchIcon />}
             title={
@@ -211,109 +357,132 @@ export function LogsTab({
             }
             body={
               connected
-                ? 'Send the agent a chat message, attach a repo, or wait for the next IDE invocation — events stream here in real time.'
+                ? 'Send the agent a chat message, attach a repo, or wait for the next IDE invocation — runs and events stream here in real time.'
                 : 'Once the SSE connection comes up, every run, tool call, and config change shows up here.'
             }
           />
         )
       ) : (
-        <div className="ab-logs-table">
-          {filtered.map((row) => (
-            <div key={row.id} className="ab-log-row">
-              <span className="ab-log-time">{formatTime(row.ts)}</span>
-              <Tooltip label={LEVEL_HINT[row.level]} side="top">
-                <span className={`ab-log-level is-${row.level}`}>
-                  {row.level}
-                </span>
-              </Tooltip>
-              <span className="ab-log-msg">
-                <span
-                  className="ab-log-source"
-                  style={{ marginRight: 8 }}
-                  title={row.source}
-                >
-                  {row.source}
-                </span>
-                {row.msg}
-                {row.detail && (
-                  <span
-                    style={{
-                      marginLeft: 8,
-                      color: 'var(--text-muted)',
-                      whiteSpace: 'pre-wrap',
-                    }}
-                    title={row.detail}
-                  >
-                    · {row.detail.length > 120 ? row.detail.slice(0, 120) + '…' : row.detail}
-                  </span>
-                )}
-              </span>
+        <>
+          <div className="ab-logs-table">
+            {visible.map((u) => {
+              if (u.kind === 'event') return <EventRow key={u.id} row={u.row} />
+              if (u.kind === 'run')
+                return <RunHistoryRow key={u.id} row={u.run} />
+              return <ConfigEventRow key={u.id} event={u.event} />
+            })}
+          </div>
+          {hiddenCount > 0 && (
+            <div style={{ marginTop: 8, textAlign: 'center' }}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowAll(true)}
+              >
+                Show all {filtered.length} entries ({hiddenCount} more)
+              </Button>
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
-
-      <RunHistorySection
-        runs={visibleRuns}
-        totalCount={runs.length}
-        err={runsErr}
-        loading={runsLoading}
-        canExpand={runs.length > 25 && !showAll}
-        onExpand={() => setShowAll(true)}
-      />
     </div>
   )
 }
 
-function RunHistorySection({
-  runs,
-  totalCount,
-  err,
-  loading,
-  canExpand,
-  onExpand,
-}: {
-  runs: readonly RunListRow[]
-  totalCount: number
-  err: string | null
-  loading: boolean
-  canExpand: boolean
-  onExpand: () => void
-}) {
+/**
+ * Suppress live `run.started` / `run.finished` event rows for runs
+ * that are also present in the canonical run-history list — the run
+ * row already shows status + duration, and showing both would
+ * triple-stack the same event in the timeline.
+ */
+function runRowIdCollidesWithKnownRun(
+  row: LogRow,
+  knownRunIds: ReadonlySet<string>,
+): boolean {
+  if (row.level !== 'run') return false
+  // event ids are formatted `${kind}:${ts}:rand`, but the runId itself
+  // is embedded in the message. Use a lightweight check on the source
+  // text since we don't carry runId on the LogRow shape.
+  for (const id of knownRunIds) {
+    if (row.msg.includes(id.slice(0, 8))) return true
+  }
+  return false
+}
+
+function ConfigEventRow({ event }: { event: AgentConfigEventResponse }) {
+  const ts = Date.parse(event.ts)
+  // Mirror the LEVEL_FROM_KIND mapping for live agent.config.changed
+  // events ('info') so config history rows visually match the live
+  // ones the user already saw stream past in real time.
   return (
-    <div style={{ marginTop: 24 }}>
-      <div className="ab-logs-section-head">
-        <span className="ab-logs-section-title">Run history</span>
-        <span className="ab-logs-section-sub">
-          {loading
-            ? 'Loading…'
-            : totalCount === 0
-              ? 'No past runs'
-              : `${runs.length} of ${totalCount}`}
-        </span>
-      </div>
-      {err && (
-        <div
-          className="ab-field-help"
-          style={{ color: 'var(--danger)', marginBottom: 8 }}
+    <div className="ab-log-row">
+      <span className="ab-log-time">
+        {Number.isNaN(ts) ? '' : formatTime(ts)}
+      </span>
+      <Tooltip label={LEVEL_HINT.info} side="top">
+        <span className="ab-log-level is-info">info</span>
+      </Tooltip>
+      <span className="ab-log-msg">
+        <span
+          className="ab-log-source"
+          style={{ marginRight: 8 }}
+          title="config"
         >
-          {err}
-        </div>
-      )}
-      {runs.length > 0 && (
-        <div className="ab-logs-table">
-          {runs.map((row) => (
-            <RunHistoryRow key={row.id} row={row} />
-          ))}
-        </div>
-      )}
-      {canExpand && (
-        <div style={{ marginTop: 8, textAlign: 'center' }}>
-          <Button variant="ghost" size="sm" onClick={onExpand}>
-            Show all {totalCount} runs
-          </Button>
-        </div>
-      )}
+          config
+        </span>
+        {event.action} {event.resource}: {event.label}
+        {event.detail && (
+          <span
+            style={{
+              marginLeft: 8,
+              color: 'var(--text-muted)',
+              whiteSpace: 'pre-wrap',
+            }}
+            title={event.detail}
+          >
+            ·{' '}
+            {event.detail.length > 120
+              ? event.detail.slice(0, 120) + '…'
+              : event.detail}
+          </span>
+        )}
+      </span>
+    </div>
+  )
+}
+
+function EventRow({ row }: { row: LogRow }) {
+  return (
+    <div className="ab-log-row">
+      <span className="ab-log-time">{formatTime(row.ts)}</span>
+      <Tooltip label={LEVEL_HINT[row.level]} side="top">
+        <span className={`ab-log-level is-${row.level}`}>{row.level}</span>
+      </Tooltip>
+      <span className="ab-log-msg">
+        <span
+          className="ab-log-source"
+          style={{ marginRight: 8 }}
+          title={row.source}
+        >
+          {row.source}
+        </span>
+        {row.msg}
+        {row.detail && (
+          <span
+            style={{
+              marginLeft: 8,
+              color: 'var(--text-muted)',
+              whiteSpace: 'pre-wrap',
+            }}
+            title={row.detail}
+          >
+            ·{' '}
+            {row.detail.length > 120
+              ? row.detail.slice(0, 120) + '…'
+              : row.detail}
+          </span>
+        )}
+      </span>
     </div>
   )
 }

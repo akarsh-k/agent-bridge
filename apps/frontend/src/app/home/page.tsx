@@ -100,7 +100,11 @@ export function HomePage() {
             {lastTouched.description?.trim() ||
               'Open the agent to keep configuring its prompt, repos, and bridge.'}
           </div>
-          <BridgeRow ides={bridges} live />
+          <BridgeRow
+            ides={bridges}
+            live
+            onConnect={() => navigate(`/bridge#${lastTouched.slug}`)}
+          />
         </Link>
       ) : (
         <div className="ab-card ab-card-pad">

@@ -8,6 +8,7 @@ import { logger } from 'hono/logger'
 import { secureHeaders } from 'hono/secure-headers'
 import { z } from 'zod'
 import { onUnhandledError, httpError } from './lib/errors.js'
+import { agentConfigEventsRouter } from './routes/agent-config-events.js'
 import { agentExportRouter } from './routes/agent-export.js'
 import { agentMcpToolsRouter } from './routes/agent-mcp-tools.js'
 import { agentReposRouter } from './routes/agent-repos.js'
@@ -97,6 +98,7 @@ const api = new Hono()
   .route('/agents/:agentId/bridge-tools', bridgeToolsRouter)
   .route('/agents/:agentId/runs', agentRunsRouter)
   .route('/agents/:agentId/threads', agentThreadsRouter)
+  .route('/agents/:agentId/config-events', agentConfigEventsRouter)
   .route('/system/tools', systemToolsRouter)
   .route('/llm-providers', llmProvidersRouter)
   .route('/mcp-connections', mcpConnectionsRouter)

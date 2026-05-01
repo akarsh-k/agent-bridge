@@ -78,6 +78,13 @@
       "when": 1777470677851,
       "tag": "0010_bridge_tools",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1777613048639,
+      "tag": "0011_lyrical_masque",
+      "breakpoints": true
     }
   ]
 }

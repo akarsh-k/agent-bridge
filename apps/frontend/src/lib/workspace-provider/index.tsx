@@ -724,22 +724,33 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       ...prev,
       repos: prev.repos.filter((r) => r.id !== id),
     }))
-    // Drop attached-repo entries referencing the deleted repo across all
-    // agents (the FK cascades server-side).
+    // Mirror the server-side FK cascade in local state. The backend
+    // drops both `agent_repos` (attached-repo entries) AND `repo_edges`
+    // that reference the deleted repo; if we only update one, the
+    // edges UI shows orphan rows with no resolvable from/to repo.
     setAgentResources((prev) => {
       let changed = false
       const next: Record<string, AgentResources> = {}
       for (const [agentId, bundle] of Object.entries(prev)) {
-        const before = bundle.attachedRepos.length
-        const filtered = bundle.attachedRepos.filter(
+        const filteredAttached = bundle.attachedRepos.filter(
           (a) => a.repo.id !== id,
         )
-        if (filtered.length === before) {
+        const filteredEdges = bundle.repoEdges.filter(
+          (e) => e.fromRepoId !== id && e.toRepoId !== id,
+        )
+        if (
+          filteredAttached.length === bundle.attachedRepos.length &&
+          filteredEdges.length === bundle.repoEdges.length
+        ) {
           next[agentId] = bundle
           continue
         }
         changed = true
-        next[agentId] = { ...bundle, attachedRepos: filtered }
+        next[agentId] = {
+          ...bundle,
+          attachedRepos: filteredAttached,
+          repoEdges: filteredEdges,
+        }
       }
       return changed ? next : prev
     })

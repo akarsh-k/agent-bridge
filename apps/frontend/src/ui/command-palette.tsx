@@ -173,7 +173,7 @@ function Inner({ onClose }: { onClose: () => void }) {
     for (const p of llmProviders) {
       out.push({
         id: `prov:${p.id}`,
-        group: 'Providers',
+        group: 'LLM providers',
         label: p.label,
         hint: p.kind,
         Icon: ProvidersIcon,
@@ -231,7 +231,7 @@ function Inner({ onClose }: { onClose: () => void }) {
     if (path.startsWith('/agents/')) return null // handled by "On {agent}"
     if (path === '/agents' || path.startsWith('/agents'))
       return 'Agents'
-    if (path.startsWith('/library/providers')) return 'Providers'
+    if (path.startsWith('/library/providers')) return 'LLM providers'
     if (path.startsWith('/library/repos')) return 'Repositories'
     if (path.startsWith('/library/mcp')) return 'MCP connections'
     return null

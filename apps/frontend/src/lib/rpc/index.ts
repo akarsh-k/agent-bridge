@@ -589,6 +589,34 @@ export async function deleteAgentThread(
   )
 }
 
+// ─── Agent config events (persisted audit log) ──────────────────────────
+
+import type { AgentConfigEventResponse } from '@agent-bridge/shared'
+
+/**
+ * Newest-first list of persisted `agent.config.changed` events for one
+ * agent. Used by the unified Activity timeline so audit entries
+ * (skill added, repo attached, MCP allowlist replaced …) survive page
+ * reloads and SSE re-subscribes — the live event ring only holds the
+ * current session.
+ */
+export async function listAgentConfigEvents(
+  agentId: string,
+  limit?: number,
+): Promise<readonly AgentConfigEventResponse[]> {
+  const qs = limit !== undefined ? `?limit=${limit}` : ''
+  const res = await callApi<{
+    ok: true
+    events: readonly AgentConfigEventResponse[]
+  }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/config-events${qs}`,
+      { method: 'GET' },
+    ),
+  )
+  return res.events
+}
+
 // ─── System tools (read-only catalog of auto-mounted MCP tools) ─────────
 
 import type { GitnexusSystemToolsResponse } from '@agent-bridge/shared'

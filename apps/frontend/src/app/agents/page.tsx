@@ -196,7 +196,7 @@ export function AgentsListPage() {
                   key={a.id}
                   agent={a}
                   featured={a.id === featuredId}
-                  onConnectBridge={() => navigate(`/agents/${a.id}`)}
+                  onConnectBridge={() => navigate(`/bridge#${a.slug}`)}
                   onExport={async () => {
                     try {
                       const bundle = await exportAgentBundle(a.id)

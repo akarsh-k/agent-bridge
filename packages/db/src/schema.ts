@@ -530,6 +530,32 @@ export const runEvents = pgTable(
   (t) => [index('run_events_run_ts_idx').on(t.runId, t.ts)],
 )
 
+// ─── agent_config_events (append-only audit log) ─────────────────────────
+// Persisted history of `agent.config.changed` events (skill added, repo
+// attached, MCP allowlist replaced, etc). Originally these only existed
+// as live SSE frames — but operators wanted "when did I attach repo X?"
+// to be answerable across page reloads, so we now also write a row here
+// whenever `publishAgentConfig` fires. The Activity timeline reads from
+// this table for past events and stitches in the live SSE frames as
+// they arrive.
+export const agentConfigEvents = pgTable(
+  'agent_config_events',
+  {
+    id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    ts: timestamp('ts', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    action: text('action').notNull(),
+    resource: text('resource').notNull(),
+    label: text('label').notNull(),
+    detail: text('detail'),
+  },
+  (t) => [index('agent_config_events_agent_ts_idx').on(t.agentId, t.ts)],
+)
+
 // ─── Inferred row / insert types ──────────────────────────────────────────
 
 export type LlmProviderRow = typeof llmProviders.$inferSelect
@@ -571,6 +597,9 @@ export type RunInsert = typeof runs.$inferInsert
 export type RunEventRow = typeof runEvents.$inferSelect
 export type RunEventInsert = typeof runEvents.$inferInsert
 
+export type AgentConfigEventRow = typeof agentConfigEvents.$inferSelect
+export type AgentConfigEventInsert = typeof agentConfigEvents.$inferInsert
+
 /**
  * Canonical table list. Used by `/api/health/db` to build the row-count map
  * without hardcoding table names in two places. Skip `run_events` for the
@@ -591,6 +620,7 @@ export const allTables = [
   bridgeTools,
   runs,
   runEvents,
+  agentConfigEvents,
 ] as const
 
 /**
@@ -612,6 +642,7 @@ export const tableNames = [
   'bridge_tools',
   'runs',
   'run_events',
+  'agent_config_events',
 ] as const
 
 export type TableName = (typeof tableNames)[number]

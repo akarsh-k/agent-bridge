@@ -52,7 +52,7 @@ export function Sidebar() {
   const library: NavSpec[] = [
     {
       to: '/library/providers',
-      label: 'Providers',
+      label: 'LLM providers',
       Icon: ProvidersIcon,
       matchPrefix: '/library/providers',
       count: llmProviders.length,

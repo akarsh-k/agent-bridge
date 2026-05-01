@@ -92,7 +92,7 @@ function RouterOutlet() {
         return [
           { label: 'Workspace', to: '/' },
           { label: 'Library' },
-          { label: 'Providers' },
+          { label: 'LLM providers' },
         ]
       case 'repos':
         return [
@@ -109,7 +109,7 @@ function RouterOutlet() {
       case 'library-detail': {
         const sectionLabel =
           route.section === 'providers'
-            ? 'Providers'
+            ? 'LLM providers'
             : route.section === 'repos'
               ? 'Repositories'
               : 'MCP connections'
