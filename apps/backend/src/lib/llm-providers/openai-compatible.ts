@@ -40,7 +40,11 @@ import {
 export async function testOpenAICompatible(
   input: ConnectorInput,
 ): Promise<ConnectorResult> {
-  if (input.model) return inferenceProbe(input)
+  if (input.model) {
+    return input.capability === 'embedding'
+      ? embeddingProbe(input)
+      : inferenceProbe(input)
+  }
   return reachabilityProbe(input)
 }
 
@@ -93,6 +97,63 @@ async function inferenceProbe(input: ConnectorInput): Promise<ConnectorResult> {
       ? 'completion returned content'
       : 'completion returned an empty response',
     sample: sample ? truncateSample(sample) : null,
+  }
+}
+
+async function embeddingProbe(
+  input: ConnectorInput,
+): Promise<ConnectorResult> {
+  // Same plumbing as inferenceProbe but talks to /v1/embeddings with a
+  // tiny single-string input. Cheap enough that even paid embedding
+  // models cost essentially nothing per click. Success is "data[0]
+  // contains a non-empty embedding vector".
+  const url = joinUrl(input.baseUrl, '/v1/embeddings')
+  const headers: Record<string, string> = {
+    'content-type': 'application/json',
+  }
+  if (input.apiKey) headers['authorization'] = `Bearer ${input.apiKey}`
+
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers,
+      redirect: 'manual',
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      body: JSON.stringify({
+        model: input.model,
+        input: SMOKE_PROMPT,
+      }),
+    })
+  } catch (err) {
+    return classifyFetchError(err)
+  }
+
+  if (!res.ok) {
+    const body = await readBodySafe(res)
+    return classifyHttpError(res.status, body)
+  }
+
+  let payload: unknown
+  try {
+    payload = await res.json()
+  } catch {
+    return {
+      ok: false,
+      code: 'upstream',
+      message: 'non-JSON response from provider',
+    }
+  }
+
+  const dim = extractEmbeddingDim(payload)
+  return {
+    ok: true,
+    stage: 'inference',
+    model: input.model,
+    message: dim
+      ? `embedding returned (${dim}-dim vector)`
+      : 'embedding endpoint accepted the request but the response shape was unexpected',
+    sample: null,
   }
 }
 
@@ -165,6 +226,17 @@ function extractOpenAIChatText(payload: unknown): string | null {
   const content = message.content
   if (typeof content === 'string') return content
   return null
+}
+
+function extractEmbeddingDim(payload: unknown): number | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const { data } = payload as { data?: unknown }
+  if (!Array.isArray(data) || data.length === 0) return null
+  const first = data[0] as { embedding?: unknown } | null
+  if (!first || typeof first !== 'object') return null
+  const emb = first.embedding
+  if (!Array.isArray(emb) || emb.length === 0) return null
+  return emb.length
 }
 
 function countOpenAIModels(payload: unknown): number | null {

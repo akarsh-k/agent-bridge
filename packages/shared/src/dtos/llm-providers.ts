@@ -176,6 +176,13 @@ export const llmProviderTestInputSchema = z
     baseUrl: baseFields.baseUrl,
     defaultModel: baseFields.defaultModel,
     apiKey: baseFields.apiKey,
+    /**
+     * Which API surface to probe. Defaults to `chat` (POST
+     * /v1/chat/completions). When set to `embedding`, the connector
+     * POSTs to /v1/embeddings instead — used to verify embedding
+     * models that semantic-recall depends on.
+     */
+    capability: z.enum(['chat', 'embedding']).optional(),
   })
   .strict()
   .partial()

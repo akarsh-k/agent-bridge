@@ -22,6 +22,12 @@ export interface ConnectorInput {
    * reachability probe (e.g. "list models") instead of a completion.
    */
   readonly model: string | null
+  /**
+   * Which API surface to exercise. Defaults to `'chat'` — the historical
+   * behavior. `'embedding'` flips the connector to `/v1/embeddings`,
+   * used so users can verify the embedding model semantic-recall picks.
+   */
+  readonly capability?: 'chat' | 'embedding'
 }
 
 /**

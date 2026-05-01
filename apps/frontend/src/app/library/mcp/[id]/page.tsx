@@ -217,6 +217,9 @@ export function McpDetailPage({ id }: { id: string }) {
 
   return (
     <div className="ab-page">
+      <Link to="/library/mcp" className="ab-back-link">
+        Back to MCP servers
+      </Link>
       <div className="ab-detail-header">
         <BrandGlyph kind={brandFor(conn.name)} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -230,9 +233,6 @@ export function McpDetailPage({ id }: { id: string }) {
           </div>
         </div>
         <div className="ab-page-actions">
-          <Button variant="ghost" onClick={() => navigate('/library/mcp')}>
-            ← Back
-          </Button>
           <Button
             variant="primary"
             onClick={discover}

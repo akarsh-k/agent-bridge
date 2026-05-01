@@ -28,12 +28,7 @@ import { EmptyState } from '../../ui/empty'
 import { RowMenu } from '../../ui/row-menu'
 import { confirmDialog } from '../../ui/dialog-store'
 import { toast } from '../../ui/toast-store'
-import {
-  BridgeIcon,
-  PencilIcon,
-  PlusIcon,
-  ToolIcon,
-} from '../../ui/icons'
+import { BridgeIcon, PlusIcon, ToolIcon } from '../../ui/icons'
 import { BridgeToolSheet } from './bridge-tool-sheet'
 
 export function BridgeToolsTab({ agentId }: { agentId: string }) {
@@ -218,9 +213,6 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
                         },
                       ]}
                     />
-                    <span className="ab-row-affordance" aria-hidden="true">
-                      <PencilIcon />
-                    </span>
                   </div>
                 </div>
               ))}

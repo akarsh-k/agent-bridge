@@ -53,6 +53,7 @@ import type {
   RepoCreateInput,
   RepoEdgeCreateInput,
   RepoEdgeResponse,
+  RepoEdgeUpdateInput,
   RepoResponse,
   RepoUpdateInput,
   SkillCreateInput,
@@ -451,6 +452,34 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           [agentId]: {
             ...cur,
             repoEdges: [...cur.repoEdges, edge],
+          },
+        }
+      })
+      return edge
+    },
+    [],
+  )
+
+  const patchRepoEdge = useCallback(
+    async (
+      agentId: string,
+      edgeId: string,
+      patch: RepoEdgeUpdateInput,
+    ): Promise<RepoEdgeResponse> => {
+      const { edge } = await callApi<{ ok: true; edge: RepoEdgeResponse }>(
+        rpc.api.agents[':agentId']['repo-edges'][':edgeId'].$patch({
+          param: { agentId, edgeId },
+          json: patch,
+        }),
+      )
+      setAgentResources((prev) => {
+        const cur = prev[agentId]
+        if (!cur) return prev
+        return {
+          ...prev,
+          [agentId]: {
+            ...cur,
+            repoEdges: cur.repoEdges.map((e) => (e.id === edgeId ? edge : e)),
           },
         }
       })
@@ -917,6 +946,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       patchAttachedRepo,
       detachRepo,
       createRepoEdge,
+      patchRepoEdge,
       removeRepoEdge,
       createRepo,
       createLlmProvider,
@@ -951,6 +981,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       patchAttachedRepo,
       detachRepo,
       createRepoEdge,
+      patchRepoEdge,
       removeRepoEdge,
       createRepo,
       createLlmProvider,

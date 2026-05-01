@@ -13,7 +13,7 @@ import { Button } from '../../ui/button'
 import { Pill, type PillKind } from '../../ui/pill'
 import { BrandGlyph } from '../../ui/brand-glyph'
 import { EmptyState } from '../../ui/empty'
-import { PlusIcon, FileIcon, PencilIcon } from '../../ui/icons'
+import { PlusIcon, FileIcon } from '../../ui/icons'
 import { toast } from '../../ui/toast-store'
 import { confirmDialog } from '../../ui/dialog-store'
 import { RowMenu } from '../../ui/row-menu'
@@ -313,7 +313,7 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                             setEditingRepoAttachmentId(r.repo.id),
                         },
                         {
-                          label: 'Open in library',
+                          label: 'Manage repository',
                           onClick: () =>
                             navigate(`/library/repos/${r.repo.id}`),
                         },
@@ -328,9 +328,6 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                         },
                       ]}
                     />
-                    <span className="ab-row-affordance" aria-hidden="true">
-                      <PencilIcon />
-                    </span>
                   </div>
                 </div>
               )
@@ -449,9 +446,6 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                           },
                         ]}
                       />
-                      <span className="ab-row-affordance" aria-hidden="true">
-                        <PencilIcon />
-                      </span>
                     </div>
                   </div>
                 )
@@ -582,9 +576,6 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                         },
                       ]}
                     />
-                    <span className="ab-row-affordance" aria-hidden="true">
-                      <PencilIcon />
-                    </span>
                   </div>
                 </div>
               )

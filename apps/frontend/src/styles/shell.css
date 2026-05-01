@@ -1733,6 +1733,133 @@ button.ab-list-row {
 
 /* ---- Detail header -------------------------------------------------------- */
 
+/* "Play chip" used by the LLM provider detail page to render each
+ * cached model. The chip's leading slot carries an explicit verb
+ * ("Test" / "Passed" / "Failed") so a first-time user knows what a
+ * click will do — icon-only affordances aren't enough on their own
+ * for an action that isn't visually conventional ("click a tag to
+ * send a network call"). Background tint encodes test result;
+ * default-model markers ride on the border so they stack with status
+ * colors. */
+.ab-model-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 7px;
+  border-radius: var(--radius);
+  background: var(--surface-hi);
+  border: 1px solid var(--border-strong);
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
+}
+.ab-model-chip:hover {
+  background: var(--surface-hover);
+  border-color: var(--accent-400);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.ab-model-chip:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+.ab-model-chip-verb {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: var(--radius-sm);
+  background: var(--accent-bg);
+  color: var(--accent-300);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  line-height: 1;
+}
+.ab-model-chip-verb-icon {
+  font-size: 8px;
+  line-height: 1;
+}
+.ab-model-chip.is-passed {
+  background: var(--success-bg);
+  border-color: rgba(52, 211, 153, 0.28);
+}
+.ab-model-chip.is-passed .ab-model-chip-verb {
+  background: rgba(52, 211, 153, 0.18);
+  color: var(--success);
+}
+.ab-model-chip.is-failed {
+  background: var(--danger-bg);
+  border-color: rgba(251, 113, 133, 0.3);
+}
+.ab-model-chip.is-failed .ab-model-chip-verb {
+  background: rgba(251, 113, 133, 0.18);
+  color: var(--danger);
+}
+.ab-model-chip.is-default {
+  border-color: var(--accent-400);
+  box-shadow: inset 0 0 0 1px var(--accent-400);
+}
+/* Read-only variant for models the provider lists but that we can't
+ * actually test (embedding, audio, image). Same chip footprint so the
+ * grid stays visually consistent, but explicitly NOT a button — no
+ * pointer cursor, no hover lift, no Test verb. The label slot carries
+ * the category instead so the user understands why it's frozen. */
+.ab-model-chip.is-readonly {
+  cursor: default;
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+.ab-model-chip.is-readonly:hover {
+  background: var(--surface);
+  border-color: var(--border);
+  box-shadow: none;
+}
+.ab-model-chip.is-readonly .ab-model-chip-verb {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.ab-model-chip-default-badge {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--accent-300);
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  background: var(--accent-bg);
+}
+
+/* Back-to-list link that sits ABOVE the detail header on every
+ * `library/<resource>/<id>` page. Lives outside the page actions area
+ * so navigation doesn't compete with operational buttons (Clone,
+ * Re-index, Generate wiki, etc.) for visual weight. */
+.ab-back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 4px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-decoration: none;
+  transition: color var(--dur-1) var(--ease-out);
+}
+.ab-back-link:hover {
+  color: var(--text);
+}
+.ab-back-link::before {
+  content: '←';
+  font-size: 13px;
+  line-height: 1;
+}
 .ab-detail-header {
   display: flex;
   align-items: flex-start;
@@ -1867,7 +1994,7 @@ button.ab-list-row {
 
 /* Inline error line that sits inside the row's text content stack
  * (under the URL). No banner, no left bar, no action button — the
- * "Error" pill on the right + "Open in library" in the kebab menu
+ * "Error" pill on the right + "Manage repository" in the kebab menu
  * handle status + recovery; this just surfaces the message itself
  * in muted danger color, single-line truncated, full text on hover. */
 .ab-list-row-error {

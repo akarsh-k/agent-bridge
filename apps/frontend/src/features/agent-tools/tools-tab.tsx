@@ -9,12 +9,7 @@ import { useWorkspace } from '../../lib/workspace-context'
 import { Button } from '../../ui/button'
 import { Pill } from '../../ui/pill'
 import { EmptyState } from '../../ui/empty'
-import {
-  ChevronDownIcon,
-  PencilIcon,
-  PlusIcon,
-  ToolIcon,
-} from '../../ui/icons'
+import { ChevronDownIcon, PlusIcon, ToolIcon } from '../../ui/icons'
 import { RowMenu } from '../../ui/row-menu'
 import { confirmDialog } from '../../ui/dialog-store'
 import { toast } from '../../ui/toast-store'
@@ -347,9 +342,6 @@ export function ToolsTab({ agentId }: { agentId: string }) {
                       },
                     ]}
                   />
-                  <span className="ab-row-affordance" aria-hidden="true">
-                    <PencilIcon />
-                  </span>
                 </div>
               </div>
             )

@@ -6,6 +6,7 @@ import { useMemo, useState } from 'react'
 import {
   mcpConnectionCreateInputSchema,
   mcpTransports,
+  type McpConnectionResponse,
   type McpTransport,
 } from '@agent-bridge/shared'
 import { Sheet } from '../../ui/sheet'
@@ -21,7 +22,13 @@ const TRANSPORT_LABEL: Record<McpTransport, string> = {
   sse: 'sse (server-sent events)',
 }
 
-function McpCreateForm({ onClose }: { onClose: () => void }) {
+function McpCreateForm({
+  onClose,
+  onCreated,
+}: {
+  onClose: () => void
+  onCreated?: (connection: McpConnectionResponse) => void
+}) {
   const { createMcpConnection } = useWorkspace()
   const [name, setName] = useState('')
   const [transport, setTransport] = useState<McpTransport>('stdio')
@@ -72,8 +79,9 @@ function McpCreateForm({ onClose }: { onClose: () => void }) {
     }
     setBusy(true)
     try {
-      await createMcpConnection(parsed.data)
+      const created = await createMcpConnection(parsed.data)
       toast.success(`MCP “${name.trim()}” connected`)
+      onCreated?.(created)
       onClose()
     } catch (e) {
       setErr(
@@ -183,9 +191,16 @@ function McpCreateForm({ onClose }: { onClose: () => void }) {
 export function McpCreateSheet({
   open,
   onClose,
+  onCreated,
 }: {
   open: boolean
   onClose: () => void
+  /**
+   * Optional hook fired after successful creation, before `onClose`.
+   * Used by the agent-attach flow so the caller can auto-select the
+   * freshly-created connection in its own dropdown.
+   */
+  onCreated?: (connection: McpConnectionResponse) => void
 }) {
   const [openCount, setOpenCount] = useState(0)
   const [prevOpen, setPrevOpen] = useState(open)
@@ -200,5 +215,7 @@ export function McpCreateSheet({
       </Sheet>
     )
   }
-  return <McpCreateForm key={openCount} onClose={onClose} />
+  return (
+    <McpCreateForm key={openCount} onClose={onClose} onCreated={onCreated} />
+  )
 }

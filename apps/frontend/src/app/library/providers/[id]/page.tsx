@@ -17,6 +17,67 @@ import { useDefaultProviderId } from '../../../../lib/use-default-provider'
 
 const LOCAL_KINDS = new Set(['llama_cpp', 'ollama', 'openai_compatible'])
 
+/**
+ * Bucket an OpenAI model id into a coarse family for the cached-models
+ * picker. Heuristic-only — keeps the catalog scannable without us
+ * having to maintain an exhaustive registry.
+ *
+ * Ordering matters: more-specific patterns must check first. e.g.
+ * `gpt-4o-realtime-preview` matches both `realtime` and `gpt-4` —
+ * we want it bucketed as Realtime so the read-only treatment kicks in
+ * (its endpoint is the WebSocket /v1/realtime, not chat completions).
+ */
+function categorizeOpenAIModel(model: string): string {
+  // Non-chat categories first (these dispatch to other endpoints).
+  if (model.includes('moderation')) return 'Moderation'
+  if (model.includes('realtime')) return 'Realtime'
+  if (model.startsWith('whisper')) return 'Audio transcription'
+  if (model.startsWith('tts-')) return 'Audio synthesis'
+  if (model.startsWith('dall-e') || model.startsWith('gpt-image')) {
+    return 'Image generation'
+  }
+  if (model.includes('embedding')) return 'Embeddings'
+  if (model === 'babbage-002' || model === 'davinci-002') {
+    return 'Legacy completions'
+  }
+  // Chat-capable below this line.
+  if (model.startsWith('gpt-4') || model.startsWith('chatgpt-')) {
+    return 'GPT-4 family'
+  }
+  if (model.startsWith('gpt-3.5')) return 'GPT-3.5 family'
+  if (/^o\d/.test(model)) return 'Reasoning (o-series)'
+  return 'Other'
+}
+
+/**
+ * Categories that are LISTED by `/v1/models` but can't be exercised by
+ * our test endpoint (which always POSTs to `/v1/chat/completions`).
+ * Rendering these as read-only chips stops the UI from promising a
+ * test that's guaranteed to 404. When we eventually add per-capability
+ * test endpoints, this set shrinks to just the truly-untestable kinds.
+ */
+const NON_CHAT_CATEGORIES = new Set([
+  'Image generation',
+  'Audio transcription',
+  'Audio synthesis',
+  'Moderation',
+  'Realtime',
+  'Legacy completions',
+])
+
+/** Verb-slot label for a non-chat category. Short so it doesn't push
+ *  the model name out of the visible chip width. */
+function readonlyVerbFor(category: string): string {
+  if (category === 'Embeddings') return 'Embed'
+  if (category === 'Image generation') return 'Image'
+  if (category === 'Audio transcription') return 'Audio'
+  if (category === 'Audio synthesis') return 'Audio'
+  if (category === 'Moderation') return 'Mod'
+  if (category === 'Realtime') return 'Realtime'
+  if (category === 'Legacy completions') return 'Legacy'
+  return 'Info'
+}
+
 export function ProviderDetailPage({ id }: { id: string }) {
   const {
     agents,
@@ -45,6 +106,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
     Record<string, 'pending' | 'ok' | 'error'>
   >({})
   const [modelTestMsg, setModelTestMsg] = useState<Record<string, string>>({})
+  const [modelSearch, setModelSearch] = useState('')
   const { defaultProviderId, setDefaultProviderId } = useDefaultProviderId()
 
   if (provider && seededFor !== provider.id) {
@@ -60,6 +122,42 @@ export function ProviderDetailPage({ id }: { id: string }) {
     () => (provider ? LOCAL_KINDS.has(provider.kind) : false),
     [provider],
   )
+
+  // Group + filter the cached model list. For openai we bucket by family
+  // heuristic (so the user can scan a 50+ model catalog without
+  // scrolling); for any other provider we leave it flat — local model
+  // names are arbitrary and the user knows what they pulled in.
+  const groupedModels = useMemo(() => {
+    const all = provider?.models?.models ?? []
+    const q = modelSearch.trim().toLowerCase()
+    const filtered = q ? all.filter((m) => m.toLowerCase().includes(q)) : all
+    if (provider?.kind !== 'openai') {
+      return filtered.length > 0 ? [['', filtered] as const] : []
+    }
+    const groups = new Map<string, string[]>()
+    for (const m of filtered) {
+      const cat = categorizeOpenAIModel(m)
+      const arr = groups.get(cat) ?? []
+      arr.push(m)
+      groups.set(cat, arr)
+    }
+    const order = [
+      'GPT-4 family',
+      'Reasoning (o-series)',
+      'GPT-3.5 family',
+      'Other',
+      'Image generation',
+      'Audio transcription',
+      'Audio synthesis',
+      'Realtime',
+      'Moderation',
+      'Embeddings',
+      'Legacy completions',
+    ]
+    return order
+      .map((cat) => [cat, groups.get(cat) ?? []] as const)
+      .filter(([, arr]) => arr.length > 0)
+  }, [provider?.models, provider?.kind, modelSearch])
 
   if (!provider) return <NotFound />
 
@@ -167,7 +265,10 @@ export function ProviderDetailPage({ id }: { id: string }) {
     }
   }
 
-  const testModel = async (model: string) => {
+  const testModel = async (
+    model: string,
+    capability: 'chat' | 'embedding' = 'chat',
+  ) => {
     setModelTestState((s) => ({ ...s, [model]: 'pending' }))
     setModelTestMsg((s) => {
       const next = { ...s }
@@ -175,7 +276,10 @@ export function ProviderDetailPage({ id }: { id: string }) {
       return next
     })
     try {
-      const res = await testLlmProvider(provider.id, { defaultModel: model })
+      const res = await testLlmProvider(provider.id, {
+        defaultModel: model,
+        capability,
+      })
       if (res.ok) {
         setModelTestState((s) => ({ ...s, [model]: 'ok' }))
         setModelTestMsg((s) => ({
@@ -183,23 +287,25 @@ export function ProviderDetailPage({ id }: { id: string }) {
           [model]: `${res.durationMs}ms`,
         }))
       } else {
+        const reason = res.message ?? res.code
         setModelTestState((s) => ({ ...s, [model]: 'error' }))
-        setModelTestMsg((s) => ({
-          ...s,
-          [model]: res.message ?? res.code,
-        }))
+        setModelTestMsg((s) => ({ ...s, [model]: reason }))
+        // Surface the failure reason in a toast — the red chip alone
+        // signals "something broke" but the actionable detail (auth
+        // failure / model not found / rate limit / etc.) only lives
+        // in the title tooltip otherwise, which is easy to miss.
+        toast.error(`${model} failed: ${reason}`)
       }
     } catch (e) {
-      setModelTestState((s) => ({ ...s, [model]: 'error' }))
-      setModelTestMsg((s) => ({
-        ...s,
-        [model]:
-          e instanceof ApiError
+      const reason =
+        e instanceof ApiError
+          ? e.message
+          : e instanceof Error
             ? e.message
-            : e instanceof Error
-              ? e.message
-              : 'failed',
-      }))
+            : 'failed'
+      setModelTestState((s) => ({ ...s, [model]: 'error' }))
+      setModelTestMsg((s) => ({ ...s, [model]: reason }))
+      toast.error(`${model} failed: ${reason}`)
     }
   }
 
@@ -248,6 +354,9 @@ export function ProviderDetailPage({ id }: { id: string }) {
 
   return (
     <div className="ab-page">
+      <Link to="/library/providers" className="ab-back-link">
+        Back to LLM providers
+      </Link>
       <div className="ab-detail-header">
         <div className="ab-detail-glyph ab-glyph ab-glyph-violet">
           {provider.label.charAt(0).toUpperCase()}
@@ -268,9 +377,6 @@ export function ProviderDetailPage({ id }: { id: string }) {
           </div>
         </div>
         <div className="ab-page-actions">
-          <Button variant="ghost" onClick={() => navigate('/library/providers')}>
-            ← Back
-          </Button>
           {defaultProviderId === provider.id ? (
             <Button
               variant="secondary"
@@ -443,8 +549,9 @@ export function ProviderDetailPage({ id }: { id: string }) {
           <div style={{ flex: 1 }}>
             <div className="ab-section-title">Cached models</div>
             <div className="ab-section-sub">
-              Snapshot of <code className="ab-mono">/v1/models</code>.
-              Refresh to pick up new releases.
+              Snapshot of <code className="ab-mono">/v1/models</code>. Click
+              any model to send a one-token test prompt and verify your key
+              + endpoint.
             </div>
           </div>
           {provider.models?.fetchedAt && (
@@ -458,65 +565,155 @@ export function ProviderDetailPage({ id }: { id: string }) {
           )}
         </div>
         {provider.models && provider.models.models.length > 0 ? (
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              gap: 6,
-            }}
-          >
-            {provider.models.models.map((m) => {
-              const state = modelTestState[m]
-              const msg = modelTestMsg[m]
-              return (
-                <button
-                  key={m}
-                  type="button"
-                  className="ab-mono"
-                  onClick={() => void testModel(m)}
-                  disabled={state === 'pending'}
-                  style={{
-                    padding: '4px 10px',
-                    borderRadius: 'var(--radius-pill)',
-                    background:
-                      state === 'ok'
-                        ? 'var(--success-bg)'
-                        : state === 'error'
-                          ? 'var(--danger-bg)'
-                          : 'var(--surface-hi)',
-                    border:
-                      '1px solid ' +
-                      (state === 'ok'
-                        ? 'rgba(52, 211, 153, 0.22)'
-                        : state === 'error'
-                          ? 'rgba(251, 113, 133, 0.24)'
-                          : 'var(--border)'),
-                    color:
-                      state === 'ok'
-                        ? 'var(--success)'
-                        : state === 'error'
-                          ? 'var(--danger)'
-                          : 'var(--text)',
-                    fontSize: 12,
-                    cursor: state === 'pending' ? 'wait' : 'pointer',
-                    font: 'inherit',
-                  }}
-                  title={
-                    state === 'pending'
-                      ? 'Testing…'
-                      : msg
-                        ? `${state === 'ok' ? 'OK · ' : ''}${msg}`
-                        : 'Click to test this model'
-                  }
-                >
-                  {m}
-                  {state === 'pending' && ' …'}
-                  {state === 'ok' && ' ✓'}
-                  {state === 'error' && ' ✕'}
-                </button>
-              )
-            })}
-          </div>
+          <>
+            <div className="ab-field" style={{ marginBottom: 12 }}>
+              <input
+                type="search"
+                className="ab-input ab-mono"
+                value={modelSearch}
+                onChange={(e) => setModelSearch(e.target.value)}
+                placeholder={`Search ${provider.models.models.length} model${provider.models.models.length === 1 ? '' : 's'}…`}
+              />
+            </div>
+            {groupedModels.length === 0 ? (
+              <div className="ab-field-help">
+                No models match “{modelSearch}”.
+              </div>
+            ) : (
+              <div
+                style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
+              >
+                {groupedModels.map(([groupName, models]) => {
+                  const isReadOnlyGroup = NON_CHAT_CATEGORIES.has(groupName)
+                  return (
+                    <div key={groupName || 'all'}>
+                      {groupName && (
+                        <div
+                          style={{
+                            marginBottom: 8,
+                            fontSize: 11,
+                            textTransform: 'uppercase',
+                            letterSpacing: '0.04em',
+                            color: 'var(--text-muted)',
+                          }}
+                        >
+                          {groupName}{' '}
+                          <span style={{ opacity: 0.6 }}>
+                            ({models.length})
+                          </span>
+                        </div>
+                      )}
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: 6,
+                        }}
+                      >
+                        {models.map((m) => {
+                          const isDefault = provider.defaultModel === m
+                          const isEmbedDefault =
+                            provider.defaultEmbeddingModel === m
+                          const isFlagged = isDefault || isEmbedDefault
+                          const flagClass = isFlagged ? ' is-default' : ''
+
+                          // Read-only chip for embedding/image/audio
+                          // categories: provider lists them, but our test
+                          // hits /v1/chat/completions which they don't
+                          // support. Render as a non-interactive label so
+                          // the user understands why it's frozen.
+                          if (isReadOnlyGroup) {
+                            return (
+                              <div
+                                key={m}
+                                className={`ab-model-chip is-readonly${flagClass}`}
+                                title={`${groupName} model — listed by your provider but not callable via the chat-completions endpoint we use for testing.`}
+                              >
+                                <span className="ab-model-chip-verb">
+                                  {readonlyVerbFor(groupName)}
+                                </span>
+                                <span className="ab-mono">{m}</span>
+                                {isDefault && (
+                                  <span className="ab-model-chip-default-badge">
+                                    default
+                                  </span>
+                                )}
+                                {isEmbedDefault && (
+                                  <span className="ab-model-chip-default-badge">
+                                    embed default
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          }
+
+                          const state = modelTestState[m]
+                          const msg = modelTestMsg[m]
+                          const stateClass =
+                            state === 'ok'
+                              ? ' is-passed'
+                              : state === 'error'
+                                ? ' is-failed'
+                                : ''
+                          const capability =
+                            groupName === 'Embeddings' ? 'embedding' : 'chat'
+                          return (
+                            <button
+                              key={m}
+                              type="button"
+                              className={`ab-model-chip${stateClass}${flagClass}`}
+                              onClick={() => void testModel(m, capability)}
+                              disabled={state === 'pending'}
+                              title={
+                                msg
+                                  ? `${state === 'ok' ? 'OK · ' : ''}${msg}`
+                                  : capability === 'embedding'
+                                    ? `Send a tiny embedding request to ${m}`
+                                    : `Send a one-token test prompt to ${m}`
+                              }
+                            >
+                              <span className="ab-model-chip-verb">
+                                <span
+                                  className="ab-model-chip-verb-icon"
+                                  aria-hidden
+                                >
+                                  {state === 'ok'
+                                    ? '✓'
+                                    : state === 'error'
+                                      ? '✕'
+                                      : state === 'pending'
+                                        ? '…'
+                                        : '▶'}
+                                </span>
+                                {state === 'ok'
+                                  ? 'Passed'
+                                  : state === 'error'
+                                    ? 'Failed'
+                                    : state === 'pending'
+                                      ? 'Testing'
+                                      : 'Test'}
+                              </span>
+                              <span className="ab-mono">{m}</span>
+                              {isDefault && (
+                                <span className="ab-model-chip-default-badge">
+                                  default
+                                </span>
+                              )}
+                              {isEmbedDefault && (
+                                <span className="ab-model-chip-default-badge">
+                                  embed default
+                                </span>
+                              )}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </>
         ) : (
           <div className="ab-field-help">
             No models cached yet. Hit{' '}

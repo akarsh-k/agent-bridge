@@ -77,7 +77,12 @@ export async function testProvider(
     // added that doesn't, replace this direct call with a `switch` —
     // keeping `kind` in scope keeps that migration cheap.
     void kind
-    result = await testOpenAICompatible({ baseUrl, apiKey, model })
+    result = await testOpenAICompatible({
+      baseUrl,
+      apiKey,
+      model,
+      capability: override.capability ?? 'chat',
+    })
   } catch (err) {
     // Connectors never throw by contract; if one does, don't let the
     // plaintext key leak through the stack trace.

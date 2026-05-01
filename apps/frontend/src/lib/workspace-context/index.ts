@@ -36,6 +36,7 @@ import type {
   RepoCreateInput,
   RepoEdgeCreateInput,
   RepoEdgeResponse,
+  RepoEdgeUpdateInput,
   RepoResponse,
   RepoUpdateInput,
   SkillCreateInput,
@@ -113,6 +114,11 @@ export interface WorkspaceContextValue {
   createRepoEdge: (
     agentId: string,
     input: RepoEdgeCreateInput,
+  ) => Promise<RepoEdgeResponse>
+  patchRepoEdge: (
+    agentId: string,
+    edgeId: string,
+    patch: RepoEdgeUpdateInput,
   ) => Promise<RepoEdgeResponse>
   removeRepoEdge: (agentId: string, edgeId: string) => Promise<void>
 

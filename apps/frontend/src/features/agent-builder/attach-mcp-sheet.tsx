@@ -8,11 +8,13 @@ import { useEffect, useMemo, useState } from 'react'
 import type { AllowlistEntry } from '@agent-bridge/shared'
 import { Sheet } from '../../ui/sheet'
 import { Dropdown, type DropdownOption } from '../../ui/dropdown'
+import { Button } from '../../ui/button'
+import { PlusIcon } from '../../ui/icons'
 import { useWorkspace } from '../../lib/workspace-context'
 import { ApiError, discoverMcpTools, pollMcpTest } from '../../lib/rpc'
 import { toast } from '../../ui/toast-store'
-import { Link } from '../../lib/link'
 import { useDirtyClose } from '../../lib/use-dirty-close'
+import { McpCreateSheet } from '../library/mcp-create-sheet'
 
 interface DiscoveredTool {
   name: string
@@ -41,6 +43,7 @@ function AttachMcpForm({
   const [discovered, setDiscovered] = useState<DiscoveredTool[] | null>(null)
   const [discovering, setDiscovering] = useState(false)
   const [discoverErr, setDiscoverErr] = useState<string | null>(null)
+  const [createSheetOpen, setCreateSheetOpen] = useState(false)
 
   // Initialise the allowed set with whatever's currently allowed.
   const initiallyAllowed = useMemo(
@@ -244,22 +247,43 @@ function AttachMcpForm({
       primaryDisabled={!connectionId}
     >
       {mcpConnections.length === 0 ? (
-        <div className="ab-field-help">
-          No MCP servers in your library yet.{' '}
-          <Link to="/library/mcp" style={{ color: 'var(--accent-300)' }}>
-            Add one →
-          </Link>
+        <div className="ab-field" style={{ alignItems: 'flex-start' }}>
+          <div className="ab-field-help" style={{ marginBottom: 10 }}>
+            No MCP servers in your library yet. Create one to attach it
+            to this agent.
+          </div>
+          <Button
+            variant="primary"
+            size="sm"
+            leading={<PlusIcon strokeWidth={2.4} />}
+            onClick={() => setCreateSheetOpen(true)}
+          >
+            New MCP connection
+          </Button>
         </div>
       ) : (
         <>
           <div className="ab-field">
             <span className="ab-field-label">Connection</span>
-            <Dropdown
-              value={connectionId}
-              onChange={setConnectionId}
-              options={opts}
-              placeholder="Pick a connection"
-            />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <Dropdown
+                  value={connectionId}
+                  onChange={setConnectionId}
+                  options={opts}
+                  placeholder="Pick a connection"
+                />
+              </div>
+              <Button
+                variant="secondary"
+                size="sm"
+                leading={<PlusIcon strokeWidth={2.4} />}
+                onClick={() => setCreateSheetOpen(true)}
+                title="Create a new MCP connection"
+              >
+                New
+              </Button>
+            </div>
           </div>
           {discovering && (
             <div className="ab-field-help">Discovering tools…</div>
@@ -346,6 +370,18 @@ function AttachMcpForm({
           )}
         </>
       )}
+      <McpCreateSheet
+        open={createSheetOpen}
+        onClose={() => setCreateSheetOpen(false)}
+        onCreated={(connection) => {
+          // Auto-select the freshly-created MCP so the existing
+          // discovery effect kicks off without an extra click. The
+          // workspace store already has it (createMcpConnection
+          // updates `mcpConnections`), so the dropdown will render
+          // it on this same render pass.
+          setConnectionId(connection.id)
+        }}
+      />
     </Sheet>
   )
 }

@@ -153,6 +153,9 @@ export function RepoDetailPage({ id }: { id: string }) {
 
   return (
     <div className="ab-page">
+      <Link to="/library/repos" className="ab-back-link">
+        Back to repositories
+      </Link>
       <div className="ab-detail-header">
         <BrandGlyph kind="github" />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -170,9 +173,6 @@ export function RepoDetailPage({ id }: { id: string }) {
           </div>
         </div>
         <div className="ab-page-actions">
-          <Button variant="ghost" onClick={() => navigate('/library/repos')}>
-            ← Back
-          </Button>
           <Button
             variant="secondary"
             onClick={clone}
@@ -187,6 +187,24 @@ export function RepoDetailPage({ id }: { id: string }) {
           >
             {running === 'Re-index' ? 'Indexing…' : 'Re-index'}
           </Button>
+          {repo.indexSummary && (
+            <Button
+              variant="secondary"
+              onClick={() => setGraphOpen(true)}
+            >
+              View graph
+            </Button>
+          )}
+          {repo.wikiStatus === 'ready' && (
+            <a
+              href={repoWikiViewerUrl(repo.id)}
+              target="_blank"
+              rel="noreferrer"
+              className="ab-btn ab-btn-secondary"
+            >
+              Open wiki
+            </a>
+          )}
           <Button
             variant="primary"
             onClick={() => setWikiSheet(true)}
@@ -256,6 +274,30 @@ export function RepoDetailPage({ id }: { id: string }) {
               label="Embeddings"
               value={repo.indexSummary.embeddings?.toLocaleString() ?? '—'}
             />
+            <div className="ab-field">
+              <span className="ab-field-label">Wiki</span>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  fontSize: 14,
+                }}
+              >
+                <Pill
+                  kind={repo.wikiStatus === 'ready' ? 'success' : 'neutral'}
+                  dot
+                >
+                  {repo.wikiStatus ?? 'none'}
+                </Pill>
+                {repo.wikiPages !== null &&
+                  repo.wikiPages !== undefined && (
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                      {repo.wikiPages} pages
+                    </span>
+                  )}
+              </div>
+            </div>
           </div>
         ) : (
           <div className="ab-field-help">
@@ -263,43 +305,6 @@ export function RepoDetailPage({ id }: { id: string }) {
             finishes.
           </div>
         )}
-      </div>
-
-      <div className="ab-card ab-card-pad ab-form-section">
-        <div className="ab-section-head">
-          <div className="ab-section-title">Wiki</div>
-          <div className="ab-section-sub">
-            HTML view of the repo's structure. Regenerated on demand via
-            an LLM provider.
-          </div>
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <Pill kind={repo.wikiStatus === 'ready' ? 'success' : 'neutral'} dot>
-            {repo.wikiStatus ?? 'none'}
-          </Pill>
-          {repo.wikiStatus === 'ready' && (
-            <a
-              href={repoWikiViewerUrl(repo.id)}
-              target="_blank"
-              rel="noreferrer"
-              className="ab-btn ab-btn-secondary ab-btn-sm"
-            >
-              Open wiki
-            </a>
-          )}
-          {repo.indexSummary && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => setGraphOpen(true)}
-            >
-              View graph
-            </Button>
-          )}
-          {repo.wikiPages !== null && repo.wikiPages !== undefined && (
-            <span className="ab-field-help">{repo.wikiPages} pages</span>
-          )}
-        </div>
       </div>
 
       <RepoLogTail repoId={repo.id} />

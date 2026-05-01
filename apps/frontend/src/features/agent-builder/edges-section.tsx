@@ -6,6 +6,7 @@
  */
 
 import { useMemo, useState } from 'react'
+import type { RepoEdgeResponse } from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
 import { Button } from '../../ui/button'
 import { Dropdown, type DropdownOption } from '../../ui/dropdown'
@@ -23,11 +24,29 @@ function shortRepoName(remoteUrl: string): string {
 }
 
 export function EdgesSection({ agentId }: { agentId: string }) {
-  const { agentResources, createRepoEdge, removeRepoEdge } = useWorkspace()
+  const { agentResources, createRepoEdge, patchRepoEdge, removeRepoEdge } =
+    useWorkspace()
   const resources = agentResources[agentId]
   const attached = resources?.attachedRepos ?? []
   const edges = resources?.repoEdges ?? []
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null)
+  const editingEdge = editingEdgeId
+    ? (edges.find((e) => e.id === editingEdgeId) ?? null)
+    : null
+
+  const openCreate = () => {
+    setEditingEdgeId(null)
+    setSheetOpen(true)
+  }
+  const openEdit = (edgeId: string) => {
+    setEditingEdgeId(edgeId)
+    setSheetOpen(true)
+  }
+  const closeSheet = () => {
+    setSheetOpen(false)
+    setEditingEdgeId(null)
+  }
 
   const repoLabel = (id: string): string => {
     const a = attached.find((r) => r.repo.id === id)
@@ -80,7 +99,7 @@ export function EdgesSection({ agentId }: { agentId: string }) {
           variant="secondary"
           size="sm"
           leading={<PlusIcon strokeWidth={2.4} />}
-          onClick={() => setSheetOpen(true)}
+          onClick={openCreate}
           disabled={attached.length < 2}
           title={
             attached.length < 2
@@ -100,7 +119,19 @@ export function EdgesSection({ agentId }: { agentId: string }) {
       ) : (
         <div className="ab-card ab-list-card">
           {edges.map((e) => (
-            <div className="ab-list-row is-static" key={e.id}>
+            <div
+              className="ab-list-row is-edit"
+              key={e.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => openEdit(e.id)}
+              onKeyDown={(ev) => {
+                if (ev.key === 'Enter' || ev.key === ' ') {
+                  ev.preventDefault()
+                  openEdit(e.id)
+                }
+              }}
+            >
               <span className="ab-mono" style={{ flex: '0 0 auto' }}>
                 {repoLabel(e.fromRepoId)}
               </span>
@@ -119,12 +150,19 @@ export function EdgesSection({ agentId }: { agentId: string }) {
               <span className="ab-mono" style={{ flex: 1 }}>
                 {repoLabel(e.toRepoId)}
               </span>
-              <div className="ab-list-row-meta">
+              <div
+                className="ab-list-row-meta"
+                onClick={(ev) => ev.stopPropagation()}
+              >
                 {e.description && (
                   <span className="ab-field-help">{e.description}</span>
                 )}
                 <RowMenu
                   items={[
+                    {
+                      label: 'Edit edge',
+                      onClick: () => openEdit(e.id),
+                    },
                     {
                       label: 'Delete edge',
                       destructive: true,
@@ -144,9 +182,11 @@ export function EdgesSection({ agentId }: { agentId: string }) {
       <EdgeSheet
         open={sheetOpen}
         agentId={agentId}
-        onClose={() => setSheetOpen(false)}
+        onClose={closeSheet}
         attached={attached}
         createEdge={createRepoEdge}
+        patchEdge={patchRepoEdge}
+        editingEdge={editingEdge}
       />
     </div>
   )
@@ -157,9 +197,9 @@ interface EdgeSheetProps {
   agentId: string
   onClose: () => void
   attached: ReadonlyArray<{ repo: { id: string; remoteUrl: string } }>
-  createEdge: ReturnType<
-    typeof useWorkspace
-  >['createRepoEdge']
+  createEdge: ReturnType<typeof useWorkspace>['createRepoEdge']
+  patchEdge: ReturnType<typeof useWorkspace>['patchRepoEdge']
+  editingEdge: RepoEdgeResponse | null
 }
 
 function EdgeForm({
@@ -167,6 +207,8 @@ function EdgeForm({
   onClose,
   attached,
   createEdge,
+  patchEdge,
+  editingEdge,
 }: Omit<EdgeSheetProps, 'open'>) {
   const opts: DropdownOption[] = useMemo(
     () =>
@@ -176,11 +218,16 @@ function EdgeForm({
       })),
     [attached],
   )
+  const isEdit = editingEdge !== null
 
-  const [from, setFrom] = useState<string | null>(opts[0]?.value ?? null)
-  const [to, setTo] = useState<string | null>(opts[1]?.value ?? null)
-  const [connector, setConnector] = useState('uses')
-  const [description, setDescription] = useState('')
+  const [from, setFrom] = useState<string | null>(
+    editingEdge?.fromRepoId ?? opts[0]?.value ?? null,
+  )
+  const [to, setTo] = useState<string | null>(
+    editingEdge?.toRepoId ?? opts[1]?.value ?? null,
+  )
+  const [connector, setConnector] = useState(editingEdge?.connector ?? 'uses')
+  const [description, setDescription] = useState(editingEdge?.description ?? '')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -196,13 +243,23 @@ function EdgeForm({
     }
     setBusy(true)
     try {
-      await createEdge(agentId, {
-        fromRepoId: from,
-        toRepoId: to,
-        connector: connector.trim() || 'uses',
-        description: description.trim() || null,
-      })
-      toast.success('Edge added')
+      if (isEdit && editingEdge) {
+        // Endpoints are immutable post-create — only connector + description
+        // can be patched. The from/to dropdowns are disabled in edit mode.
+        await patchEdge(agentId, editingEdge.id, {
+          connector: connector.trim() || 'uses',
+          description: description.trim() || null,
+        })
+        toast.success('Edge updated')
+      } else {
+        await createEdge(agentId, {
+          fromRepoId: from,
+          toRepoId: to,
+          connector: connector.trim() || 'uses',
+          description: description.trim() || null,
+        })
+        toast.success('Edge added')
+      }
       onClose()
     } catch (e) {
       setErr(
@@ -210,7 +267,9 @@ function EdgeForm({
           ? e.message
           : e instanceof Error
             ? e.message
-            : 'Failed to create',
+            : isEdit
+              ? 'Failed to update'
+              : 'Failed to create',
       )
     } finally {
       setBusy(false)
@@ -221,9 +280,13 @@ function EdgeForm({
     <Sheet
       open
       onClose={onClose}
-      title="Add repo edge"
-      subtitle="A directed relationship between two attached repos."
-      primaryLabel="Add edge"
+      title={isEdit ? 'Edit repo edge' : 'Add repo edge'}
+      subtitle={
+        isEdit
+          ? 'Endpoints are fixed once created — change the connector or description.'
+          : 'A directed relationship between two attached repos.'
+      }
+      primaryLabel={isEdit ? 'Save changes' : 'Add edge'}
       onPrimary={submit}
       primaryBusy={busy}
       primaryDisabled={!from || !to || from === to}
@@ -236,6 +299,7 @@ function EdgeForm({
             onChange={setFrom}
             options={opts}
             placeholder="Source repo"
+            disabled={isEdit}
           />
         </div>
         <div className="ab-field">
@@ -245,6 +309,7 @@ function EdgeForm({
             onChange={setTo}
             options={opts}
             placeholder="Target repo"
+            disabled={isEdit}
           />
         </div>
         <div className="ab-field ab-field-col">
@@ -291,6 +356,8 @@ function EdgeSheet({
   agentId,
   attached,
   createEdge,
+  patchEdge,
+  editingEdge,
 }: EdgeSheetProps) {
   const [openCount, setOpenCount] = useState(0)
   const [prevOpen, setPrevOpen] = useState(open)
@@ -307,11 +374,13 @@ function EdgeSheet({
   }
   return (
     <EdgeForm
-      key={openCount}
+      key={`${openCount}:${editingEdge?.id ?? 'new'}`}
       agentId={agentId}
       onClose={onClose}
       attached={attached}
       createEdge={createEdge}
+      patchEdge={patchEdge}
+      editingEdge={editingEdge}
     />
   )
 }
