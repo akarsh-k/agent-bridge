@@ -10,53 +10,28 @@ import { Link } from '../../../../lib/link'
 import { navigate } from '../../../../lib/router'
 import { Button } from '../../../../ui/button'
 import { Pill } from '../../../../ui/pill'
+import { Dropdown, type DropdownOption } from '../../../../ui/dropdown'
 import { ApiError, refreshLlmProviderModels, testLlmProvider } from '../../../../lib/rpc'
 import { toast } from '../../../../ui/toast-store'
 import { confirmDialog } from '../../../../ui/dialog-store'
 import { useDefaultProviderId } from '../../../../lib/use-default-provider'
+import {
+  categorizeOpenAIModel,
+  isChatCapable,
+  isEmbeddingCapable,
+} from '../../../../lib/model-categories'
+import { ModelTestStatus } from '../../../../features/agent-tools/model-test-status'
+import { useModelTester } from '../../../../lib/use-model-tester'
 
 const LOCAL_KINDS = new Set(['llama_cpp', 'ollama', 'openai_compatible'])
 
 /**
- * Bucket an OpenAI model id into a coarse family for the cached-models
- * picker. Heuristic-only — keeps the catalog scannable without us
- * having to maintain an exhaustive registry.
- *
- * Ordering matters: more-specific patterns must check first. e.g.
- * `gpt-4o-realtime-preview` matches both `realtime` and `gpt-4` —
- * we want it bucketed as Realtime so the read-only treatment kicks in
- * (its endpoint is the WebSocket /v1/realtime, not chat completions).
+ * Categories rendered as read-only (untestable) on the cached-models
+ * grid. Mirrors NON_CHAT_CATEGORIES from the shared categorizer EXCEPT
+ * Embeddings — those ARE testable here because we now route them
+ * through the /v1/embeddings probe.
  */
-function categorizeOpenAIModel(model: string): string {
-  // Non-chat categories first (these dispatch to other endpoints).
-  if (model.includes('moderation')) return 'Moderation'
-  if (model.includes('realtime')) return 'Realtime'
-  if (model.startsWith('whisper')) return 'Audio transcription'
-  if (model.startsWith('tts-')) return 'Audio synthesis'
-  if (model.startsWith('dall-e') || model.startsWith('gpt-image')) {
-    return 'Image generation'
-  }
-  if (model.includes('embedding')) return 'Embeddings'
-  if (model === 'babbage-002' || model === 'davinci-002') {
-    return 'Legacy completions'
-  }
-  // Chat-capable below this line.
-  if (model.startsWith('gpt-4') || model.startsWith('chatgpt-')) {
-    return 'GPT-4 family'
-  }
-  if (model.startsWith('gpt-3.5')) return 'GPT-3.5 family'
-  if (/^o\d/.test(model)) return 'Reasoning (o-series)'
-  return 'Other'
-}
-
-/**
- * Categories that are LISTED by `/v1/models` but can't be exercised by
- * our test endpoint (which always POSTs to `/v1/chat/completions`).
- * Rendering these as read-only chips stops the UI from promising a
- * test that's guaranteed to 404. When we eventually add per-capability
- * test endpoints, this set shrinks to just the truly-untestable kinds.
- */
-const NON_CHAT_CATEGORIES = new Set([
+const READONLY_GRID_CATEGORIES = new Set([
   'Image generation',
   'Audio transcription',
   'Audio synthesis',
@@ -65,10 +40,9 @@ const NON_CHAT_CATEGORIES = new Set([
   'Legacy completions',
 ])
 
-/** Verb-slot label for a non-chat category. Short so it doesn't push
+/** Verb-slot label for a read-only chip. Short so it doesn't push
  *  the model name out of the visible chip width. */
 function readonlyVerbFor(category: string): string {
-  if (category === 'Embeddings') return 'Embed'
   if (category === 'Image generation') return 'Image'
   if (category === 'Audio transcription') return 'Audio'
   if (category === 'Audio synthesis') return 'Audio'
@@ -102,12 +76,9 @@ export function ProviderDetailPage({ id }: { id: string }) {
   const [refreshing, setRefreshing] = useState(false)
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<string | null>(null)
-  const [modelTestState, setModelTestState] = useState<
-    Record<string, 'pending' | 'ok' | 'error'>
-  >({})
-  const [modelTestMsg, setModelTestMsg] = useState<Record<string, string>>({})
   const [modelSearch, setModelSearch] = useState('')
   const { defaultProviderId, setDefaultProviderId } = useDefaultProviderId()
+  const tester = useModelTester(provider?.id ?? null)
 
   if (provider && seededFor !== provider.id) {
     setSeededFor(provider.id)
@@ -122,6 +93,66 @@ export function ProviderDetailPage({ id }: { id: string }) {
     () => (provider ? LOCAL_KINDS.has(provider.kind) : false),
     [provider],
   )
+
+  // Build dropdown options for the two model fields, filtered by
+  // capability so the user can't accidentally pick (say) an embedding
+  // model as the chat default. Always include the currently-selected
+  // value as an option even if it's no longer in the cached list, so
+  // legacy values don't silently disappear from the form.
+  const chatModelOpts: DropdownOption[] = useMemo(() => {
+    if (!provider) return []
+    const cached = provider.models?.models ?? []
+    const filtered = cached.filter((m) => isChatCapable(m, provider.kind))
+    const opts: DropdownOption[] = filtered.map((m) => ({
+      value: m,
+      label: m,
+      monoLabel: true,
+      sub:
+        provider.kind === 'openai'
+          ? categorizeOpenAIModel(m).toLowerCase()
+          : undefined,
+    }))
+    if (defaultModel && !filtered.includes(defaultModel)) {
+      opts.unshift({
+        value: defaultModel,
+        label: defaultModel,
+        monoLabel: true,
+        sub: 'current value (not in catalog)',
+      })
+    }
+    return opts
+  }, [provider, defaultModel])
+
+  const embeddingModelOpts: DropdownOption[] = useMemo(() => {
+    if (!provider) return []
+    const cached = provider.models?.models ?? []
+    const filtered = cached.filter((m) => isEmbeddingCapable(m, provider.kind))
+    const opts: DropdownOption[] = filtered.map((m) => ({
+      value: m,
+      label: m,
+      monoLabel: true,
+      sub: provider.kind === 'openai' ? 'embedding' : undefined,
+    }))
+    if (
+      defaultEmbeddingModel &&
+      !filtered.includes(defaultEmbeddingModel)
+    ) {
+      opts.unshift({
+        value: defaultEmbeddingModel,
+        label: defaultEmbeddingModel,
+        monoLabel: true,
+        sub: 'current value (not in catalog)',
+      })
+    }
+    // Sentinel that maps to empty/null so the user can disable
+    // semantic recall via the same dropdown — empty string saves as
+    // null in the patch step.
+    opts.unshift({
+      value: '',
+      label: '(none — disable semantic recall)',
+    })
+    return opts
+  }, [provider, defaultEmbeddingModel])
 
   // Group + filter the cached model list. For openai we bucket by family
   // heuristic (so the user can scan a 50+ model catalog without
@@ -159,9 +190,96 @@ export function ProviderDetailPage({ id }: { id: string }) {
       .filter(([, arr]) => arr.length > 0)
   }, [provider?.models, provider?.kind, modelSearch])
 
+  // Field-by-field comparison against the saved row. The sticky save
+  // banner above the form (and the duplicate save row at the bottom)
+  // both key off this — visible when anything is out of sync with
+  // what's persisted, hidden when the form matches (or after Discard
+  // reverts everything). API key is "dirty" the moment the operator
+  // types anything since the field is always empty on load (we never
+  // echo the saved key).
+  //
+  // NOTE: this hook MUST run before the `if (!provider)` early return
+  // below or React complains about a conditional hook call. Provider
+  // being undefined here just yields `false` (nothing to be dirty
+  // about).
+  const isDirty = useMemo(() => {
+    if (!provider) return false
+    if (label.trim() !== (provider.label ?? '').trim()) return true
+    if (
+      isLocal &&
+      (baseUrl.trim() || null) !== (provider.baseUrl ?? null)
+    ) {
+      return true
+    }
+    if ((defaultModel.trim() || null) !== (provider.defaultModel ?? null)) {
+      return true
+    }
+    if (
+      (defaultEmbeddingModel.trim() || null) !==
+      (provider.defaultEmbeddingModel ?? null)
+    ) {
+      return true
+    }
+    if (apiKey.trim() !== '') return true
+    return false
+  }, [
+    provider,
+    label,
+    baseUrl,
+    isLocal,
+    defaultModel,
+    defaultEmbeddingModel,
+    apiKey,
+  ])
+
   if (!provider) return <NotFound />
 
+  const discard = () => {
+    setLabel(provider.label)
+    setBaseUrl(provider.baseUrl ?? '')
+    setDefaultModel(provider.defaultModel ?? '')
+    setDefaultEmbeddingModel(provider.defaultEmbeddingModel ?? '')
+    setApiKey('')
+  }
+
   const save = async () => {
+    // Detect whether the embedding model is actually flipping. If yes
+    // AND there are agents using this provider with semantic recall
+    // already enabled, those agents have stored vectors in the
+    // CURRENT model's vector space — switching the model invalidates
+    // them. Confirm with the user, then send wipeSemanticVectors: true
+    // so the backend cascades the wipe.
+    const oldEmbed = (provider.defaultEmbeddingModel ?? '').trim()
+    const newEmbed = defaultEmbeddingModel.trim()
+    const embeddingChanged = oldEmbed !== newEmbed
+    const recallAgents = dependentAgents.filter(
+      (a) =>
+        a.memoryEnabled &&
+        a.memoryConfig &&
+        (a.memoryConfig as { semanticRecall?: unknown }).semanticRecall,
+    )
+    let wipeSemanticVectors = false
+    if (embeddingChanged && oldEmbed && recallAgents.length > 0) {
+      const ok = await confirmDialog({
+        title: 'Switch embedding model?',
+        body:
+          `${recallAgents.length} agent${recallAgents.length === 1 ? '' : 's'} ` +
+          `(${recallAgents.map((a) => a.name).join(', ')}) ` +
+          `use this provider for semantic recall. ` +
+          `Switching from ${oldEmbed} to ${newEmbed || '(none)'} ` +
+          `invalidates their stored vectors — old vectors live in the ` +
+          `previous model's vector space and would produce irrelevant ` +
+          `recall results.\n\n` +
+          `Confirm to wipe stored vectors for those agents. They'll ` +
+          `re-embed naturally on subsequent conversations. ` +
+          `Working memory and recent-message replay are unaffected.`,
+        confirmLabel: 'Switch and wipe vectors',
+        destructive: true,
+      })
+      if (!ok) return
+      wipeSemanticVectors = true
+    }
+
     setBusy(true)
     try {
       const patch: LlmProviderUpdateInput = {
@@ -172,10 +290,15 @@ export function ProviderDetailPage({ id }: { id: string }) {
         ...(apiKey.trim()
           ? { apiKey: { action: 'set', plaintext: apiKey.trim() } as const }
           : {}),
+        ...(wipeSemanticVectors ? { wipeSemanticVectors: true } : {}),
       }
       await patchLlmProvider(provider.id, patch)
       setApiKey('')
-      toast.success('Provider saved')
+      toast.success(
+        wipeSemanticVectors
+          ? 'Provider saved · semantic vectors wiped'
+          : 'Provider saved',
+      )
     } catch (e) {
       toast.error(
         e instanceof ApiError
@@ -265,49 +388,9 @@ export function ProviderDetailPage({ id }: { id: string }) {
     }
   }
 
-  const testModel = async (
-    model: string,
-    capability: 'chat' | 'embedding' = 'chat',
-  ) => {
-    setModelTestState((s) => ({ ...s, [model]: 'pending' }))
-    setModelTestMsg((s) => {
-      const next = { ...s }
-      delete next[model]
-      return next
-    })
-    try {
-      const res = await testLlmProvider(provider.id, {
-        defaultModel: model,
-        capability,
-      })
-      if (res.ok) {
-        setModelTestState((s) => ({ ...s, [model]: 'ok' }))
-        setModelTestMsg((s) => ({
-          ...s,
-          [model]: `${res.durationMs}ms`,
-        }))
-      } else {
-        const reason = res.message ?? res.code
-        setModelTestState((s) => ({ ...s, [model]: 'error' }))
-        setModelTestMsg((s) => ({ ...s, [model]: reason }))
-        // Surface the failure reason in a toast — the red chip alone
-        // signals "something broke" but the actionable detail (auth
-        // failure / model not found / rate limit / etc.) only lives
-        // in the title tooltip otherwise, which is easy to miss.
-        toast.error(`${model} failed: ${reason}`)
-      }
-    } catch (e) {
-      const reason =
-        e instanceof ApiError
-          ? e.message
-          : e instanceof Error
-            ? e.message
-            : 'failed'
-      setModelTestState((s) => ({ ...s, [model]: 'error' }))
-      setModelTestMsg((s) => ({ ...s, [model]: reason }))
-      toast.error(`${model} failed: ${reason}`)
-    }
-  }
+  // Local alias kept so the existing call sites read naturally.
+  // The actual state + side effects live in the hook.
+  const testModel = tester.test
 
   const remove = async () => {
     const usingNames = dependentAgents
@@ -357,6 +440,27 @@ export function ProviderDetailPage({ id }: { id: string }) {
       <Link to="/library/providers" className="ab-back-link">
         Back to LLM providers
       </Link>
+      {isDirty && (
+        <div className="ab-save-bar">
+          <span className="ab-save-bar-status">
+            <span className="ab-pulse-dot" aria-hidden />
+            Unsaved changes
+          </span>
+          <div className="ab-save-bar-actions">
+            <Button variant="ghost" size="sm" onClick={discard} disabled={busy}>
+              Discard
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={save}
+              disabled={busy}
+            >
+              {busy ? 'Saving…' : 'Save changes'}
+            </Button>
+          </div>
+        </div>
+      )}
       <div className="ab-detail-header">
         <div className="ab-detail-glyph ab-glyph ab-glyph-violet">
           {provider.label.charAt(0).toUpperCase()}
@@ -512,27 +616,56 @@ export function ProviderDetailPage({ id }: { id: string }) {
         </div>
         <div className="ab-field-grid">
           <div className="ab-field">
-            <label className="ab-field-label" htmlFor="pd-default-model">
-              Default model
-            </label>
-            <input
-              id="pd-default-model"
-              className="ab-input ab-mono"
-              value={defaultModel}
-              onChange={(e) => setDefaultModel(e.target.value)}
+            <span className="ab-field-label">Default model</span>
+            <Dropdown
+              value={defaultModel || null}
+              onChange={(v) => {
+                setDefaultModel(v ?? '')
+                // Auto-test on user change so the operator sees
+                // pass/fail right next to the dropdown — saves a trip
+                // down to the chip grid. Reuses the same test state
+                // dict, so the chip below this field reflects the
+                // same result. Skip when the value is empty (cleared).
+                if (v) void testModel(v, 'chat')
+              }}
+              options={chatModelOpts}
+              placeholder={
+                chatModelOpts.length === 0
+                  ? 'Refresh models to populate'
+                  : 'Pick a chat model'
+              }
+              disabled={chatModelOpts.length === 0}
             />
+            <ModelTestStatus
+              model={defaultModel}
+              state={tester.stateOf(defaultModel)}
+              message={tester.messageOf(defaultModel)}
+            />
+            <span className="ab-field-help">
+              Used as the chat model for any agent on this provider that
+              doesn't override it.
+            </span>
           </div>
           <div className="ab-field">
-            <label className="ab-field-label" htmlFor="pd-embed-model">
-              Default embedding model
-            </label>
-            <input
-              id="pd-embed-model"
-              className="ab-input ab-mono"
-              value={defaultEmbeddingModel}
-              onChange={(e) => setDefaultEmbeddingModel(e.target.value)}
-              placeholder="(none)"
+            <span className="ab-field-label">Default embedding model</span>
+            <Dropdown
+              value={defaultEmbeddingModel || ''}
+              onChange={(v) => {
+                setDefaultEmbeddingModel(v ?? '')
+                if (v) void testModel(v, 'embedding')
+              }}
+              options={embeddingModelOpts}
+              placeholder="Pick an embedding model (optional)"
             />
+            <ModelTestStatus
+              model={defaultEmbeddingModel}
+              state={tester.stateOf(defaultEmbeddingModel)}
+              message={tester.messageOf(defaultEmbeddingModel)}
+            />
+            <span className="ab-field-help">
+              Powers semantic-recall memory. Pick (none) to disable
+              recall on every agent using this provider.
+            </span>
           </div>
         </div>
       </div>
@@ -584,7 +717,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
                 style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
               >
                 {groupedModels.map(([groupName, models]) => {
-                  const isReadOnlyGroup = NON_CHAT_CATEGORIES.has(groupName)
+                  const isReadOnlyGroup = READONLY_GRID_CATEGORIES.has(groupName)
                   return (
                     <div key={groupName || 'all'}>
                       {groupName && (
@@ -647,8 +780,8 @@ export function ProviderDetailPage({ id }: { id: string }) {
                             )
                           }
 
-                          const state = modelTestState[m]
-                          const msg = modelTestMsg[m]
+                          const state = tester.stateOf(m)
+                          const msg = tester.messageOf(m)
                           const stateClass =
                             state === 'ok'
                               ? ' is-passed'
@@ -722,6 +855,10 @@ export function ProviderDetailPage({ id }: { id: string }) {
         )}
       </div>
 
+      {/* Bottom action row — duplicates the sticky save banner above
+          for users who scroll-to-end-then-commit by habit. Both spots
+          call the same handlers. Delete stays on the left, away from
+          the primary save action. */}
       <div
         style={{
           display: 'flex',
@@ -734,10 +871,18 @@ export function ProviderDetailPage({ id }: { id: string }) {
           Delete provider
         </Button>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Link to="/library/providers" className="ab-btn ab-btn-ghost">
-            Cancel
-          </Link>
-          <Button variant="primary" onClick={save} disabled={busy}>
+          <Button
+            variant="ghost"
+            onClick={discard}
+            disabled={busy || !isDirty}
+          >
+            Discard
+          </Button>
+          <Button
+            variant="primary"
+            onClick={save}
+            disabled={busy || !isDirty}
+          >
             {busy ? 'Saving…' : 'Save changes'}
           </Button>
         </div>

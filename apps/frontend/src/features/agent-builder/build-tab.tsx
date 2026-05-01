@@ -9,7 +9,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useWorkspace } from '../../lib/workspace-context'
 import { Dropdown, type DropdownOption } from '../../ui/dropdown'
 import { toast } from '../../ui/toast-store'
+import { confirmDialog } from '../../ui/dialog-store'
 import { ApiError } from '../../lib/rpc'
+import {
+  categorizeOpenAIModel,
+  isChatCapable,
+} from '../../lib/model-categories'
+import { ModelTestStatus } from '../agent-tools/model-test-status'
+import { useModelTester } from '../../lib/use-model-tester'
 
 const LOCAL_KINDS = new Set(['llama_cpp', 'ollama', 'openai_compatible'])
 
@@ -25,6 +32,15 @@ export function BuildTab({ agentId }: { agentId: string }) {
   const [systemPrompt, setSystemPrompt] = useState('')
   const [providerId, setProviderId] = useState<string | null>(null)
   const [model, setModel] = useState<string | null>(null)
+  // Set when the user confirmed (via dialog) that switching the
+  // provider should wipe stale semantic vectors. Cleared after the
+  // next successful save so a follow-up edit doesn't accidentally
+  // wipe again.
+  const [pendingWipe, setPendingWipe] = useState(false)
+  // Shared test machinery — owns per-model state + clears the cache
+  // when providerId flips so OpenAI test results don't carry into a
+  // local-Ollama run after the user switches providers.
+  const tester = useModelTester(providerId)
 
   // ─── Debounced auto-save ──────────────────────────────────────────
   // Identity / model fields auto-save 800ms after the last edit.
@@ -43,9 +59,58 @@ export function BuildTab({ agentId }: { agentId: string }) {
       systemPrompt,
       llmProviderId: providerId,
       model,
+      ...(pendingWipe ? { wipeSemanticVectors: true as const } : {}),
     }),
-    [name, slug, systemPrompt, providerId, model],
+    [name, slug, systemPrompt, providerId, model, pendingWipe],
   )
+
+  /**
+   * Wraps the provider Dropdown's onChange with a guard: when the
+   * user is moving an agent that has stored semantic vectors to a
+   * provider with a different (or no) embedding model, those vectors
+   * are about to become unusable garbage. Confirm with the user
+   * BEFORE accepting the dropdown change so the auto-save effect
+   * doesn't silently kick off the wipe-then-save cascade.
+   */
+  const handleProviderChange = async (next: string | null) => {
+    if (!agent) {
+      setProviderId(next)
+      return
+    }
+    const oldId = agent.llmProviderId
+    if (next === oldId) {
+      setProviderId(next)
+      return
+    }
+    const recallEnabled =
+      agent.memoryEnabled &&
+      !!agent.memoryConfig &&
+      !!(agent.memoryConfig as { semanticRecall?: unknown }).semanticRecall
+    const oldEmbed = oldId
+      ? llmProviders.find((p) => p.id === oldId)?.defaultEmbeddingModel ?? null
+      : null
+    const newEmbed = next
+      ? llmProviders.find((p) => p.id === next)?.defaultEmbeddingModel ?? null
+      : null
+    if (recallEnabled && oldEmbed && oldEmbed !== newEmbed) {
+      const ok = await confirmDialog({
+        title: 'Switch provider?',
+        body:
+          `This agent has semantic recall enabled with embedding model ` +
+          `${oldEmbed}. The new provider uses ${newEmbed ?? '(none)'}, ` +
+          `so the agent's stored vectors are about to live in the wrong ` +
+          `vector space — they'd produce irrelevant recall results.\n\n` +
+          `Confirm to switch and wipe this agent's stored vectors. ` +
+          `The agent re-embeds naturally on subsequent conversations. ` +
+          `Working memory and recent-message replay are unaffected.`,
+        confirmLabel: 'Switch and wipe vectors',
+        destructive: true,
+      })
+      if (!ok) return
+      setPendingWipe(true)
+    }
+    setProviderId(next)
+  }
 
   const isDirty = useMemo(() => {
     if (!agent) return false
@@ -76,6 +141,10 @@ export function BuildTab({ agentId }: { agentId: string }) {
         if (!cancelled) {
           setAutoSaveState('saved')
           setSavedAt(Date.now())
+          // Clear the wipe flag so a subsequent edit doesn't
+          // accidentally re-send it on a save that has nothing to do
+          // with the provider change.
+          setPendingWipe(false)
         }
       } catch (e) {
         if (cancelled) return
@@ -108,6 +177,7 @@ export function BuildTab({ agentId }: { agentId: string }) {
     setSystemPrompt(agent.systemPrompt)
     setProviderId(agent.llmProviderId)
     setModel(agent.model)
+    setPendingWipe(false)
   }
 
   const provider = useMemo(
@@ -133,11 +203,34 @@ export function BuildTab({ agentId }: { agentId: string }) {
       })),
     [llmProviders],
   )
-  const modelOpts: DropdownOption[] = useMemo(
-    () =>
-      cachedModels.map((m) => ({ value: m, label: m, monoLabel: true })),
-    [cachedModels],
-  )
+  const modelOpts: DropdownOption[] = useMemo(() => {
+    if (!provider) return []
+    // Only chat-capable models — agents talk via /v1/chat/completions,
+    // so picking an embedding/audio/image model here would 404 at run
+    // time. For local providers no filtering — the model id is
+    // arbitrary and we don't second-guess it.
+    const filtered = cachedModels.filter((m) => isChatCapable(m, provider.kind))
+    const opts: DropdownOption[] = filtered.map((m) => ({
+      value: m,
+      label: m,
+      monoLabel: true,
+      sub:
+        provider.kind === 'openai'
+          ? categorizeOpenAIModel(m).toLowerCase()
+          : undefined,
+    }))
+    // Preserve a legacy / non-cataloged value the agent already uses
+    // so it doesn't silently disappear from the dropdown.
+    if (model && !filtered.includes(model)) {
+      opts.unshift({
+        value: model,
+        label: model,
+        monoLabel: true,
+        sub: 'current value (not in catalog)',
+      })
+    }
+    return opts
+  }, [provider, cachedModels, model])
 
   if (!agent) return null
 
@@ -248,7 +341,7 @@ export function BuildTab({ agentId }: { agentId: string }) {
             <span className="ab-field-label">Provider</span>
             <Dropdown
               value={providerId}
-              onChange={setProviderId}
+              onChange={(v) => void handleProviderChange(v)}
               options={providerOpts}
               placeholder={
                 providerOpts.length === 0
@@ -262,10 +355,22 @@ export function BuildTab({ agentId }: { agentId: string }) {
             <span className="ab-field-label">Model</span>
             <Dropdown
               value={model}
-              onChange={setModel}
+              onChange={(v) => {
+                setModel(v)
+                // Auto-test on user change so the operator sees
+                // pass/fail right next to the dropdown — same pattern
+                // as the provider page's model dropdowns. Skip when
+                // the value clears or the change isn't user-driven.
+                if (v) void tester.test(v)
+              }}
               options={modelOpts}
               placeholder={providerId ? 'Pick a model' : 'Pick a provider first'}
               disabled={!providerId || modelOpts.length === 0}
+            />
+            <ModelTestStatus
+              model={model ?? ''}
+              state={tester.stateOf(model)}
+              message={tester.messageOf(model)}
             />
           </div>
         </div>

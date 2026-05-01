@@ -13,7 +13,7 @@ import { useSSE } from '../../../lib/use-sse'
 import { Button } from '../../../ui/button'
 import { Pill } from '../../../ui/pill'
 import { Tabs, type TabSpec } from '../../../ui/tabs'
-import { PlayIcon } from '../../../ui/icons'
+import { ChatIcon } from '../../../ui/icons'
 import { agentGlyphKind } from '../../../lib/agent-helpers'
 import { toast } from '../../../ui/toast-store'
 import { confirmDialog } from '../../../ui/dialog-store'
@@ -152,7 +152,7 @@ export function AgentDetailPage({
       const map: Record<string, TabId> = {
         c: 'configure',
         r: 'resources',
-        t: 'chat', // mnemonic: Test
+        t: 'chat', // mnemonic: Talk to the agent (c is taken by Configure)
         b: 'bridge',
         l: 'logs',
       }
@@ -238,10 +238,10 @@ export function AgentDetailPage({
         >
           <Button
             variant="primary"
-            leading={<PlayIcon />}
+            leading={<ChatIcon />}
             onClick={() => setTabAndUrl('chat')}
           >
-            Test
+            Chat
           </Button>
           <Button
             variant="secondary"

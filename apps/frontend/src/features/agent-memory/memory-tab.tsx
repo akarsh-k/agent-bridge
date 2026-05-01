@@ -13,14 +13,46 @@ import { Pill } from '../../ui/pill'
 import { Dropdown, type DropdownOption } from '../../ui/dropdown'
 import { toast } from '../../ui/toast-store'
 import { ApiError } from '../../lib/rpc'
+import { Link } from '../../lib/link'
 
+// Two scopes Mastra exposes — `thread` and `resource` — translated to
+// the two surfaces a user actually interacts with:
+//   - The Chat tab (this app's built-in chat pane)
+//   - From your IDE (Cursor / Claude Code calling the agent over MCP)
+//
+// `thread`   = one Mastra thread. In the Chat tab that's one of the
+//              conversations from the conversation switcher. From the
+//              IDE every tool call is its own thread (the bridge does
+//              not chain calls), so per-thread memory effectively
+//              means "no memory" for IDE-only agents.
+// `resource` = the agent itself, across every Chat-tab conversation
+//              AND every IDE tool call. The only useful scope for
+//              agents that primarily get called from an IDE.
 const SCOPE_OPTS: DropdownOption<MemoryScope>[] = memoryScopes.map((s) => ({
   value: s,
-  label:
+  label: s === 'thread' ? 'Per thread' : 'Per agent',
+  sub:
     s === 'thread'
-      ? 'thread (this conversation only)'
-      : 'resource (across conversations)',
+      ? 'one Chat-tab conversation, or one IDE call'
+      : 'every Chat-tab conversation + every IDE call',
 }))
+
+function ScopeHelp({ agentId }: { agentId: string }) {
+  return (
+    <>
+      In the{' '}
+      <Link to={`/agents/${agentId}/chat`} className="ab-text-link">
+        Chat tab
+      </Link>{' '}
+      a "thread" is one of the conversations you start from the
+      conversation switcher. From your IDE every tool call is its own
+      thread — the bridge does not chain calls — so per-thread memory
+      effectively resets every IDE invocation. If this agent is mostly
+      called from an IDE, pick per-agent so memory survives between
+      calls.
+    </>
+  )
+}
 
 type LastMessagesMode = 'off' | 'count'
 
@@ -132,9 +164,12 @@ export function MemoryTab({ agentId }: { agentId: string }) {
           style={{ display: 'flex', alignItems: 'center', gap: 12 }}
         >
           <div style={{ flex: 1 }}>
-            <div className="ab-section-title">Memory engine</div>
+            <div className="ab-section-title">Memory</div>
             <div className="ab-section-sub">
-              Long-term context layered on top of {agent.name}'s system prompt.
+              Master switch for {agent.name}'s memory subsystem. Turn this
+              on to enable any of the three strategies below — recent
+              messages, working memory, semantic recall. They're
+              independent; mix and match as needed.
             </div>
           </div>
           <Pill kind={enabled ? 'success' : 'neutral'} dot>
@@ -154,10 +189,11 @@ export function MemoryTab({ agentId }: { agentId: string }) {
         style={enabled ? undefined : { opacity: 0.5, pointerEvents: 'none' }}
       >
         <div className="ab-section-head">
+          <div className="ab-eyebrow ab-mono">Strategy · sliding window</div>
           <div className="ab-section-title">Recent messages</div>
           <div className="ab-section-sub">
-            How many recent turns of the active thread to replay before each
-            request. Higher = better continuity, larger context.
+            Replay the last N turns of the active thread before each
+            request. Higher N = better continuity, larger context window.
           </div>
         </div>
         <div className="ab-field-grid">
@@ -216,10 +252,13 @@ export function MemoryTab({ agentId }: { agentId: string }) {
           style={{ display: 'flex', alignItems: 'center', gap: 12 }}
         >
           <div style={{ flex: 1 }}>
+            <div className="ab-eyebrow ab-mono">Strategy · scratchpad</div>
             <div className="ab-section-title">Working memory</div>
             <div className="ab-section-sub">
-              A markdown scratchpad the agent maintains across turns —
-              user preferences, project facts, anything worth keeping.
+              A markdown notebook the agent reads and writes to across
+              turns — user preferences, names, project facts, anything
+              the agent should remember beyond the current message
+              window.
             </div>
           </div>
           <Button
@@ -231,15 +270,17 @@ export function MemoryTab({ agentId }: { agentId: string }) {
         </div>
         {wmEnabled && (
           <div className="ab-field-grid">
-            <div className="ab-field">
+            <div className="ab-field ab-field-col">
               <span className="ab-field-label">Scope</span>
               <Dropdown<MemoryScope>
                 value={wmScope}
                 onChange={setWmScope}
                 options={SCOPE_OPTS}
               />
+              <span className="ab-field-help">
+                <ScopeHelp agentId={agentId} />
+              </span>
             </div>
-            <div className="ab-field" />
             <div className="ab-field ab-field-col">
               <label className="ab-field-label" htmlFor="mt-tmpl">
                 Template (markdown)
@@ -273,16 +314,18 @@ export function MemoryTab({ agentId }: { agentId: string }) {
           style={{ display: 'flex', alignItems: 'center', gap: 12 }}
         >
           <div style={{ flex: 1 }}>
+            <div className="ab-eyebrow ab-mono">Strategy · vector retrieval</div>
             <div className="ab-section-title">Semantic recall</div>
             <div className="ab-section-sub">
-              Embed every assistant turn and retrieve the top-K most-similar
-              chunks before answering. Requires an embedding model on the
-              provider.
+              Embed every assistant turn and pull the top-K most-similar
+              chunks back into context before answering. Useful when
+              relevant prior turns sit outside the recent-messages
+              window. Requires an embedding model on the LLM provider.
             </div>
           </div>
           {!semanticPossible && (
             <Pill kind="warn" dot>
-              Provider has no embedding model
+              Embedding model not set
             </Pill>
           )}
           <Button
@@ -293,6 +336,38 @@ export function MemoryTab({ agentId }: { agentId: string }) {
             {srEnabled ? 'Disable' : 'Enable'}
           </Button>
         </div>
+        {!semanticPossible && provider && (
+          <div
+            className="ab-field-help"
+            style={{
+              marginTop: 8,
+              padding: '10px 12px',
+              background: 'var(--surface-hi)',
+              borderRadius: 'var(--radius)',
+              border: '1px solid var(--border)',
+            }}
+          >
+            Your provider <strong>{provider.label}</strong> doesn't have a
+            default embedding model selected yet. Embedding models live on
+            the LLM provider row so you choose deliberately — switching
+            them later invalidates any vectors already stored.{' '}
+            <Link
+              to={`/library/providers/${provider.id}`}
+              style={{ color: 'var(--accent-300)' }}
+            >
+              Pick one in the provider settings →
+            </Link>
+          </div>
+        )}
+        {!semanticPossible && !provider && (
+          <div
+            className="ab-field-help"
+            style={{ marginTop: 8, color: 'var(--warn)' }}
+          >
+            Attach an LLM provider to this agent first — semantic recall
+            uses the provider's embedding model.
+          </div>
+        )}
         {srEnabled && (
           <div className="ab-field-grid">
             <div className="ab-field">
@@ -331,6 +406,9 @@ export function MemoryTab({ agentId }: { agentId: string }) {
                 onChange={setSrScope}
                 options={SCOPE_OPTS}
               />
+              <span className="ab-field-help">
+                <ScopeHelp agentId={agentId} />
+              </span>
             </div>
           </div>
         )}

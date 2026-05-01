@@ -70,6 +70,15 @@ export const agentUpdateInputSchema = z
     model: baseFields.model,
     memoryEnabled: baseFields.memoryEnabled.optional(),
     memoryConfig: baseFields.memoryConfig,
+    /**
+     * Confirmation flag from the provider-change dialog. When true
+     * AND `llmProviderId` actually changed in this PATCH AND the
+     * old provider's embedding model differs from the new one's,
+     * the backend wipes this agent's semantic vectors. Old vectors
+     * live in the previous embedding model's vector space and would
+     * produce garbage retrieval otherwise.
+     */
+    wipeSemanticVectors: z.boolean().optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, {

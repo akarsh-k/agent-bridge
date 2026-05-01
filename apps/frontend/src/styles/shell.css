@@ -1860,6 +1860,60 @@ button.ab-list-row {
   font-size: 13px;
   line-height: 1;
 }
+/* "Unsaved changes" banner that sits above the form on long edit
+ * pages. Sticky so it follows the user as they scroll — primary save
+ * action is always one click away regardless of how far they've
+ * scrolled into a 700-line form. Renders only when the parent
+ * decides the form is dirty. */
+.ab-save-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin: 0 0 16px;
+  padding: 10px 14px;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-400);
+  border-radius: var(--radius);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  backdrop-filter: blur(8px);
+}
+.ab-save-bar-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--accent-300);
+}
+.ab-save-bar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Inline anchor used inside help text + paragraphs. Underlined +
+ * accent-colored so it visibly reads as a link instead of blending
+ * into surrounding prose like a bare color change would. Underline
+ * uses `text-underline-offset` for a touch of breathing room. */
+.ab-text-link {
+  color: var(--accent-300);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--accent-300) 50%, transparent);
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+  font-weight: 500;
+  transition:
+    color var(--dur-1) var(--ease-out),
+    text-decoration-color var(--dur-1) var(--ease-out);
+}
+.ab-text-link:hover {
+  color: var(--accent-400);
+  text-decoration-color: var(--accent-400);
+}
 .ab-detail-header {
   display: flex;
   align-items: flex-start;
@@ -1990,6 +2044,19 @@ button.ab-list-row {
 .ab-section-sub {
   font-size: 13px;
   color: var(--text-dim);
+}
+/* Small uppercase tag that sits ABOVE a section title to label its
+ * role in a parent-child group (e.g. "Strategy · sliding window" on
+ * each of the three memory sub-cards). Reads as a category, not as a
+ * heading — narrow tracking + small caps + muted color keeps it
+ * clearly subordinate to the .ab-section-title that follows it. */
+.ab-eyebrow {
+  display: block;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 4px;
 }
 
 /* Inline error line that sits inside the row's text content stack

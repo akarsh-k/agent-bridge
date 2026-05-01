@@ -99,6 +99,9 @@ export const PencilIcon = base(
 export const CheckIcon = base(<polyline points="20 6 9 17 4 12" />)
 export const ArrowRightIcon = base(<path d="M5 12h14M13 6l6 6-6 6" />)
 export const PlayIcon = base(<polygon points="5 3 19 12 5 21 5 3" />)
+export const ChatIcon = base(
+  <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+)
 export const CloseIcon = base(<path d="M18 6L6 18M6 6l12 12" />)
 export const TrashIcon = base(
   <>

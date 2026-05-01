@@ -22,6 +22,7 @@ import {
   type AgentResponse,
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
+import { wipeSemanticVectorsForAgents } from '@agent-bridge/agents'
 import { getDb } from '../db.js'
 import { publishAgentConfig } from '../lib/agent-events.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
@@ -149,7 +150,23 @@ export const agentsRouter = new Hono()
     async (c) => {
       const { id } = c.req.valid('param')
       const body = c.req.valid('json')
-      const { db } = getDb()
+      const handle = getDb()
+      const { db } = handle
+
+      // Snapshot the current row up front so the vector-wipe cascade
+      // below can compare old vs new embedding model. Also doubles as
+      // an existence check before we run the UPDATE.
+      const [before] = await db
+        .select()
+        .from(schema.agents)
+        .where(eq(schema.agents.id, id))
+        .limit(1)
+      if (!before) {
+        return httpError(c, {
+          code: 'not_found',
+          message: `agent ${id} not found`,
+        })
+      }
 
       // Build the update object from *only* keys the client sent. Zod's
       // `.strict()` guarantees no extra keys slipped in; missing keys become
@@ -196,6 +213,41 @@ export const agentsRouter = new Hono()
             code: 'not_found',
             message: `agent ${id} not found`,
           })
+        }
+
+        // Vector wipe cascade. The provider switch can land this
+        // agent on a different embedding model (or none at all),
+        // putting any previously-stored vectors into the wrong vector
+        // space. The client only sets `wipeSemanticVectors=true`
+        // after the user confirms the dialog showing the model
+        // change — we double-check here that the providers actually
+        // differ in their embedding model before doing the wipe.
+        if (
+          body.wipeSemanticVectors === true &&
+          'llmProviderId' in body &&
+          (before.llmProviderId ?? null) !== (body.llmProviderId ?? null)
+        ) {
+          const oldEmbed = before.llmProviderId
+            ? (
+                await db
+                  .select({ m: schema.llmProviders.defaultEmbeddingModel })
+                  .from(schema.llmProviders)
+                  .where(eq(schema.llmProviders.id, before.llmProviderId))
+                  .limit(1)
+              )[0]?.m ?? null
+            : null
+          const newEmbed = body.llmProviderId
+            ? (
+                await db
+                  .select({ m: schema.llmProviders.defaultEmbeddingModel })
+                  .from(schema.llmProviders)
+                  .where(eq(schema.llmProviders.id, body.llmProviderId))
+                  .limit(1)
+              )[0]?.m ?? null
+            : null
+          if ((oldEmbed ?? null) !== (newEmbed ?? null)) {
+            await wipeSemanticVectorsForAgents(handle, [id])
+          }
         }
 
         // Activity feed: which fields changed? List the keys the

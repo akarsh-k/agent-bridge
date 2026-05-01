@@ -32,6 +32,7 @@ import {
   type LlmProviderResponse,
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
+import { wipeSemanticVectorsForAgents } from '@agent-bridge/agents'
 import { getDb } from '../db.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 import {
@@ -169,7 +170,23 @@ export const llmProvidersRouter = new Hono()
     async (c) => {
       const { id } = c.req.valid('param')
       const body = c.req.valid('json')
-      const { db } = getDb()
+      const handle = getDb()
+      const { db } = handle
+
+      // Snapshot the existing row so we can detect whether the
+      // embedding model is actually changing — that's the trigger for
+      // the optional vector-wipe cascade below.
+      const [before] = await db
+        .select()
+        .from(schema.llmProviders)
+        .where(eq(schema.llmProviders.id, id))
+        .limit(1)
+      if (!before) {
+        return httpError(c, {
+          code: 'not_found',
+          message: `llm provider ${id} not found`,
+        })
+      }
 
       const patch: Partial<typeof schema.llmProviders.$inferInsert> = {}
       if ('label' in body) patch.label = body.label
@@ -195,6 +212,29 @@ export const llmProvidersRouter = new Hono()
             code: 'not_found',
             message: `llm provider ${id} not found`,
           })
+        }
+
+        // Vector wipe cascade. Triggered when the client confirmed
+        // via the dialog AND the embedding model actually flipped to
+        // something different (set→null, set→other, null→other when
+        // there are old vectors — though null→other is harmless since
+        // there can't be vectors stored under a null model). Affects
+        // every agent currently bound to this provider; their
+        // resourceId stays constant so PgVector's metadata filter
+        // keys cleanly off `agent:<id>`.
+        const embeddingChanged =
+          'defaultEmbeddingModel' in body &&
+          (before.defaultEmbeddingModel ?? null) !==
+            (body.defaultEmbeddingModel ?? null)
+        if (body.wipeSemanticVectors === true && embeddingChanged) {
+          const agentRows = await db
+            .select({ id: schema.agents.id })
+            .from(schema.agents)
+            .where(eq(schema.agents.llmProviderId, id))
+          const agentIds = agentRows.map((r) => r.id)
+          if (agentIds.length > 0) {
+            await wipeSemanticVectorsForAgents(handle, agentIds)
+          }
         }
 
         return c.json({

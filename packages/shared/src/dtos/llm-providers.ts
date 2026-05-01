@@ -110,6 +110,15 @@ export const llmProviderUpdateInputSchema = z
     defaultModel: baseFields.defaultModel,
     defaultEmbeddingModel: baseFields.defaultEmbeddingModel,
     apiKey: baseFields.apiKey,
+    /**
+     * Confirmation flag from the embedding-model-change dialog. When
+     * true AND `defaultEmbeddingModel` actually changed in this PATCH,
+     * the backend wipes stored semantic vectors for every agent using
+     * this provider — old vectors live in the previous model's
+     * vector space and would produce garbage retrieval results
+     * otherwise.
+     */
+    wipeSemanticVectors: z.boolean().optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, {
