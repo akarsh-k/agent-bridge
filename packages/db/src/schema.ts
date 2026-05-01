@@ -489,6 +489,17 @@ export const runs = pgTable(
       withTimezone: true,
       mode: 'date',
     }),
+    /**
+     * Token accounting from the LLM provider's response. Populated by
+     * `markCompleted` when the dispatcher finalizes a run AND Mastra's
+     * stream payload included a `usage` object. Nullable because
+     * (a) errored runs may not have any usage, (b) some local OpenAI-
+     * compatible servers don't report usage. Used for the Configure-
+     * tab budget card (post-call truth) and per-thread cumulative
+     * cost roll-ups.
+     */
+    promptTokens: integer('prompt_tokens'),
+    completionTokens: integer('completion_tokens'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

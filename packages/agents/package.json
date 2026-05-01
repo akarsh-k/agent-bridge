@@ -35,6 +35,7 @@
     "@mastra/pg": "^1.9.2",
     "drizzle-orm": "^0.45.2",
     "gitnexus": "1.6.3",
+    "js-tiktoken": "^1.0.21",
     "pg": "^8.20.0"
   },
   "devDependencies": {

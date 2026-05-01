@@ -85,6 +85,13 @@
       "when": 1777613048639,
       "tag": "0011_lyrical_masque",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1777619303663,
+      "tag": "0012_tranquil_maddog",
+      "breakpoints": true
     }
   ]
 }

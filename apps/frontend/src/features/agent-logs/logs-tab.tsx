@@ -493,10 +493,18 @@ function RunHistoryRow({ row }: { row: RunListRow }) {
   const level: LogLevel =
     row.status === 'error' || row.status === 'aborted' ? 'error' : 'run'
   const startedAt = Date.parse(row.startedAt)
+  // Roll input/output tokens into one display string ("12.3k → 187")
+  // so the meta line stays compact. Both can be null when the LLM
+  // provider didn't echo a usage object (some local servers skip it).
+  const tokensLabel =
+    row.promptTokens !== null && row.completionTokens !== null
+      ? `${formatTokens(row.promptTokens)} → ${formatTokens(row.completionTokens)}`
+      : null
   const meta = [
     row.source,
     formatRelative(startedAt),
     row.durationMs !== null ? formatDuration(row.durationMs) : null,
+    tokensLabel,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -665,6 +673,11 @@ function formatRelative(ts: number): string {
   const h = Math.floor(m / 60)
   if (h < 24) return `${h}h ago`
   return `${Math.floor(h / 24)}d ago`
+}
+function formatTokens(n: number): string {
+  if (n < 1_000) return `${n}t`
+  if (n < 100_000) return `${(n / 1_000).toFixed(1)}k`
+  return `${Math.round(n / 1_000)}k`
 }
 function formatDuration(ms: number): string {
   if (ms < 1_000) return `${ms}ms`

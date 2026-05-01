@@ -17,6 +17,7 @@ import {
 } from '../../lib/model-categories'
 import { ModelTestStatus } from '../agent-tools/model-test-status'
 import { useModelTester } from '../../lib/use-model-tester'
+import { ContextBudgetCard } from './context-budget-card'
 
 const LOCAL_KINDS = new Set(['llama_cpp', 'ollama', 'openai_compatible'])
 
@@ -375,6 +376,8 @@ export function BuildTab({ agentId }: { agentId: string }) {
           </div>
         </div>
       </div>
+
+      <ContextBudgetCard agentId={agentId} />
     </div>
   )
 }

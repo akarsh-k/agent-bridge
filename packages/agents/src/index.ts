@@ -58,3 +58,9 @@ export type {
 } from './system-tools.js'
 export { wipeSemanticVectorsForAgents } from './semantic-wipe.js'
 export type { WipeSemanticVectorsResult } from './semantic-wipe.js'
+export { estimateAgentTokens } from './token-estimate.js'
+export type {
+  TokenEstimate,
+  TokenEstimateSkill,
+  TokenEstimateTool,
+} from './token-estimate.js'

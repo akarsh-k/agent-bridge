@@ -57,6 +57,14 @@ export const runListRowSchema = z.object({
   startedAt: z.iso.datetime(),
   finishedAt: z.iso.datetime().nullable(),
   durationMs: z.number().int().nullable(),
+  /**
+   * Token accounting from the LLM provider's `usage` field. Both
+   * nullable: errored runs may not get a usage object, and some local
+   * OpenAI-compatible servers don't echo usage at all. Powers the
+   * per-thread cumulative footer + the run-history token column.
+   */
+  promptTokens: z.number().int().nonnegative().nullable(),
+  completionTokens: z.number().int().nonnegative().nullable(),
 })
 
 export type RunListRow = z.infer<typeof runListRowSchema>

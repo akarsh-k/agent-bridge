@@ -413,7 +413,15 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
       data: finishedPayload,
     }
 
-    await runsRepo.markCompleted(db, runId, { outputSummary })
+    await runsRepo.markCompleted(db, runId, {
+      outputSummary,
+      ...(lastUsage?.inputTokens != null
+        ? { promptTokens: lastUsage.inputTokens }
+        : {}),
+      ...(lastUsage?.outputTokens != null
+        ? { completionTokens: lastUsage.outputTokens }
+        : {}),
+    })
     await publishAndAudit(
       db,
       eventBus,

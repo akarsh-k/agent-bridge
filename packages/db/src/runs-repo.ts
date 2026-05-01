@@ -192,13 +192,23 @@ export async function markRunning(
 
 export interface MarkCompletedInput {
   readonly outputSummary: string
+  /**
+   * Token accounting from the LLM provider's `usage` field. Optional
+   * because (a) errored runs may not get one, (b) some local
+   * OpenAI-compatible servers don't echo usage. Both columns are
+   * nullable on the `runs` table; pass `undefined` to leave them
+   * NULL rather than zeroing them.
+   */
+  readonly promptTokens?: number
+  readonly completionTokens?: number
 }
 
 /**
  * Terminal transition `running → completed`. `output_summary` is the
  * model's accumulated `text` output (truncated to something sane at
  * the dispatcher — this helper takes it verbatim). `finished_at`
- * stamps the clock so the UI can render duration.
+ * stamps the clock so the UI can render duration. Token columns get
+ * stamped when the LLM provider returned a `usage` object.
  *
  * Dispatcher-only (HTTP edge must never write these columns). No CAS
  * beyond `status='running'` — the dispatcher is the sole owner after
@@ -217,6 +227,12 @@ export async function markCompleted(
       errorMessage: null,
       finishedAt: sql`now()`,
       updatedAt: sql`now()`,
+      ...(input.promptTokens !== undefined
+        ? { promptTokens: input.promptTokens }
+        : {}),
+      ...(input.completionTokens !== undefined
+        ? { completionTokens: input.completionTokens }
+        : {}),
     })
     .where(and(eq(runs.id, runId), eq(runs.status, 'running')))
     .returning()

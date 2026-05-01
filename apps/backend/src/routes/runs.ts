@@ -114,6 +114,8 @@ export const runsRouter = new Hono().get(
         errorMessage: schema.runs.errorMessage,
         startedAt: schema.runs.startedAt,
         finishedAt: schema.runs.finishedAt,
+        promptTokens: schema.runs.promptTokens,
+        completionTokens: schema.runs.completionTokens,
         agentSlug: schema.agents.slug,
         agentName: schema.agents.name,
       })
@@ -146,6 +148,8 @@ export const runsRouter = new Hono().get(
         startedAt,
         finishedAt,
         durationMs,
+        promptTokens: r.promptTokens,
+        completionTokens: r.completionTokens,
       }
     })
 

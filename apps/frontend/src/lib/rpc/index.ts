@@ -617,6 +617,29 @@ export async function listAgentConfigEvents(
   return res.events
 }
 
+// ─── Token estimate (Configure-tab budget card) ─────────────────────────
+
+import type { TokenEstimate } from '@agent-bridge/shared'
+
+/**
+ * Per-call context-budget breakdown for an agent. Returns the
+ * estimated token count for every static piece buildAgent ships
+ * (system prompt, skills, attached-repos hint, repo edges, gitnexus
+ * tools, etc) plus the agent's known model context limit. Powers the
+ * "Context budget" card on the Configure tab.
+ */
+export async function getAgentTokenEstimate(
+  agentId: string,
+): Promise<TokenEstimate> {
+  const res = await callApi<{ ok: true; estimate: TokenEstimate }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/token-estimate`,
+      { method: 'GET' },
+    ),
+  )
+  return res.estimate
+}
+
 // ─── System tools (read-only catalog of auto-mounted MCP tools) ─────────
 
 import type { GitnexusSystemToolsResponse } from '@agent-bridge/shared'

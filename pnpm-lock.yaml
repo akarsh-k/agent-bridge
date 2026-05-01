@@ -219,6 +219,9 @@ importers:
       gitnexus:
         specifier: 1.6.3
         version: 1.6.3(graphology-types@0.24.8)(zod@4.3.6)
+      js-tiktoken:
+        specifier: ^1.0.21
+        version: 1.0.21
       pg:
         specifier: ^8.20.0
         version: 8.20.0

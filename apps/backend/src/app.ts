@@ -10,6 +10,7 @@ import { z } from 'zod'
 import { onUnhandledError, httpError } from './lib/errors.js'
 import { agentConfigEventsRouter } from './routes/agent-config-events.js'
 import { agentExportRouter } from './routes/agent-export.js'
+import { agentTokenEstimateRouter } from './routes/agent-token-estimate.js'
 import { agentMcpToolsRouter } from './routes/agent-mcp-tools.js'
 import { agentReposRouter } from './routes/agent-repos.js'
 import { agentRunsRouter } from './routes/agent-runs.js'
@@ -99,6 +100,7 @@ const api = new Hono()
   .route('/agents/:agentId/runs', agentRunsRouter)
   .route('/agents/:agentId/threads', agentThreadsRouter)
   .route('/agents/:agentId/config-events', agentConfigEventsRouter)
+  .route('/agents/:agentId/token-estimate', agentTokenEstimateRouter)
   .route('/system/tools', systemToolsRouter)
   .route('/llm-providers', llmProvidersRouter)
   .route('/mcp-connections', mcpConnectionsRouter)
