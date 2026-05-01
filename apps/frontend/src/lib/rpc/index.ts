@@ -617,6 +617,31 @@ export async function listAgentConfigEvents(
   return res.events
 }
 
+// ─── Working memory (Memory-tab "current scratchpad" panel) ─────────────
+
+import type { WorkingMemoryResponse } from '@agent-bridge/shared'
+
+/**
+ * Read-only snapshot of an agent's working-memory scratchpad — what
+ * the LLM has actually written into its notebook (vs the
+ * operator-authored template). For per-thread scope, pass the
+ * specific thread id; for per-agent scope, omit threadId.
+ */
+export async function getAgentWorkingMemory(
+  agentId: string,
+  threadId?: string,
+): Promise<WorkingMemoryResponse> {
+  const qs = threadId
+    ? `?threadId=${encodeURIComponent(threadId)}`
+    : ''
+  return await callApi<WorkingMemoryResponse>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/working-memory${qs}`,
+      { method: 'GET' },
+    ),
+  )
+}
+
 // ─── Token estimate (Configure-tab budget card) ─────────────────────────
 
 import type { TokenEstimate } from '@agent-bridge/shared'

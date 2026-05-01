@@ -1860,6 +1860,17 @@ button.ab-list-row {
   font-size: 13px;
   line-height: 1;
 }
+/* Context-budget breakdown rows on the Configure tab. Each row gets
+ * a hairline divider underneath EXCEPT the last one — without that
+ * suppressed-last rule, an orphan divider sits between the breakdown
+ * and the overflow warning (or the next card) and reads as broken. */
+.ab-budget-row {
+  border-bottom: 1px solid var(--border);
+}
+.ab-budget-rows > .ab-budget-row:last-child {
+  border-bottom: none;
+}
+
 /* "Unsaved changes" banner that sits above the form on long edit
  * pages. Sticky so it follows the user as they scroll — primary save
  * action is always one click away regardless of how far they've

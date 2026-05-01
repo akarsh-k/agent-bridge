@@ -64,3 +64,5 @@ export type {
   TokenEstimateSkill,
   TokenEstimateTool,
 } from './token-estimate.js'
+export { getCurrentWorkingMemory } from './working-memory.js'
+export type { CurrentWorkingMemory } from './working-memory.js'

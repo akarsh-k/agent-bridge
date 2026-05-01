@@ -5,15 +5,25 @@
  * semantic-recall via embeddings.
  */
 
-import { useMemo, useState } from 'react'
-import { memoryScopes, type MemoryScope } from '@agent-bridge/shared'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  memoryScopes,
+  type AgentThreadSummary,
+  type MemoryScope,
+  type WorkingMemoryResponse,
+} from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
 import { Button } from '../../ui/button'
 import { Pill } from '../../ui/pill'
 import { Dropdown, type DropdownOption } from '../../ui/dropdown'
 import { toast } from '../../ui/toast-store'
-import { ApiError } from '../../lib/rpc'
+import {
+  ApiError,
+  getAgentWorkingMemory,
+  listAgentThreads,
+} from '../../lib/rpc'
 import { Link } from '../../lib/link'
+import { RefreshIcon } from '../../ui/icons'
 
 // Two scopes Mastra exposes — `thread` and `resource` — translated to
 // the two surfaces a user actually interacts with:
@@ -50,6 +60,13 @@ function ScopeHelp({ agentId }: { agentId: string }) {
       effectively resets every IDE invocation. If this agent is mostly
       called from an IDE, pick per-agent so memory survives between
       calls.
+      <br />
+      <br />
+      <strong>Switching scope is non-destructive:</strong> content from
+      the previous scope stays in storage, just hidden from the agent
+      until you switch back. So flipping per-agent → per-thread doesn't
+      delete your accumulated agent-level notes — it just makes new
+      conversations start fresh.
     </>
   )
 }
@@ -297,6 +314,9 @@ export function MemoryTab({ agentId }: { agentId: string }) {
                 Optional starter shape. The agent fills these in over time.
               </span>
             </div>
+            <div className="ab-field ab-field-col" style={{ gridColumn: '1 / -1' }}>
+              <CurrentScratchpad agentId={agentId} scope={wmScope} />
+            </div>
           </div>
         )}
       </div>
@@ -419,6 +439,213 @@ export function MemoryTab({ agentId }: { agentId: string }) {
           {busy ? 'Saving…' : 'Save memory settings'}
         </Button>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Read-only viewer for the live working-memory scratchpad. Sits below
+ * the template field so the operator can see what the LLM has
+ * actually written into the notebook over time. For per-thread
+ * scope, surfaces a thread picker since each thread has its own.
+ */
+function CurrentScratchpad({
+  agentId,
+  scope,
+}: {
+  agentId: string
+  scope: MemoryScope
+}) {
+  const [data, setData] = useState<WorkingMemoryResponse | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [threads, setThreads] = useState<readonly AgentThreadSummary[]>([])
+  const [pickedThreadId, setPickedThreadId] = useState<string | null>(null)
+
+  // Reset thread picker when agent changes — derived-state pattern.
+  const [seededFor, setSeededFor] = useState<string>(agentId)
+  if (seededFor !== agentId) {
+    setSeededFor(agentId)
+    setPickedThreadId(null)
+    setThreads([])
+    setData(null)
+  }
+
+  // Per-thread scope: load the thread list so the user can pick which
+  // one's scratchpad to view. Per-agent scope: skip the picker entirely.
+  useEffect(() => {
+    if (scope !== 'thread') return
+    let alive = true
+    void (async () => {
+      try {
+        const list = await listAgentThreads(agentId)
+        if (!alive) return
+        setThreads(list)
+        // Auto-pick the most recent thread so the user sees something
+        // by default instead of an empty dropdown.
+        if (list.length > 0 && pickedThreadId === null) {
+          setPickedThreadId(list[0]!.threadId)
+        }
+      } catch {
+        // List failures are non-critical — the panel just shows the
+        // "pick a thread" empty state.
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [agentId, scope, pickedThreadId])
+
+  // Fetch the scratchpad whenever the agent, scope, picked thread, or
+  // refresh-key changes.
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      if (alive) setLoading(true)
+      setErr(null)
+      try {
+        const res = await getAgentWorkingMemory(
+          agentId,
+          scope === 'thread' ? (pickedThreadId ?? undefined) : undefined,
+        )
+        if (alive) setData(res)
+      } catch (e) {
+        if (!alive) return
+        setErr(
+          e instanceof ApiError
+            ? e.message
+            : e instanceof Error
+              ? e.message
+              : 'Failed to load',
+        )
+      } finally {
+        if (alive) setLoading(false)
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [agentId, scope, pickedThreadId, refreshKey])
+
+  const threadOpts: DropdownOption[] = useMemo(
+    () =>
+      threads.map((t) => ({
+        value: t.threadId,
+        label: t.title ?? t.threadId.slice(0, 8) + '…',
+        sub: `${t.messageCount} message${t.messageCount === 1 ? '' : 's'}`,
+      })),
+    [threads],
+  )
+
+  return (
+    <div
+      style={{
+        marginTop: 6,
+        paddingTop: 14,
+        borderTop: '1px solid var(--border)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          justifyContent: 'space-between',
+          marginBottom: 8,
+          gap: 12,
+        }}
+      >
+        <div>
+          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>
+            Current scratchpad
+          </div>
+          <div className="ab-field-help" style={{ marginTop: 2 }}>
+            What the agent has actually written into the notebook.
+            {scope === 'thread' && ' One per conversation.'}
+          </div>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          leading={<RefreshIcon />}
+          onClick={() => setRefreshKey((k) => k + 1)}
+          disabled={loading}
+        >
+          Refresh
+        </Button>
+      </div>
+
+      {scope === 'thread' && (
+        <div style={{ marginBottom: 10 }}>
+          {threads.length === 0 ? (
+            <div className="ab-field-help">
+              No conversations yet. Start one in the Chat tab to see
+              this thread's scratchpad here.
+            </div>
+          ) : (
+            <Dropdown
+              value={pickedThreadId}
+              onChange={setPickedThreadId}
+              options={threadOpts}
+              placeholder="Pick a conversation"
+            />
+          )}
+        </div>
+      )}
+
+      {err && (
+        <div className="ab-field-help" style={{ color: 'var(--danger)' }}>
+          {err}
+        </div>
+      )}
+
+      {!err && data?.disabled && (
+        <div className="ab-field-help">
+          Working memory isn't enabled. Toggle it on above to start
+          recording.
+        </div>
+      )}
+
+      {!err && !data?.disabled && data !== null && (
+        <>
+          {data.content === null ? (
+            <div className="ab-field-help">
+              No scratchpad recorded yet for this scope.
+            </div>
+          ) : data.content.trim() === '' ? (
+            <div className="ab-field-help">
+              The agent hasn't written anything to the scratchpad yet.
+              On capable models this fills in as the conversation
+              progresses; on smaller models the scratchpad may stay
+              blank.
+            </div>
+          ) : (
+            <pre
+              style={{
+                margin: 0,
+                padding: '12px 14px',
+                background: 'var(--surface-hi)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                fontFamily: 'var(--font-mono)',
+                fontSize: 12,
+                lineHeight: 1.55,
+                color: 'var(--text)',
+                maxHeight: 320,
+                overflowY: 'auto',
+              }}
+            >
+              {data.content}
+            </pre>
+          )}
+        </>
+      )}
+
+      {loading && data === null && (
+        <div className="ab-field-help">Loading…</div>
+      )}
     </div>
   )
 }

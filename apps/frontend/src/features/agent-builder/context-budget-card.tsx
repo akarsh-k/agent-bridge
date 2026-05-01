@@ -215,6 +215,7 @@ function BudgetBody({
         )}
       </div>
 
+      <div className="ab-budget-rows">
       <BreakdownRow
         label="System prompt"
         tokens={estimate.parts.systemPrompt}
@@ -258,6 +259,7 @@ function BudgetBody({
         estimate.parts.tools.map((t) => (
           <SubRow key={t.name} label={`${t.name}`} tokens={t.tokens} />
         ))}
+      </div>
 
       {limit !== null && baseline > limit * 0.8 && (
         <div
@@ -299,12 +301,12 @@ function BreakdownRow({
   const share = pct(tokens, total)
   return (
     <div
+      className="ab-budget-row"
       style={{
         display: 'flex',
         alignItems: 'center',
         gap: 10,
         padding: '8px 0',
-        borderBottom: '1px solid var(--border)',
         cursor: expandable ? 'pointer' : 'default',
       }}
       onClick={expandable ? onToggle : undefined}
