@@ -47,7 +47,12 @@ import {
   schema,
   type AgentBridgeDb,
 } from '@agent-bridge/db'
-import { builtAgentCache, dispatchRun } from '@agent-bridge/agents'
+import {
+  builtAgentCache,
+  CODING_AGENT_VIRTUAL_BRIDGE_TOOLS,
+  dispatchRun,
+  type VirtualBridgeToolDefinition,
+} from '@agent-bridge/agents'
 import {
   loadOrCreateMasterKey,
 } from '@agent-bridge/shared/crypto'
@@ -59,11 +64,12 @@ import {
   type EventBus,
 } from '@agent-bridge/shared/event-bus'
 import {
-  BRIDGE_TOOL_RESERVED_PREFIX,
   bridgeStreamId,
+  type CodingAgentToolName,
 } from '@agent-bridge/shared'
 
 import { env } from './env.js'
+import { executeCodingAgentTool } from './coding-agent-handler.js'
 
 /**
  * One Mastra thread per bridge subprocess lifetime.
@@ -106,10 +112,17 @@ interface BridgeToolRecord {
 }
 
 /**
- * One entry in the bridge's tool registry. Either a Phase-5 1:1 default
- * (auto-derived `query_<slug>`) or a Phase-7 explicit `bridge_tools`
- * row. The IDE sees them identically — both are MCP tools with a name,
- * description, and JSON-Schema input. The handler routes accordingly.
+ * One entry in the bridge's tool registry. Three kinds:
+ *   - `default`: Phase-5 auto-derived `query_<slug>` (no longer
+ *     auto-emitted; kept as an edge case if a future flag opts
+ *     agents out of the toolkit virtuals. see
+ *     `docs/ARCHITECTURE.md` §10.1).
+ *   - `phase7`: explicit operator-authored `bridge_tools` row.
+ *   - `virtual`: coding-agent toolkit tool, code-defined in
+ *     `@agent-bridge/agents/coding-agent/bridge-tool-defs.ts`.
+ * The IDE sees them identically. all three are MCP tools with a
+ * name, description, and JSON-Schema input. The handler routes by
+ * `source.kind`.
  */
 interface ToolEntry {
   readonly name: string
@@ -122,25 +135,7 @@ interface ToolEntry {
 type ToolEntrySource =
   | { kind: 'default' }
   | { kind: 'phase7'; tool: BridgeToolRecord }
-
-/**
- * Default JSON Schema for the Phase 5 1:1 fallback tool. Mirrors the
- * Zod shape the previous `McpServer.registerTool` flavour built. The
- * IDE sees this verbatim on `tools/list`.
- */
-const DEFAULT_TOOL_INPUT_SCHEMA: Record<string, unknown> = {
-  type: 'object',
-  properties: {
-    query: {
-      type: 'string',
-      minLength: 1,
-      maxLength: 8_000,
-      description: 'The question or instruction to send to the agent.',
-    },
-  },
-  required: ['query'],
-  additionalProperties: false,
-}
+  | { kind: 'virtual'; def: VirtualBridgeToolDefinition }
 
 /**
  * Read every agent that has a configured LLM provider. Agents without
@@ -163,25 +158,57 @@ async function listExposableAgents(db: AgentBridgeDb): Promise<AgentRecord[]> {
 }
 
 /**
- * Phase 7 resolver. For each exposable agent, query
- * `bridge_tools` rows where `enabled = true`. If any exist, register
- * those (1:N mode); otherwise register the Phase 5 default tool
- * (1:1 mode). One pass over the DB, one decision per agent.
+ * Build the bridge's tool registry per `tools/list` semantics. Three
+ * sources contribute, in this precedence (later sources shadow earlier
+ * ones at the same name key):
+ *
+ *   1. Virtual coding-agent toolkit (always-on for every exposable
+ *      agent). Names: `<agent.slug>__<def.name>` so multi-agent
+ *      installs don't collide on bare names like `plan_feature`.
+ *   2. Operator-authored explicit `bridge_tools` rows. Names are
+ *      operator-chosen (DB-globally unique). An explicit row whose
+ *      name equals a virtual key shadows the virtual.
+ *
+ * The Phase-5 `query_<slug>` default is no longer auto-emitted -
+ * `<slug>__ask_general` from the virtuals subsumes it (multi-repo
+ * aware, grounded outputs, JSON envelope). The DB CHECK constraint
+ * banning the `query_` prefix on explicit rows is preserved; the
+ * prefix stays reserved in case we re-introduce the default behind
+ * a feature flag later.
+ *
+ * Mode reporting (per agent): `virtual:6`, or
+ * `virtual:6 + explicit:N`, or `virtual:6 + explicit:N (shadows: M)`
+ * when explicit rows replace virtuals by name.
  */
 async function buildToolRegistry(
   db: AgentBridgeDb,
   agents: readonly AgentRecord[],
 ): Promise<{
   registry: Map<string, ToolEntry>
-  modeByAgentSlug: Map<string, '1:1 default' | `1:N (${number})`>
+  modeByAgentSlug: Map<string, string>
 }> {
   const registry = new Map<string, ToolEntry>()
-  const modeByAgentSlug = new Map<
-    string,
-    '1:1 default' | `1:N (${number})`
-  >()
+  const modeByAgentSlug = new Map<string, string>()
 
   for (const agent of agents) {
+    // 1) Seed virtual tools first. Slug prefix keeps multi-agent
+    //    installs collision-free. The bare canonical name lives on
+    //    `def.name` (used by the JSON envelope `tool` field in P4).
+    const virtualNames = new Set<string>()
+    for (const def of CODING_AGENT_VIRTUAL_BRIDGE_TOOLS) {
+      const name = virtualToolName(agent.slug, def.name)
+      virtualNames.add(name)
+      registry.set(name, {
+        name,
+        description: def.description,
+        inputSchema: def.inputSchema,
+        agent,
+        source: { kind: 'virtual', def },
+      })
+    }
+
+    // 2) Layer explicit rows. Same-name rows shadow virtuals; new
+    //    names add to the surface.
     const rows = await db.db
       .select({
         id: schema.bridgeTools.id,
@@ -199,46 +226,56 @@ async function buildToolRegistry(
       )
       .orderBy(asc(schema.bridgeTools.name))
 
-    const enabledRows: BridgeToolRecord[] = rows.map((r) => ({
-      id: r.id,
-      name: r.name,
-      description: r.description,
-      inputSchema: r.inputSchema as Record<string, unknown>,
-      promptTemplate: r.promptTemplate,
-    }))
-
-    if (enabledRows.length > 0) {
-      modeByAgentSlug.set(agent.slug, `1:N (${enabledRows.length})`)
-      for (const row of enabledRows) {
-        const inputSchema =
-          row.inputSchema && Object.keys(row.inputSchema).length > 0
-            ? row.inputSchema
-            : EMPTY_OBJECT_SCHEMA
-        registry.set(row.name, {
-          name: row.name,
-          description: row.description.trim() || `Bridge tool for "${agent.name}".`,
-          inputSchema,
-          agent,
-          source: { kind: 'phase7', tool: row },
-        })
+    let shadowCount = 0
+    for (const r of rows) {
+      const tool: BridgeToolRecord = {
+        id: r.id,
+        name: r.name,
+        description: r.description,
+        inputSchema: r.inputSchema as Record<string, unknown>,
+        promptTemplate: r.promptTemplate,
       }
-    } else {
-      modeByAgentSlug.set(agent.slug, '1:1 default')
-      const toolName = `${BRIDGE_TOOL_RESERVED_PREFIX}${agent.slug}`
-      const description =
-        agent.description?.trim() ||
-        `Query the "${agent.name}" agent. The agent has access to its configured tools and repos; ask in natural language.`
-      registry.set(toolName, {
-        name: toolName,
-        description,
-        inputSchema: DEFAULT_TOOL_INPUT_SCHEMA,
+      const inputSchema =
+        tool.inputSchema && Object.keys(tool.inputSchema).length > 0
+          ? tool.inputSchema
+          : EMPTY_OBJECT_SCHEMA
+      if (virtualNames.has(tool.name)) shadowCount += 1
+      registry.set(tool.name, {
+        name: tool.name,
+        description:
+          tool.description.trim() || `Bridge tool for "${agent.name}".`,
+        inputSchema,
         agent,
-        source: { kind: 'default' },
+        source: { kind: 'phase7', tool },
       })
     }
+
+    const explicit = rows.length
+    const virtual = CODING_AGENT_VIRTUAL_BRIDGE_TOOLS.length
+    let label = `virtual:${virtual}`
+    if (explicit > 0) {
+      label += ` + explicit:${explicit}`
+      if (shadowCount > 0) label += ` (shadows: ${shadowCount})`
+    }
+    modeByAgentSlug.set(agent.slug, label)
   }
 
   return { registry, modeByAgentSlug }
+}
+
+/**
+ * Slug-prefixed name for a virtual tool. Mirrors the
+ * `<connection-slug>__<rawTool>` convention `mountExternalMcps` uses
+ * for upstream MCP tools (`packages/agents/src/mcp/external-mcps.ts`)
+ *. the IDE's MCP client is already comfortable with double-underscore
+ * separators, and the bare `def.name` stays available on the JSON
+ * envelope's `tool` field for the IDE to reason about canonically.
+ */
+function virtualToolName(
+  agentSlug: string,
+  defName: CodingAgentToolName,
+): string {
+  return `${agentSlug}__${defName}`
 }
 
 /**
@@ -272,6 +309,26 @@ async function executeToolCall(
   entry: ToolEntry,
   args: Record<string, unknown>,
 ) {
+  // P4: virtual coding-agent tools have their own handler with its
+  // own agent/provider checks, resolver pre-flight, and dispatcher
+  // call. Route early so the explicit-row code path below stays
+  // focused on the Phase 5/7 contract.
+  if (entry.source.kind === 'virtual') {
+    return executeCodingAgentTool(
+      {
+        db: ctx.db,
+        eventBus: ctx.eventBus,
+        threadId: BRIDGE_THREAD_ID,
+      },
+      {
+        name: entry.name,
+        agent: { id: entry.agent.id, slug: entry.agent.slug },
+        def: entry.source.def,
+      },
+      args,
+    )
+  }
+
   const { agent } = entry
   const runId = randomUUID()
   const streamId = bridgeStreamId(runId)

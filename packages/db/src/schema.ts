@@ -238,6 +238,19 @@ export const agentRepos = pgTable(
     /** Optional short label ("frontend", "backend"). */
     role: text('role'),
     description: text('description'),
+    /**
+     * Operator-curated extra names this repo answers to: local folder
+     * names, short codes, legacy names. Used by the coding-agent
+     * toolkit's `resolveRepoHint` to fuzzy-match a coding agent's
+     * `repo_hint` / `local_folder` against operator-known synonyms
+     * (`packages/agents/src/coding-agent/repo-resolver.ts`).
+     *
+     * Always populated as `[]` rather than NULL so consumers don't
+     * have to nullsafe every read. Strings are operator-trimmed,
+     * de-duped, and lower-cased at the DTO layer; the DB just stores
+     * whatever the validated input produced.
+     */
+    aliases: jsonb('aliases').$type<string[]>().notNull().default([]),
     /** React Flow canvas coordinates. Signed integers (can be negative). */
     positionX: integer('position_x').notNull().default(0),
     positionY: integer('position_y').notNull().default(0),

@@ -48,6 +48,7 @@ function toAttachedRepoResponse(
     repo: toRepoResponse(repo, summary),
     role: attach.role,
     description: attach.description,
+    aliases: attach.aliases ?? [],
     positionX: attach.positionX,
     positionY: attach.positionY,
     attachedAt: attach.createdAt.toISOString(),
@@ -127,6 +128,7 @@ export const agentReposRouter = new Hono()
             repoId: body.repoId,
             role: body.role ?? null,
             description: body.description ?? null,
+            aliases: body.aliases ?? [],
             positionX: body.positionX ?? 0,
             positionY: body.positionY ?? 0,
           })
@@ -237,6 +239,7 @@ export const agentReposRouter = new Hono()
       const patch: Partial<typeof schema.agentRepos.$inferInsert> = {}
       if ('role' in body) patch.role = body.role ?? null
       if ('description' in body) patch.description = body.description ?? null
+      if ('aliases' in body) patch.aliases = body.aliases ?? []
       if ('positionX' in body) patch.positionX = body.positionX
       if ('positionY' in body) patch.positionY = body.positionY
 

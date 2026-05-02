@@ -667,7 +667,11 @@ export async function getAgentTokenEstimate(
 
 // ─── System tools (read-only catalog of auto-mounted MCP tools) ─────────
 
-import type { GitnexusSystemToolsResponse } from '@agent-bridge/shared'
+import type {
+  CodingAgentSystemSkillResponse,
+  GitnexusLibrarySkillsResponse,
+  GitnexusSystemToolsResponse,
+} from '@agent-bridge/shared'
 
 /**
  * Fetch the gitnexus tool catalog. The backend caches the result for
@@ -719,4 +723,99 @@ export async function getGitnexusSystemTools(): Promise<GitnexusSystemToolsRespo
     })
   }
   return parsed as GitnexusSystemToolsResponse
+}
+
+/**
+ * Fetch the coding-agent system-skill body. Read-only, identical
+ * across every agent (build-time artifact). Same `{ ok: false }`-
+ * is-not-an-error contract as `getGitnexusSystemTools` so the
+ * resources panel can render a graceful notice if the .md fails
+ * to load (most likely cause: forgot to rebuild the agents
+ * package after editing the markdown).
+ */
+export async function getCodingAgentSystemSkill(): Promise<CodingAgentSystemSkillResponse> {
+  let res: Response
+  try {
+    res = await fetch(`${apiBaseUrl}/api/system/skill/coding-agent`, {
+      method: 'GET',
+    })
+  } catch (err) {
+    throw new ApiError({
+      code: 'network',
+      status: 0,
+      message:
+        err instanceof Error ? `Network error: ${err.message}` : 'Network error',
+    })
+  }
+  let parsed: unknown
+  try {
+    parsed = await res.json()
+  } catch {
+    throw new ApiError({
+      code: 'malformed_response',
+      status: res.status,
+      message: `Expected JSON from ${res.url} (HTTP ${res.status})`,
+    })
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    !('ok' in parsed) ||
+    typeof (parsed as { ok: unknown }).ok !== 'boolean'
+  ) {
+    throw new ApiError({
+      code: 'malformed_response',
+      status: res.status,
+      message: 'Response did not match the API envelope shape',
+      details: parsed,
+    })
+  }
+  return parsed as CodingAgentSystemSkillResponse
+}
+
+/**
+ * Fetch the gitnexus library skills (vendor markdown shipped inside
+ * the gitnexus npm package). Same `{ ok: false }`-is-not-an-error
+ * contract as the other system skill endpoints; the resources panel
+ * renders a graceful unavailable state when the loader can't resolve
+ * the gitnexus install.
+ */
+export async function getGitnexusLibrarySkills(): Promise<GitnexusLibrarySkillsResponse> {
+  let res: Response
+  try {
+    res = await fetch(`${apiBaseUrl}/api/system/skill/gitnexus-library`, {
+      method: 'GET',
+    })
+  } catch (err) {
+    throw new ApiError({
+      code: 'network',
+      status: 0,
+      message:
+        err instanceof Error ? `Network error: ${err.message}` : 'Network error',
+    })
+  }
+  let parsed: unknown
+  try {
+    parsed = await res.json()
+  } catch {
+    throw new ApiError({
+      code: 'malformed_response',
+      status: res.status,
+      message: `Expected JSON from ${res.url} (HTTP ${res.status})`,
+    })
+  }
+  if (
+    !parsed ||
+    typeof parsed !== 'object' ||
+    !('ok' in parsed) ||
+    typeof (parsed as { ok: unknown }).ok !== 'boolean'
+  ) {
+    throw new ApiError({
+      code: 'malformed_response',
+      status: res.status,
+      message: 'Response did not match the API envelope shape',
+      details: parsed,
+    })
+  }
+  return parsed as GitnexusLibrarySkillsResponse
 }

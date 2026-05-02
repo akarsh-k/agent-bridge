@@ -4,6 +4,7 @@ Monorepo for Agent Bridge — a typed, end-to-end TypeScript stack.
 
 - **apps/backend** — Hono API (`@hono/node-server`), Zod-validated endpoints, typed RPC surface exported to the frontend.
 - **apps/frontend** — React 19 + Vite, consumes the backend's types via Hono's RPC client.
+- **apps/mcp-bridge**. MCP server that exposes each Agent Bridge agent to IDE coding agents (Cursor, Claude Code, Codex). Every agent ships with the **coding-agent toolkit** out of the box: six standard tools (`plan_feature`, `plan_bugfix`, `ask_general`, `investigate_codebase`, `assess_impact`, `list_repos`) the IDE LLM can call to plan features, diagnose bugs, and trace code across the user's attached repos. The toolkit grounds answers in `gitnexus` and the operator-curated repo inventory; design + protocol details in [`docs/ARCHITECTURE.md` §10](docs/ARCHITECTURE.md#10-coding-agent-toolkit).
 - **packages/shared** — Shared Zod schemas, env helpers, and domain types used by every runtime (backend / workers / future services).
 - **docker-compose.yml** — Postgres (with `pgvector`) and Redis for local development, bound to loopback.
 

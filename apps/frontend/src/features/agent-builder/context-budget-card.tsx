@@ -235,6 +235,35 @@ function BudgetBody({
           <SubRow key={s.name} label={s.name} tokens={s.tokens} />
         ))}
 
+      {/* System skill. auto-appended to every agent's instructions
+          right after the operator's skills. Listed as its own
+          breakdown row (rather than rolled into Skills) because the
+          source is different (build-time .md, not a `skills` row)
+          and the operator can't influence its size. Renders distinctly
+          when the .md fails to load so a missing build artifact is
+          visible. */}
+      <BreakdownRow
+        label="System skill (built-in)"
+        tokens={estimate.parts.systemSkill?.tokens ?? 0}
+        total={baseline}
+        sublabel={
+          estimate.parts.systemSkill === null
+            ? 'Failed to load. rebuild @agent-bridge/agents'
+            : `${estimate.parts.systemSkill.name} · v${estimate.parts.systemSkill.version}`
+        }
+      />
+
+      <BreakdownRow
+        label="GitNexus library skills (built-in)"
+        tokens={estimate.parts.gitnexusLibrarySkills?.tokens ?? 0}
+        total={baseline}
+        sublabel={
+          estimate.parts.gitnexusLibrarySkills === null
+            ? 'Not attached (gitnexus install unreachable)'
+            : `${estimate.parts.gitnexusLibrarySkills.count} skills · gitnexus v${estimate.parts.gitnexusLibrarySkills.version}`
+        }
+      />
+
       <BreakdownRow
         label="Attached repos hint"
         tokens={estimate.parts.attachedReposHint}
@@ -285,6 +314,7 @@ function BudgetBody({
 
 function BreakdownRow({
   label,
+  sublabel,
   tokens,
   total,
   expandable = false,
@@ -292,6 +322,7 @@ function BreakdownRow({
   onToggle,
 }: {
   label: string
+  sublabel?: string
   tokens: number
   total: number
   expandable?: boolean
@@ -334,7 +365,23 @@ function BreakdownRow({
           {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
         </span>
       )}
-      <span style={{ flex: 1, fontSize: 13 }}>{label}</span>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13 }}>{label}</div>
+        {sublabel && (
+          <div
+            style={{
+              fontSize: 11,
+              color: 'var(--text-muted)',
+              marginTop: 2,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {sublabel}
+          </div>
+        )}
+      </div>
       <span
         style={{
           fontSize: 11,

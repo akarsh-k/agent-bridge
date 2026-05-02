@@ -62,6 +62,33 @@ const roleSchema = z.string().trim().max(60)
 const descriptionSchema = z.string().trim().max(500)
 const connectorSchema = z.string().trim().min(1).max(60)
 
+/**
+ * Operator-curated extra names for an attached repo. Used by the
+ * coding-agent toolkit's `resolveRepoHint` to fuzzy-match an IDE
+ * coding agent's `repo_hint` / `local_folder` against synonyms the
+ * operator knows about (folder names, short codes, legacy names).
+ *
+ * Validation: per-entry trim + lowercase + non-empty + max 60 chars,
+ * dedupe across the array, max 20 aliases per repo. The
+ * lower-casing happens at the DTO so the column stores a canonical
+ * form. the resolver already lower-cases its inputs, so keeping
+ * the storage lowered means equal-string comparisons line up.
+ */
+const aliasesSchema = z
+  .array(z.string().trim().min(1).max(60))
+  .max(20, 'at most 20 aliases per repo')
+  .transform((list) => {
+    const seen = new Set<string>()
+    const out: string[] = []
+    for (const raw of list) {
+      const lowered = raw.toLowerCase()
+      if (seen.has(lowered)) continue
+      seen.add(lowered)
+      out.push(lowered)
+    }
+    return out
+  })
+
 /** React-Flow canvas coordinates. Signed 32-bit range is plenty for UI pans. */
 const positionSchema = z
   .number()
@@ -296,6 +323,7 @@ export const attachRepoInputSchema = z
     repoId: z.uuid(),
     role: roleSchema.nullable().optional(),
     description: descriptionSchema.nullable().optional(),
+    aliases: aliasesSchema.optional(),
     positionX: positionSchema.optional(),
     positionY: positionSchema.optional(),
   })
@@ -305,13 +333,14 @@ export type AttachRepoInput = z.infer<typeof attachRepoInputSchema>
 
 /**
  * PATCH /api/agents/:agentId/repos/:repoId — update only the per-attachment
- * fields (role / description / position). The global repo resource stays
- * untouched.
+ * fields (role / description / aliases / position). The global repo
+ * resource stays untouched.
  */
 export const attachRepoUpdateInputSchema = z
   .object({
     role: roleSchema.nullable().optional(),
     description: descriptionSchema.nullable().optional(),
+    aliases: aliasesSchema.optional(),
     positionX: positionSchema.optional(),
     positionY: positionSchema.optional(),
   })
@@ -332,6 +361,7 @@ export const attachedRepoResponseSchema = z.object({
   repo: repoResponseSchema,
   role: z.string().nullable(),
   description: z.string().nullable(),
+  aliases: z.array(z.string()),
   positionX: z.number().int(),
   positionY: z.number().int(),
   attachedAt: z.iso.datetime(),

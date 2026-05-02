@@ -11,6 +11,18 @@ const skillEntry = z.object({
   tokens: z.number().int().nonnegative(),
 })
 
+const systemSkillEntry = z.object({
+  name: z.string(),
+  version: z.string(),
+  tokens: z.number().int().nonnegative(),
+})
+
+const gitnexusLibrarySkillsEntry = z.object({
+  version: z.string(),
+  count: z.number().int().nonnegative(),
+  tokens: z.number().int().nonnegative(),
+})
+
 const toolEntry = z.object({
   name: z.string(),
   tokens: z.number().int().nonnegative(),
@@ -25,6 +37,15 @@ export const tokenEstimateSchema = z.object({
     systemPrompt: z.number().int().nonnegative(),
     skills: z.array(skillEntry),
     skillsTotal: z.number().int().nonnegative(),
+    /**
+     * Coding-agent system skill. auto-appended to every agent's
+     * instructions in `composeInstructions`. `null` when the build
+     * artifact (`system-skill.md` in `dist/src/coding-agent/`) is
+     * missing or unreadable; the budget card surfaces that as a
+     * config gap distinct from "0 tokens".
+     */
+    systemSkill: systemSkillEntry.nullable(),
+    gitnexusLibrarySkills: gitnexusLibrarySkillsEntry.nullable(),
     attachedReposHint: z.number().int().nonnegative(),
     repoEdgesHint: z.number().int().nonnegative(),
     tools: z.array(toolEntry),

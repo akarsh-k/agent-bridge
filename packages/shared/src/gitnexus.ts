@@ -68,6 +68,36 @@ export function resolveGitnexusCli(fromModuleUrl: string): ResolvedGitnexusCli {
   }
 }
 
+/**
+ * Resolve the absolute path to the gitnexus npm package's `skills/`
+ * directory. The package ships seven `.md` files there (declared in
+ * its `files` array): `gitnexus-guide.md`, `gitnexus-cli.md`,
+ * `gitnexus-exploring.md`, `gitnexus-debugging.md`,
+ * `gitnexus-impact-analysis.md`, `gitnexus-refactoring.md`,
+ * `gitnexus-pr-review.md`. These are LLM-targeted skill files with
+ * YAML frontmatter and markdown bodies — vendor content the
+ * coding-agent toolkit auto-attaches to every agent's instructions
+ * so the model knows the right gitnexus tool-call shapes.
+ *
+ * Reading from the npm package (rather than from a per-repo
+ * `.claude/skills/` copy) means the content is available before
+ * any repo is indexed, version-locked to the gitnexus pin, and
+ * always the source of truth.
+ */
+export function resolveGitnexusSkillsDir(fromModuleUrl: string): string {
+  const req = createRequire(fromModuleUrl)
+  let pkgPath: string
+  try {
+    pkgPath = req.resolve('gitnexus/package.json')
+  } catch (err) {
+    throw new Error(
+      `[gitnexus] cannot resolve gitnexus from ${fromModuleUrl}. ` +
+        `Original: ${(err as Error).message}`,
+    )
+  }
+  return path.join(path.dirname(pkgPath), 'skills')
+}
+
 /** Confirm the installed version matches the expected pin. Throws on mismatch. */
 export function assertExpectedGitnexusVersion(
   fromModuleUrl: string,

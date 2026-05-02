@@ -61,8 +61,52 @@ export type { WipeSemanticVectorsResult } from './semantic-wipe.js'
 export { estimateAgentTokens } from './token-estimate.js'
 export type {
   TokenEstimate,
+  TokenEstimateGitnexusLibrarySkills,
   TokenEstimateSkill,
+  TokenEstimateSystemSkill,
   TokenEstimateTool,
 } from './token-estimate.js'
+export {
+  loadGitnexusLibrarySkills,
+} from './coding-agent/gitnexus-library-skills.js'
+export type {
+  GitnexusLibrarySkill,
+  GitnexusLibrarySkillsLoaded,
+} from './coding-agent/gitnexus-library-skills.js'
 export { getCurrentWorkingMemory } from './working-memory.js'
 export type { CurrentWorkingMemory } from './working-memory.js'
+export { loadAttachedRepos } from './coding-agent/repo-loader.js'
+export type { LoadAttachedReposInput } from './coding-agent/repo-loader.js'
+export {
+  resolveRepoHint,
+  resolveRelatedRepos,
+  repoResolverErrorToEnvelope,
+  isResolvedSingle,
+  isResolvedAll,
+  isClarification,
+  isResolverError,
+} from './coding-agent/repo-resolver.js'
+export type { ResolveRepoHintInput } from './coding-agent/repo-resolver.js'
+export {
+  normalizeRemoteUrl,
+  urlTail,
+} from './coding-agent/url-normalize.js'
+export {
+  CODING_AGENT_SYSTEM_SKILL_HEADING,
+  CODING_AGENT_SYSTEM_SKILL_VERSION,
+  loadCodingAgentSystemSkill,
+} from './coding-agent/system-skill.js'
+export {
+  CODING_AGENT_VIRTUAL_BRIDGE_TOOLS,
+} from './coding-agent/bridge-tool-defs.js'
+export type { VirtualBridgeToolDefinition } from './coding-agent/bridge-tool-defs.js'
+export {
+  emptyWikiMountMeta,
+  mountWikiTools,
+} from './coding-agent/wiki-tool.js'
+export type {
+  MountedWikiTools,
+  MountWikiToolsInput,
+  WikiMountMeta,
+  WikiRepoLabel,
+} from './coding-agent/wiki-tool.js'

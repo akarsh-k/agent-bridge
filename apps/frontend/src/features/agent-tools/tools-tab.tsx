@@ -1,6 +1,16 @@
 /**
- * Bridge tools tab — custom functions the agent exposes to the
- * connected IDEs over MCP.
+ * Tools tab content (rendered inside `Resources`). the agent's
+ * INBOUND tool surface: native `tools` rows (HTTP / shell / Mastra
+ * built-ins) the LLM can call while answering, plus the read-only
+ * gitnexus "System defaults" catalog auto-mounted when the agent
+ * has at least one indexed repo.
+ *
+ * NOTE: this file ONLY deals with inbound tools. The OUTBOUND
+ * surface. what the IDE sees on `tools/list` (operator-authored
+ * `bridge_tools` rows + the always-on coding-agent toolkit
+ * virtuals). lives in `features/agent-bridge-tools/bridge-tools-tab.tsx`.
+ * Don't conflate them: same word, opposite directions, two
+ * different DB tables. See `docs/ARCHITECTURE.md` §8.
  */
 
 import { useEffect, useState } from 'react'
@@ -21,6 +31,25 @@ type SystemToolsState =
   | { status: 'loading' }
   | { status: 'ready'; tools: ReadonlyArray<SystemToolDefinition> }
   | { status: 'error'; message: string }
+
+// Small uppercase caption that separates the operator's custom rows
+// from the always-attached built-in rows inside a Tools / Skills card.
+function BuiltInSubhead() {
+  return (
+    <div
+      style={{
+        margin: '18px 4px 8px',
+        fontSize: 11,
+        fontWeight: 600,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        color: 'var(--text-muted)',
+      }}
+    >
+      Built-in
+    </div>
+  )
+}
 
 // Pull a one-line summary out of a tool description so the System
 // defaults rows stay scannable. Cuts at the first hard newline OR the
@@ -142,219 +171,258 @@ export function ToolsTab({ agentId }: { agentId: string }) {
     setSheetOpen(true)
   }
 
-  // System defaults card — read-only list of the gitnexus tools that
-  // ship with every agent that has a ready repo. Rendered AFTER Custom
-  // tools so the user-authored surface stays the focal point; the
-  // system catalog reads as reference material at the bottom of the
-  // page. Extracted into a variable so the JSX in `return` stays flat
-  // and the ordering is obvious at a glance.
-  const systemDefaults = (
-    <div className="ab-card ab-card-pad ab-form-section">
-      <div className="ab-section-head" style={{ marginBottom: 6 }}>
-        <div className="ab-section-title">System defaults</div>
-        <div className="ab-section-sub">
-          Built-in tools auto-mounted when this agent has an indexed
-          repository. Read-only — managed by Agent Bridge.
-        </div>
-      </div>
-      {readyRepos.length === 0 && systemTools.status === 'ready' && (
+  // Built-in (system) tool rows. read-only list of the gitnexus
+  // tools auto-mounted when this agent has a ready repo. Rendered as
+  // a fragment so the unified Tools card can drop them under the
+  // operator-authored rows in the same `ab-list-card`, mirroring
+  // the Skills card pattern in `resources-panel.tsx`.
+  const renderSystemRows = () => {
+    if (systemTools.status === 'loading') {
+      return (
         <div
-          className="ab-field-help"
-          style={{ marginBottom: 10, color: 'var(--warn)' }}
+          className="ab-list-row"
+          style={{ opacity: 0.6, fontSize: 13, color: 'var(--text-dim)' }}
         >
-          No indexed repositories attached — these tools are listed for
-          reference but won't have data to query until at least one repo
-          finishes indexing.
-        </div>
-      )}
-      {systemTools.status === 'loading' ? (
-        <div className="ab-field-help" style={{ opacity: 0.7 }}>
-          Loading system tools…
-        </div>
-      ) : systemTools.status === 'error' ? (
-        <div className="ab-field-help" style={{ color: 'var(--warn)' }}>
-          Couldn't load system tools: {systemTools.message}
-        </div>
-      ) : (
-        <div
-          className="ab-card ab-list-card"
-          style={{ opacity: readyRepos.length === 0 ? 0.6 : 1 }}
-        >
-          {systemTools.tools.map((t) => {
-            const summary = firstSentence(t.description)
-            const hasMore = summary !== t.description.trim()
-            const isExpanded = expandedSystemTool === t.name
-            return (
-              <div className="ab-system-tool" key={t.name}>
-                <button
-                  type="button"
-                  className="ab-system-tool-summary"
-                  onClick={hasMore ? () => toggleSystemTool(t.name) : undefined}
-                  disabled={!hasMore}
-                  aria-expanded={hasMore ? isExpanded : undefined}
-                >
-                  <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-                    <ToolIcon />
-                  </div>
-                  <div className="ab-list-row-head">
-                    <div className="ab-list-row-title ab-mono">{t.name}</div>
-                    <div className="ab-list-row-sub">{summary}</div>
-                  </div>
-                  <div className="ab-list-row-meta">
-                    <Pill kind="neutral">System</Pill>
-                    {hasMore && (
-                      <span
-                        className="ab-row-affordance ab-system-tool-chevron"
-                        aria-hidden="true"
-                      >
-                        <ChevronDownIcon />
-                      </span>
-                    )}
-                  </div>
-                </button>
-                {isExpanded && (
-                  <div className="ab-system-tool-detail">
-                    <pre>{t.description.trim()}</pre>
-                  </div>
-                )}
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-
-  const customTools = (
-    <div className="ab-card ab-card-pad ab-form-section">
-      <div
-        className="ab-section-head"
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
-          gap: 12,
-        }}
-      >
-        <div style={{ minWidth: 0 }}>
-          <div className="ab-section-title">Custom tools</div>
-          <div className="ab-section-sub">
-            {tools.length} attached · custom tools you defined for this
-            agent (HTTP, shell, Mastra built-ins). For tools the IDE
-            calls into the agent, see the <strong>Bridge tools</strong> tab.
+          <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+            <ToolIcon />
+          </div>
+          <div className="ab-list-row-head">
+            <div className="ab-list-row-title">Loading built-in tools…</div>
           </div>
         </div>
-        <Button
-          variant="secondary"
-          size="sm"
-          leading={<PlusIcon strokeWidth={2.4} />}
-          onClick={openCreate}
-        >
-          Add tool
-        </Button>
-      </div>
-
-      {tools.length === 0 ? (
-        <EmptyState
-          glyph={<ToolIcon />}
-          title="No tools yet"
-          body="Tools extend the agent at run time. The LLM decides when to call them based on your system prompt and the user's question."
-          action={
-            <Button
-              variant="primary"
-              leading={<PlusIcon strokeWidth={2.4} />}
-              onClick={openCreate}
-            >
-              Add tool
-            </Button>
-          }
-        />
-      ) : (
-        <div className="ab-card ab-list-card">
-          {tools.map((t) => {
-            const dp = drag.rowProps(t.id)
-            return (
-              <div
-                className="ab-list-row is-edit"
-                key={t.id}
-                role="button"
-                tabIndex={0}
-                onClick={() => openEdit(t.id)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault()
-                    openEdit(t.id)
-                  }
-                }}
-                draggable={dp.draggable}
-                onDragStart={dp.onDragStart}
-                onDragEnter={dp.onDragEnter}
-                onDragOver={dp.onDragOver}
-                onDragEnd={dp.onDragEnd}
-                onDrop={dp.onDrop}
+      )
+    }
+    if (systemTools.status === 'error') {
+      return (
+        <div className="ab-list-row" style={{ fontSize: 13 }}>
+          <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+            <ToolIcon />
+          </div>
+          <div className="ab-list-row-head">
+            <div className="ab-list-row-title">Built-in tools (unavailable)</div>
+            <div className="ab-list-row-sub" style={{ color: 'var(--warn)' }}>
+              {systemTools.message}
+            </div>
+          </div>
+        </div>
+      )
+    }
+    return (
+      <div style={{ opacity: readyRepos.length === 0 ? 0.6 : 1 }}>
+        {systemTools.tools.map((t) => {
+          const summary = firstSentence(t.description)
+          const hasMore = summary !== t.description.trim()
+          const isExpanded = expandedSystemTool === t.name
+          return (
+            <div key={t.name}>
+              <button
+                type="button"
+                className="ab-list-row"
+                onClick={hasMore ? () => toggleSystemTool(t.name) : undefined}
+                disabled={!hasMore}
+                aria-expanded={hasMore ? isExpanded : undefined}
                 style={{
-                  opacity: dp.isDragging ? 0.4 : 1,
-                  ...(dp.isDropTarget
-                    ? {
-                        background: 'var(--accent-bg)',
-                        boxShadow: 'inset 0 2px 0 var(--accent-400)',
-                      }
-                    : null),
+                  width: '100%',
+                  background: 'transparent',
+                  border: 'none',
+                  font: 'inherit',
+                  textAlign: 'left',
+                  cursor: hasMore ? 'pointer' : 'default',
                 }}
               >
-                <span
-                  aria-hidden="true"
-                  style={{
-                    color: 'var(--text-muted)',
-                    fontSize: 14,
-                    marginRight: -4,
-                    cursor: 'grab',
-                    userSelect: 'none',
-                  }}
-                  title="Drag to reorder"
-                >
-                  ⋮⋮
-                </span>
                 <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
                   <ToolIcon />
                 </div>
                 <div className="ab-list-row-head">
                   <div className="ab-list-row-title ab-mono">{t.name}</div>
-                  <div className="ab-list-row-sub">
-                    {t.description ?? 'No description'}
-                  </div>
+                  <div className="ab-list-row-sub">{summary}</div>
                 </div>
                 <div className="ab-list-row-meta">
-                  <Pill kind="neutral">{t.kind}</Pill>
-                  <Pill kind="success" dot>
-                    Active
-                  </Pill>
-                  <RowMenu
-                    items={[
-                      {
-                        label: 'Edit tool',
-                        onClick: () => openEdit(t.id),
-                      },
-                      {
-                        label: 'Delete tool',
-                        destructive: true,
-                        onClick: () => void remove(t.id, t.name),
-                      },
-                    ]}
-                  />
+                  <Pill kind="accent">Built-in</Pill>
+                  {hasMore && (
+                    <span
+                      className="ab-row-affordance"
+                      aria-hidden="true"
+                      style={{
+                        transform: isExpanded ? 'rotate(180deg)' : undefined,
+                        transition: 'transform 160ms var(--ease-out)',
+                        display: 'inline-flex',
+                      }}
+                    >
+                      <ChevronDownIcon />
+                    </span>
+                  )}
                 </div>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
+              </button>
+              {isExpanded && (
+                <div
+                  style={{
+                    padding: '14px 18px 14px 62px',
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    background: 'var(--surface-hi)',
+                    borderTop: '1px solid var(--border)',
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {t.description.trim()}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  const systemToolCount =
+    systemTools.status === 'ready' ? systemTools.tools.length : 0
 
   return (
     <div>
-      {customTools}
-      {systemDefaults}
+      <div className="ab-card ab-card-pad ab-form-section">
+        <div
+          className="ab-section-head"
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <div className="ab-section-title">Tools</div>
+            <div className="ab-section-sub">
+              {tools.length} attached · {systemToolCount} built-in ·
+              tools the agent calls while answering (HTTP, shell, Mastra
+              built-ins, gitnexus). For tools the IDE calls into the
+              agent, see the <strong>Bridge tools</strong> tab.
+            </div>
+          </div>
+          <Button
+            variant="secondary"
+            size="sm"
+            leading={<PlusIcon strokeWidth={2.4} />}
+            onClick={openCreate}
+          >
+            Add tool
+          </Button>
+        </div>
+
+        {readyRepos.length === 0 && systemTools.status === 'ready' && (
+          <div
+            className="ab-field-help"
+            style={{ marginBottom: 10, color: 'var(--warn)' }}
+          >
+            No indexed repositories attached. the built-in tools below
+            are listed for reference but won't have data to query until
+            at least one repo finishes indexing.
+          </div>
+        )}
+
+        {tools.length === 0 ? (
+          <>
+            <EmptyState
+              glyph={<ToolIcon />}
+              title="No custom tools yet"
+              body="Tools extend the agent at run time. The LLM decides when to call them based on your system prompt and the user's question. The built-in tools below are always attached."
+              action={
+                <Button
+                  variant="primary"
+                  leading={<PlusIcon strokeWidth={2.4} />}
+                  onClick={openCreate}
+                >
+                  Add tool
+                </Button>
+              }
+            />
+            <BuiltInSubhead />
+            <div className="ab-card ab-list-card">{renderSystemRows()}</div>
+          </>
+        ) : (
+          <>
+            <div className="ab-card ab-list-card">
+              {tools.map((t) => {
+                const dp = drag.rowProps(t.id)
+                return (
+                <div
+                  className="ab-list-row is-edit"
+                  key={t.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openEdit(t.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      openEdit(t.id)
+                    }
+                  }}
+                  draggable={dp.draggable}
+                  onDragStart={dp.onDragStart}
+                  onDragEnter={dp.onDragEnter}
+                  onDragOver={dp.onDragOver}
+                  onDragEnd={dp.onDragEnd}
+                  onDrop={dp.onDrop}
+                  style={{
+                    opacity: dp.isDragging ? 0.4 : 1,
+                    ...(dp.isDropTarget
+                      ? {
+                          background: 'var(--accent-bg)',
+                          boxShadow: 'inset 0 2px 0 var(--accent-400)',
+                        }
+                      : null),
+                  }}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      color: 'var(--text-muted)',
+                      fontSize: 14,
+                      marginRight: -4,
+                      cursor: 'grab',
+                      userSelect: 'none',
+                    }}
+                    title="Drag to reorder"
+                  >
+                    ⋮⋮
+                  </span>
+                  <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+                    <ToolIcon />
+                  </div>
+                  <div className="ab-list-row-head">
+                    <div className="ab-list-row-title ab-mono">{t.name}</div>
+                    <div className="ab-list-row-sub">
+                      {t.description ?? 'No description'}
+                    </div>
+                  </div>
+                  <div className="ab-list-row-meta">
+                    <Pill kind="neutral">{t.kind}</Pill>
+                    <Pill kind="success" dot>
+                      Active
+                    </Pill>
+                    <RowMenu
+                      items={[
+                        {
+                          label: 'Edit tool',
+                          onClick: () => openEdit(t.id),
+                        },
+                        {
+                          label: 'Delete tool',
+                          destructive: true,
+                          onClick: () => void remove(t.id, t.name),
+                        },
+                      ]}
+                    />
+                  </div>
+                </div>
+                )
+              })}
+            </div>
+            <BuiltInSubhead />
+            <div className="ab-card ab-list-card">{renderSystemRows()}</div>
+          </>
+        )}
+      </div>
       <ToolSheet
         open={sheetOpen}
         agentId={agentId}

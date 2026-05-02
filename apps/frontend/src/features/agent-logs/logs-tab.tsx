@@ -74,6 +74,13 @@ const LEVEL_FROM_KIND: Record<string, LogLevel> = {
   'repo.wiki.ok': 'info',
   'repo.wiki.fail': 'error',
   'agent.config.changed': 'info',
+  // Coding-agent toolkit telemetry. bucket under `tool` so the
+  // existing Tools filter surfaces them alongside `run.tool.called`
+  // / `run.tool.result`. They describe IDE-bridge tool activity, not
+  // a separate concept worth a new top-level filter.
+  'coding-agent.repo.resolved': 'tool',
+  'coding-agent.repo.clarification_requested': 'tool',
+  'coding-agent.tool.completed': 'tool',
   ping: 'info',
 }
 
@@ -573,6 +580,7 @@ function eventToRow(e: RunEvent): LogRow {
 }
 
 function sourceFor(e: RunEvent): string {
+  if (e.kind.startsWith('coding-agent.')) return 'bridge'
   if (e.kind.startsWith('run.')) return 'agent'
   if (e.kind.startsWith('worker.')) return 'worker'
   if (e.kind.startsWith('repo.')) return 'repo'
@@ -636,6 +644,57 @@ function bodyFor(e: RunEvent): { msg: string; detail?: string } {
       const d = e.data as { stepIndex?: number; finishReason?: string }
       return {
         msg: `Step ${(d.stepIndex ?? 0) + 1} ${e.kind === 'run.step.started' ? 'started' : 'done'}${d.finishReason ? ` · ${d.finishReason}` : ''}`,
+      }
+    }
+    case 'coding-agent.repo.resolved': {
+      const d = e.data as {
+        tool?: string
+        scope?: 'single' | 'all'
+        picked?: { label?: string; matched_signal?: string; confidence?: string } | null
+        unresolved_related_count?: number
+      }
+      if (d.scope === 'all') {
+        return { msg: `Coding-agent ${d.tool ?? '?'}: scope=all (every attached repo)` }
+      }
+      const label = d.picked?.label ?? '?'
+      const sig = d.picked?.matched_signal ?? '?'
+      const conf = d.picked?.confidence ?? '?'
+      const tail = d.unresolved_related_count
+        ? ` · ${d.unresolved_related_count} unresolved related`
+        : ''
+      return {
+        msg: `Coding-agent ${d.tool ?? '?'}: resolved → ${label}`,
+        detail: `signal=${sig} · confidence=${conf}${tail}`,
+      }
+    }
+    case 'coding-agent.repo.clarification_requested': {
+      const d = e.data as {
+        tool?: string
+        kind?: string
+        candidate_count?: number
+        allow_all_repos?: boolean
+      }
+      return {
+        msg: `Coding-agent ${d.tool ?? '?'}: clarification requested`,
+        detail: `kind=${d.kind ?? '?'} · candidates=${d.candidate_count ?? 0}${d.allow_all_repos ? ' · all_repos allowed' : ''}`,
+      }
+    }
+    case 'coding-agent.tool.completed': {
+      const d = e.data as {
+        tool?: string
+        scope?: string
+        confidence?: string
+        duration_ms?: number
+        groundedness?: { claims: number; grounded: number; ungrounded: number }
+        schema_unmatched?: boolean
+      }
+      const ground = d.groundedness
+        ? ` · grounded ${d.groundedness.grounded}/${d.groundedness.claims}`
+        : ''
+      const schema = d.schema_unmatched ? ' · schema_unmatched' : ''
+      return {
+        msg: `Coding-agent ${d.tool ?? '?'} completed${d.scope ? ` (${d.scope})` : ''}`,
+        detail: `confidence=${d.confidence ?? '?'} · ${d.duration_ms ?? '?'}ms${ground}${schema}`,
       }
     }
     default:

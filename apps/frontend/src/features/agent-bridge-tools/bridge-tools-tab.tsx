@@ -16,7 +16,10 @@
  */
 
 import { useEffect, useState } from 'react'
-import type { BridgeToolResponse } from '@agent-bridge/shared'
+import {
+  CODING_AGENT_TOOL_METADATA,
+  type BridgeToolResponse,
+} from '@agent-bridge/shared'
 import {
   ApiError,
   deleteBridgeTool,
@@ -28,10 +31,19 @@ import { EmptyState } from '../../ui/empty'
 import { RowMenu } from '../../ui/row-menu'
 import { confirmDialog } from '../../ui/dialog-store'
 import { toast } from '../../ui/toast-store'
-import { BridgeIcon, PlusIcon, ToolIcon } from '../../ui/icons'
+import {
+  BridgeIcon,
+  ChevronDownIcon,
+  PlusIcon,
+  ToolIcon,
+} from '../../ui/icons'
+import { useWorkspace } from '../../lib/workspace-context'
 import { BridgeToolSheet } from './bridge-tool-sheet'
 
 export function BridgeToolsTab({ agentId }: { agentId: string }) {
+  const { agents } = useWorkspace()
+  const agent = agents.find((a) => a.id === agentId)
+  const slug = agent?.slug ?? 'agent'
   const [tools, setTools] = useState<readonly BridgeToolResponse[]>([])
   const [err, setErr] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -106,6 +118,8 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
 
   return (
     <div>
+      <CodingAgentToolkitCard slug={slug} />
+
       <div className="ab-card ab-card-pad ab-form-section">
         <div className="ab-section-head">
           <div className="ab-section-title">Bridge tools</div>
@@ -247,6 +261,99 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
           reload()
         }}
       />
+    </div>
+  )
+}
+
+/**
+ * Read-only card listing the six virtual coding-agent toolkit tools
+ * the bridge auto-exposes for every agent. Always-on; the operator
+ * can shadow any of them by authoring a `bridge_tools` row with the
+ * matching slug-prefixed name.
+ *
+ * Data is static. `CODING_AGENT_TOOL_METADATA` ships with shared
+ * (no network call). The slug-prefixed name displayed here is what
+ * the IDE actually sees on `tools/list`.
+ */
+function CodingAgentToolkitCard({ slug }: { slug: string }) {
+  const [expanded, setExpanded] = useState<string | null>(null)
+  return (
+    <div className="ab-card ab-card-pad ab-form-section">
+      <div className="ab-section-head" style={{ marginBottom: 6 }}>
+        <div className="ab-section-title">Coding-agent toolkit</div>
+        <div className="ab-section-sub">
+          Always-on bridge tools shipped by Agent Bridge for IDE coding
+          agents (Cursor / Claude Code / Codex). Read-only. author a
+          bridge tool below with the matching slug-prefixed name to
+          shadow any of these.
+        </div>
+      </div>
+      <div className="ab-card ab-list-card">
+        {CODING_AGENT_TOOL_METADATA.map((t) => {
+          const fullName = `${slug}__${t.name}`
+          const isExpanded = expanded === t.name
+          return (
+            <div key={t.name}>
+              <button
+                type="button"
+                className="ab-list-row"
+                onClick={() =>
+                  setExpanded((cur) => (cur === t.name ? null : t.name))
+                }
+                aria-expanded={isExpanded}
+                style={{
+                  width: '100%',
+                  background: 'transparent',
+                  border: 'none',
+                  font: 'inherit',
+                  textAlign: 'left',
+                  cursor: 'pointer',
+                }}
+              >
+                <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+                  <BridgeIcon />
+                </div>
+                <div className="ab-list-row-head">
+                  <div className="ab-list-row-title ab-mono">{fullName}</div>
+                  <div className="ab-list-row-sub">{t.summary}</div>
+                </div>
+                <div className="ab-list-row-meta">
+                  {t.synchronous ? (
+                    <Pill kind="neutral">Sync</Pill>
+                  ) : (
+                    <Pill kind="accent">{t.allowAllRepos ? 'Any repo' : 'Single repo'}</Pill>
+                  )}
+                  <span
+                    className="ab-row-affordance"
+                    aria-hidden="true"
+                    style={{
+                      transform: isExpanded ? 'rotate(180deg)' : undefined,
+                      transition: 'transform 160ms var(--ease-out)',
+                      display: 'inline-flex',
+                    }}
+                  >
+                    <ChevronDownIcon />
+                  </span>
+                </div>
+              </button>
+              {isExpanded && (
+                <div
+                  style={{
+                    padding: '14px 18px 14px 62px',
+                    fontSize: 13,
+                    lineHeight: 1.55,
+                    background: 'var(--surface-hi)',
+                    borderTop: '1px solid var(--border)',
+                    whiteSpace: 'pre-wrap',
+                  }}
+                >
+                  {t.description}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

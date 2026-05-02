@@ -17,6 +17,7 @@ import { agentReposRouter } from './routes/agent-repos.js'
 import { agentRunsRouter } from './routes/agent-runs.js'
 import { agentThreadsRouter } from './routes/agent-threads.js'
 import { agentsRouter } from './routes/agents.js'
+import { systemSkillRouter } from './routes/system-skill.js'
 import { systemToolsRouter } from './routes/system-tools.js'
 import { bridgeRouter } from './routes/bridge.js'
 import { bridgeToolsRouter } from './routes/bridge-tools.js'
@@ -104,6 +105,7 @@ const api = new Hono()
   .route('/agents/:agentId/token-estimate', agentTokenEstimateRouter)
   .route('/agents/:agentId/working-memory', agentWorkingMemoryRouter)
   .route('/system/tools', systemToolsRouter)
+  .route('/system/skill', systemSkillRouter)
   .route('/llm-providers', llmProvidersRouter)
   .route('/mcp-connections', mcpConnectionsRouter)
   .route('/repos', reposRouter)

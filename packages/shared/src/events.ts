@@ -58,6 +58,31 @@ export const runEventKinds = [
    * Payload shape: `AgentConfigChangedPayload`.
    */
   'agent.config.changed',
+  /**
+   * Coding-agent toolkit telemetry (P6). Emitted from the bridge
+   * handler before/around the `dispatchRun` call so the Activity
+   * panel can render IDE-originated traffic distinctly from chat.
+   *
+   * - `coding-agent.repo.resolved`. the resolver picked a single
+   *   repo (or fanned out to `__all__`). Payload carries the score
+   *   table + matched signal so operators can debug bad matches at
+   *   a glance.
+   * - `coding-agent.repo.clarification_requested`. multi-repo
+   *   agent + no hint, OR `__all__` rejected by a single-repo-only
+   *   tool. Logged as a normal event (NOT an error) so it doesn't
+   *   bias the failure-rate dashboards.
+   * - `coding-agent.tool.completed`. fires after the LLM-backed
+   *   path finishes (success OR schema-unmatched). Carries
+   *   `groundedness` + `confidence` so the operator can spot
+   *   chronically low-confidence tools or low-grounding answers.
+   *
+   * Persisted in `run_events` for resolve / completed events tied
+   * to a real run; `clarification_requested` is fan-out-only (no
+   * `runs` row exists when the resolver short-circuits).
+   */
+  'coding-agent.repo.resolved',
+  'coding-agent.repo.clarification_requested',
+  'coding-agent.tool.completed',
   'ping',
 ] as const
 
@@ -510,4 +535,117 @@ export interface AgentConfigChangedPayload {
   readonly label: string
   /** Optional one-line context. Shown in the card's hover/expand state. */
   readonly detail?: string
+}
+
+// ─── Coding-agent telemetry payloads ─────────────────────────────────────
+
+/**
+ * Names of the six virtual bridge tools. Mirrors
+ * `CODING_AGENT_TOOL_NAMES` in `dtos/coding-agent.ts`. Re-declared here
+ * so the events module stays free of cross-DTO imports (events.ts is
+ * the lowest layer; everything imports from it).
+ */
+export type CodingAgentEventToolName =
+  | 'plan_feature'
+  | 'plan_bugfix'
+  | 'ask_general'
+  | 'investigate_codebase'
+  | 'assess_impact'
+  | 'list_repos'
+
+/**
+ * `CodingAgentConfidence`, `MatchedSignal`, `ClarificationKind`, and
+ * `RepoMatchScore` already live in `dtos/coding-agent.ts`. we don't
+ * re-declare them here to avoid name collisions on the barrel
+ * export. `events.ts` is the lowest layer in `@agent-bridge/shared`,
+ * so the payload types reference the local re-aliases below to
+ * avoid an upward import.
+ */
+export type CodingAgentEventMatchedSignal =
+  | 'remote_url'
+  | 'role'
+  | 'alias'
+  | 'local_folder'
+  | 'url_tail'
+
+export type CodingAgentEventScope = 'single' | 'all'
+
+export type CodingAgentEventClarificationKind =
+  | 'repo_or_all'
+  | 'single_repo_required'
+
+export type CodingAgentEventConfidence = 'high' | 'medium' | 'low'
+
+export interface CodingAgentEventRepoMatchScore {
+  readonly repo_id: string
+  readonly label: string
+  readonly score: number
+  readonly matched_signal: CodingAgentEventMatchedSignal
+}
+
+/**
+ * `coding-agent.repo.resolved` payload. Captures the resolver's
+ * decision so an operator inspecting `run_events` can answer "why
+ * did the bridge pick this repo?". `picked` is null when scope was
+ * `all` (the bridge fanned out instead of selecting one repo).
+ */
+export interface CodingAgentRepoResolvedPayload {
+  readonly runId: string
+  readonly tool: CodingAgentEventToolName
+  readonly hint: {
+    readonly repo_hint?: string
+    readonly remote_url?: string
+    readonly local_folder?: string
+    readonly branch?: string
+  }
+  readonly scope: CodingAgentEventScope
+  readonly picked: {
+    readonly repo_id: string
+    readonly label: string
+    readonly matched_signal: CodingAgentEventMatchedSignal
+    readonly confidence: CodingAgentEventConfidence
+  } | null
+  readonly score_table: ReadonlyArray<CodingAgentEventRepoMatchScore>
+  /** `agent_repos.aliases` length on the picked repo (audit hint). */
+  readonly picked_alias_count?: number
+  /** Number of related-repo hints the IDE supplied that did not resolve. */
+  readonly unresolved_related_count: number
+}
+
+/**
+ * `coding-agent.repo.clarification_requested` payload. Fan-out only;
+ * not persisted (no `runs` row exists at this point. the resolver
+ * short-circuits before `dispatchRun`).
+ */
+export interface CodingAgentRepoClarificationPayload {
+  readonly tool: CodingAgentEventToolName
+  readonly kind: CodingAgentEventClarificationKind
+  /** Number of candidate repos surfaced to the IDE for re-prompting. */
+  readonly candidate_count: number
+  /** True when `__all__` is a valid reply for the calling tool. */
+  readonly allow_all_repos: boolean
+}
+
+/**
+ * `coding-agent.tool.completed` payload. Fires once per LLM-backed
+ * call after `dispatchRun` returns. `confidence` and `groundedness`
+ * come from the LLM's JSON output (or the schema-unmatched fallback);
+ * `duration_ms` is the bridge-side wall clock around `dispatchRun`.
+ *
+ * `schema_unmatched` flips true when the LLM's output failed to
+ * parse as JSON. useful for spotting chronically misbehaving
+ * model + prompt combinations.
+ */
+export interface CodingAgentToolCompletedPayload {
+  readonly runId: string
+  readonly tool: CodingAgentEventToolName
+  readonly scope: CodingAgentEventScope
+  readonly confidence: CodingAgentEventConfidence
+  readonly groundedness?: {
+    readonly claims: number
+    readonly grounded: number
+    readonly ungrounded: number
+  }
+  readonly duration_ms: number
+  readonly schema_unmatched?: boolean
 }

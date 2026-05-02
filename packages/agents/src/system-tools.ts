@@ -83,8 +83,8 @@ export function loadGitnexusToolDefinitions(): Promise<GitnexusSystemToolsResult
 
     try {
       const tools = await client.listTools()
-      const defs: SystemToolDefinition[] = Object.entries(tools)
-        .map(([name, t]) => ({
+      const fromGitnexus: SystemToolDefinition[] = Object.entries(tools).map(
+        ([name, t]) => ({
           name,
           description:
             (t as { description?: unknown }).description &&
@@ -92,10 +92,22 @@ export function loadGitnexusToolDefinitions(): Promise<GitnexusSystemToolsResult
               ? ((t as { description: string }).description.trim() ||
                 'No description provided.')
               : 'No description provided.',
-        }))
+        }),
+      )
+      // Wiki tools sit alongside the gitnexus subprocess tools in
+      // the System defaults catalog. They're code-defined here in
+      // `@agent-bridge/agents`; the descriptions match what the
+      // LLM sees at mount time. Operators viewing the catalog see
+      // the full system surface in one card.
+      const fromWiki: SystemToolDefinition[] = WIKI_TOOL_DEFS.map((t) => ({
+        name: t.name,
+        description: t.description,
+      }))
+      const defs: SystemToolDefinition[] = [...fromGitnexus, ...fromWiki].sort(
         // Stable ordering — name-sorted so the UI doesn't reshuffle
         // between restarts.
-        .sort((a, b) => a.name.localeCompare(b.name))
+        (a, b) => a.name.localeCompare(b.name),
+      )
       return {
         ok: true,
         cliVersion: resolved.packageVersion,
@@ -120,6 +132,25 @@ export function loadGitnexusToolDefinitions(): Promise<GitnexusSystemToolsResult
   })()
   return cachedPromise
 }
+
+/**
+ * Wiki tool descriptions used by the System defaults UI catalog.
+ * Mirror the descriptions in `coding-agent/wiki-tool.ts` exactly -
+ * this list is operator-facing reference, the runtime tool defs are
+ * the source of truth. Drift here is a doc bug, not a runtime bug.
+ */
+const WIKI_TOOL_DEFS: ReadonlyArray<{ name: string; description: string }> = [
+  {
+    name: 'gitnexus_wiki_list_pages',
+    description:
+      'List the pages in a repo\'s pre-generated wiki. narrative summaries written by `gitnexus wiki`. Cheaper than fanning out 5+ graph queries when you need a high-level "how does X work" overview. Pass the repo\'s friendly label (role / alias / URL tail). Returns an ordered tree.',
+  },
+  {
+    name: 'gitnexus_wiki_get_page',
+    description:
+      'Read one page of a repo\'s pre-generated wiki. Use AFTER `gitnexus_wiki_list_pages` told you which slug to fetch. Returns the markdown body. The wiki is a snapshot. verify any concrete file/line claim against `gitnexus_context` before quoting it.',
+  },
+]
 
 // ─── Local helpers ───────────────────────────────────────────────────────
 

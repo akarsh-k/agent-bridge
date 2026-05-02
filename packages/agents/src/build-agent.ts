@@ -90,6 +90,17 @@ import {
   type McpLogHandler,
   type MountedExternalMcps,
 } from './mcp/external-mcps.js'
+import {
+  CODING_AGENT_SYSTEM_SKILL_HEADING,
+  loadCodingAgentSystemSkill,
+} from './coding-agent/system-skill.js'
+import {
+  emptyWikiMountMeta,
+  mountWikiTools,
+  type MountedWikiTools,
+  type WikiMountMeta,
+} from './coding-agent/wiki-tool.js'
+import { loadGitnexusLibrarySkills } from './coding-agent/gitnexus-library-skills.js'
 
 // ─── Public surface ──────────────────────────────────────────────────────
 
@@ -201,6 +212,14 @@ export interface BuiltAgentMeta {
    * so the UI can flag stale allowlist rows.
    */
   readonly externalMcps: ExternalMcpsMountMeta
+  /**
+   * Wiki tools mount status. `mounted: false` means no attached repo
+   * has `wikiStatus='ready'`. the agent answers without the
+   * narrative wiki, falling back to gitnexus graph queries. When
+   * `mounted: true`, two tools (`gitnexus_wiki_list_pages` /
+   * `_get_page`) are merged into the agent's tool dict.
+   */
+  readonly wiki: WikiMountMeta
 }
 
 export interface MemoryMountMeta {
@@ -301,7 +320,10 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     .where(eq(schema.skills.agentId, agentId))
     .orderBy(asc(schema.skills.position), asc(schema.skills.createdAt))
 
-  const instructions = composeInstructions(agentRow.systemPrompt, skillRows)
+  const instructions = await composeInstructions(
+    agentRow.systemPrompt,
+    skillRows,
+  )
 
   // Agent model overrides provider default. If neither is set we fail
   // loud: picking a model on behalf of the user would mask missing config.
@@ -378,6 +400,27 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     throw err
   }
 
+  // Wiki tools. pure-fn mount (no subprocess). Fails open: any
+  // problem listing wiki-ready repos returns null → no tools mounted
+  // → agent answers using gitnexus instead. Cheap to call so we
+  // don't gate it behind any external state.
+  let mountedWiki: MountedWikiTools | null
+  try {
+    mountedWiki = await mountWikiTools({ db, agentId })
+  } catch (err) {
+    if (mountedGitnexus) {
+      try {
+        await mountedGitnexus.client.disconnect()
+      } catch {
+        /* swallow. see above */
+      }
+    }
+    if (mountedExternal) {
+      await mountedExternal.disconnect()
+    }
+    throw err
+  }
+
   // Two passes:
   //  (1) Append the repo inventory (label + URL + per-repo description)
   //      so the LLM knows which repos exist and what each is for.
@@ -398,7 +441,11 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
       ? await appendRepoEdges(instructionsWithRepos, db, agentId)
       : instructionsWithRepos
 
-  const mergedTools = mergeToolDicts(mountedGitnexus, mountedExternal)
+  const mergedTools = mergeToolDicts(
+    mountedGitnexus,
+    mountedExternal,
+    mountedWiki,
+  )
 
   const agent = new Agent({
     id: agentRow.id,
@@ -421,6 +468,8 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
   const externalMcpsMeta = mountedExternal
     ? mountedExternal.meta
     : emptyExternalMcpsMountMeta()
+
+  const wikiMeta = mountedWiki ? mountedWiki.meta : emptyWikiMountMeta()
 
   const disconnect = buildDisconnect(mountedGitnexus, mountedExternal)
 
@@ -454,6 +503,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
       memory: memoryMeta,
       gitnexus: gitnexusMeta,
       externalMcps: externalMcpsMeta,
+      wiki: wikiMeta,
     },
     secrets,
     subscribeMcpLogs,
@@ -468,11 +518,28 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
  * `system_prompt` is the anchor; each skill contributes a markdown section
  * underneath it. Empty bodies are dropped so a placeholder skill doesn't
  * emit a trailing heading with nothing under it.
+ *
+ * After the operator-authored skills we append the **coding-agent
+ * system skill**. the standing block that teaches the agent how to
+ * answer IDE-bridge tool calls (resolution preamble shape,
+ * groundedness rules, output schema). This is the analogue of the
+ * already-auto-attached gitnexus repo inventory + edges block: it
+ * runs for every agent, no opt-in. Two safeties:
+ *
+ *   - Idempotency. If the operator authored a skill whose body
+ *     already contains the heading `# Coding-agent toolkit guidance`,
+ *     we skip the auto-attach so we don't render the same section
+ *     twice. This is also the operator's escape hatch. write a
+ *     skill with that heading to override the default body.
+ *   - Loud failure. If the .md fails to load (missing copy in
+ *     `dist/`, broken FS), we throw rather than silently falling
+ *     back. A coding-agent run without grounding rules is worse
+ *     than a build error.
  */
-function composeInstructions(
+async function composeInstructions(
   basePrompt: string,
   skills: readonly SkillRow[],
-): string {
+): Promise<string> {
   const parts: string[] = []
 
   const trimmedBase = basePrompt.trim()
@@ -480,15 +547,60 @@ function composeInstructions(
     parts.push(trimmedBase)
   }
 
+  let alreadyHasCodingAgentSection =
+    trimmedBase.includes(CODING_AGENT_SYSTEM_SKILL_HEADING)
+
   for (const skill of skills) {
     const body = skill.markdownBody.trim()
     if (body.length === 0) continue
+    if (body.includes(CODING_AGENT_SYSTEM_SKILL_HEADING)) {
+      alreadyHasCodingAgentSection = true
+    }
     parts.push(`## ${skill.name}\n\n${body}`)
   }
 
-  // Empty total is allowed — some LLMs accept an empty system message
+  if (!alreadyHasCodingAgentSection) {
+    const skillBody = await loadCodingAgentSystemSkill()
+    if (skillBody.length > 0) parts.push(skillBody)
+  }
+
+  // GitNexus library skills. vendor-shipped guidance (`gitnexus-guide`,
+  // `-impact-analysis`, `-debugging`, etc.) packed inside the gitnexus
+  // npm package. Always appended when at least one library skill loads.
+  // Read once per process, cached by gitnexus version. Fail-open; an
+  // empty array just skips the section.
+  const lib = await loadGitnexusLibrarySkills()
+  if (lib.skills.length > 0) {
+    const block = renderGitnexusLibrarySkills(lib.skills)
+    parts.push(block)
+  }
+
+  // Empty total is allowed. some LLMs accept an empty system message
   // and Mastra's own defaults will still drive behavior via other knobs.
   return parts.join('\n\n')
+}
+
+/**
+ * Render the gitnexus library skills as a single markdown block,
+ * one `### gitnexus-<slug>` subsection per skill. Heading + leading
+ * note explain what the section is and that the LLM should defer to
+ * these for tool-call shapes (gitnexus authors > our toolkit's
+ * generic guidance for `gitnexus_*` recipes).
+ */
+function renderGitnexusLibrarySkills(
+  skills: ReadonlyArray<{ slug: string; name: string; body: string }>,
+): string {
+  const head =
+    '## GitNexus library skills\n\n' +
+    'The following skills are shipped inside the gitnexus npm package and ' +
+    'auto-attached here. They are written by gitnexus\'s authors to teach ' +
+    'an LLM how to call `gitnexus_*` tools effectively. **Treat them as ' +
+    'authoritative for tool-call shapes and recipes** when answering ' +
+    'questions that need code-graph evidence.'
+  const sections = skills.map(
+    (s) => `### ${s.name}\n\n${s.body}`,
+  )
+  return [head, ...sections].join('\n\n')
 }
 
 /**
@@ -708,11 +820,18 @@ function appendGitnexusRepoHint(
 
   // Per-repo description (if the operator filled in `agent_repos.description`
   // via the Edit role sheet) appears inline as " — <desc>". Without it the
-  // line is just label + URL#branch.
+  // line is just label + URL#branch. Aliases (P5 onward) render between
+  // the URL and the description so the LLM can see every name a coding
+  // agent might pass via `repo_hint` / `local_folder`.
   const lines = mounted.meta.repoLabels
     .map((r) => {
       const head = `- ${r.label}  (${r.remoteUrl}#${r.branch})`
-      return r.description ? `${head} — ${r.description}` : head
+      const aliasPart =
+        r.aliases && r.aliases.length > 0
+          ? `. aliases: ${r.aliases.join(', ')}`
+          : ''
+      const descPart = r.description ? `. ${r.description}` : ''
+      return `${head}${aliasPart}${descPart}`
     })
     .join('\n')
 
@@ -891,26 +1010,29 @@ function buildDisconnect(
 function mergeToolDicts(
   gitnexus: MountedGitnexus | null,
   external: MountedExternalMcps | null,
+  wiki: MountedWikiTools | null,
 ): Record<string, Tool<any, any, any, any>> | undefined {
-  if (!gitnexus && !external) return undefined
+  if (!gitnexus && !external && !wiki) return undefined
   const merged: Record<string, Tool<any, any, any, any>> = {}
-  if (gitnexus) {
-    for (const [key, tool] of Object.entries(gitnexus.tools)) {
-      merged[key] = tool
-    }
-  }
-  if (external) {
-    for (const [key, tool] of Object.entries(external.tools)) {
+  const addOrThrow = (
+    source: string,
+    entries: Record<string, Tool<any, any, any, any>>,
+  ): void => {
+    for (const [key, tool] of Object.entries(entries)) {
       if (key in merged) {
         throw new Error(
-          `[buildAgent] tool key collision on "${key}" between gitnexus ` +
-            `and external MCP sources — this is unreachable in normal ` +
-            `operation; check that no external connection's slug overlaps ` +
-            `with the gitnexus prefix.`,
+          `[buildAgent] tool key collision on "${key}" while merging ${source} ` +
+            `tools. this is unreachable in normal operation; gitnexus uses ` +
+            `gitnexus_*, external MCPs use <slug>__<rawName>, wiki uses ` +
+            `gitnexus_wiki_*. A custom MCP whose slug matches an existing ` +
+            `prefix is the most likely cause.`,
         )
       }
       merged[key] = tool
     }
   }
+  if (gitnexus) addOrThrow('gitnexus', gitnexus.tools)
+  if (external) addOrThrow('external', external.tools)
+  if (wiki) addOrThrow('wiki', wiki.tools)
   return merged
 }

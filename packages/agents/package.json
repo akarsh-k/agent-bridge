@@ -19,11 +19,16 @@
     "src"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node -e \"require('node:fs').cpSync('src/coding-agent/system-skill.md', 'dist/src/coding-agent/system-skill.md')\"",
     "dev": "tsc --watch --preserveWatchOutput",
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit",
-    "smoke": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke.ts"
+    "smoke": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke.ts",
+    "resolver:smoke": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke-repo-resolver.ts",
+    "skill:smoke": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke-system-skill.ts",
+    "bridge-defs:smoke": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke-bridge-tool-defs.ts",
+    "handler:smoke": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke-coding-agent-handler.ts",
+    "wiki:smoke": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke-wiki-tool.ts"
   },
   "packageManager": "pnpm@10.33.0",
   "dependencies": {
@@ -36,7 +41,8 @@
     "drizzle-orm": "^0.45.2",
     "gitnexus": "1.6.3",
     "js-tiktoken": "^1.0.21",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^24.12.2",

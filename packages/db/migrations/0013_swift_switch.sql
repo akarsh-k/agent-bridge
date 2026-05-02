@@ -1,0 +1,1 @@
+ALTER TABLE "agent_repos" ADD COLUMN "aliases" jsonb DEFAULT '[]'::jsonb NOT NULL;

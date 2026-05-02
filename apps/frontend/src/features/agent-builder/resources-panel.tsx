@@ -7,17 +7,26 @@
  * itself carries that name).
  */
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import type {
+  CodingAgentSystemSkillResponse,
+  GitnexusLibrarySkillsResponse,
+} from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
 import { Button } from '../../ui/button'
 import { Pill, type PillKind } from '../../ui/pill'
 import { BrandGlyph } from '../../ui/brand-glyph'
 import { EmptyState } from '../../ui/empty'
-import { PlusIcon, FileIcon } from '../../ui/icons'
+import { Markdown } from '../../ui/markdown'
+import { PlusIcon, FileIcon, ChevronDownIcon } from '../../ui/icons'
 import { toast } from '../../ui/toast-store'
 import { confirmDialog } from '../../ui/dialog-store'
 import { RowMenu } from '../../ui/row-menu'
-import { ApiError } from '../../lib/rpc'
+import {
+  ApiError,
+  getCodingAgentSystemSkill,
+  getGitnexusLibrarySkills,
+} from '../../lib/rpc'
 import { navigate } from '../../lib/router'
 import { useDragReorder } from '../../lib/use-drag-reorder'
 import { AttachRepoSheet } from './attach-repo-sheet'
@@ -68,8 +77,28 @@ function groupAllowlistByConnection(
   return [...out.values()]
 }
 
+// Small uppercase caption that separates the operator's custom rows
+// from the always-attached built-in rows inside a card. Same idiom
+// used by the Tools tab.
+function BuiltInSubhead() {
+  return (
+    <div
+      style={{
+        margin: '18px 4px 8px',
+        fontSize: 11,
+        fontWeight: 600,
+        letterSpacing: '0.06em',
+        textTransform: 'uppercase',
+        color: 'var(--text-muted)',
+      }}
+    >
+      Built-in
+    </div>
+  )
+}
+
 // Card-head row used by every Resources sub-card: title + sub on the
-// left, action button on the right. Inline style is fine here — it's
+// left, action button on the right. Inline style is fine here. it's
 // a layout concern that doesn't reuse outside this file.
 function CardHead({
   title,
@@ -292,6 +321,24 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                     <div className="ab-list-row-sub ab-mono">
                       {r.repo.remoteUrl}
                     </div>
+                    {r.aliases && r.aliases.length > 0 && (
+                      <div
+                        className="ab-list-row-sub"
+                        style={{
+                          display: 'flex',
+                          flexWrap: 'wrap',
+                          gap: 4,
+                          marginTop: 4,
+                        }}
+                        title="Names a coding agent might use to refer to this repo"
+                      >
+                        {r.aliases.map((a) => (
+                          <span key={a} className="ab-pill">
+                            {a}
+                          </span>
+                        ))}
+                      </div>
+                    )}
                     {inError && r.repo.lastError && (
                       <div
                         className="ab-list-row-error"
@@ -459,7 +506,7 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
       <div className="ab-card ab-card-pad ab-form-section">
         <CardHead
           title="Skills"
-          sub={`${resources?.skills.length ?? 0} attached · reusable instruction packs the agent runs through`}
+          sub={`${resources?.skills.length ?? 0} attached · 2 built-in · reusable instruction packs the agent runs through`}
           action={
             <Button
               variant="secondary"
@@ -475,26 +522,34 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
           }
         />
         {(resources?.skills.length ?? 0) === 0 ? (
-          <EmptyState
-            glyph={<FileIcon />}
-            title="No skills attached"
-            body="Skills are reusable instruction packs that teach an agent how to do something well — like &ldquo;PR reviewer&rdquo; or &ldquo;migration writer&rdquo;."
-            action={
-              <Button
-                variant="primary"
-                leading={<PlusIcon strokeWidth={2.4} />}
-                onClick={() => {
-                  setEditingSkillId(null)
-                  setSkillSheet(true)
-                }}
-              >
-                Add a skill
-              </Button>
-            }
-          />
+          <>
+            <EmptyState
+              glyph={<FileIcon />}
+              title="No custom skills yet"
+              body="Skills are reusable instruction packs that teach an agent how to do something well. like &ldquo;PR reviewer&rdquo; or &ldquo;migration writer&rdquo;. The system skill below is always attached automatically."
+              action={
+                <Button
+                  variant="primary"
+                  leading={<PlusIcon strokeWidth={2.4} />}
+                  onClick={() => {
+                    setEditingSkillId(null)
+                    setSkillSheet(true)
+                  }}
+                >
+                  Add a skill
+                </Button>
+              }
+            />
+            <BuiltInSubhead />
+            <div className="ab-card ab-list-card">
+              <SystemSkillRow />
+              <GitnexusLibrarySkillsRow />
+            </div>
+          </>
         ) : (
-          <div className="ab-card ab-list-card">
-            {resources?.skills.map((s) => {
+          <>
+            <div className="ab-card ab-list-card">
+              {resources?.skills.map((s) => {
               const drag = skillDrag.rowProps(s.id)
               return (
                 <div
@@ -578,9 +633,15 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                     />
                   </div>
                 </div>
-              )
-            })}
-          </div>
+                )
+              })}
+            </div>
+            <BuiltInSubhead />
+            <div className="ab-card ab-list-card">
+              <SystemSkillRow />
+              <GitnexusLibrarySkillsRow />
+            </div>
+          </>
         )}
       </div>
 
@@ -615,6 +676,392 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
         }
         onClose={() => setEditingRepoAttachmentId(null)}
       />
+    </>
+  )
+}
+
+// ─── Coding-agent system-skill row ──────────────────────────────────────
+
+type SystemSkillState =
+  | { status: 'loading' }
+  | { status: 'ready'; data: CodingAgentSystemSkillResponse }
+  | { status: 'error'; message: string }
+
+/**
+ * Read-only row shown at the bottom of the Skills list. The system
+ * skill is the markdown body Agent Bridge auto-appends to every
+ * agent's instructions in `composeInstructions`. operators can't
+ * edit, reorder, or delete it (hence: no drag handle, no row menu).
+ * Click expands the body inline so the operator can read what gets
+ * sent to the LLM.
+ *
+ * Lives in the same Skills card as the operator-authored rows so
+ * the section presents a single unified view of "what's in my
+ * agent's system prompt". The visual `Built-in` pill + chevron
+ * accordion matches the gitnexus "System defaults" pattern on the
+ * Tools tab.
+ */
+function SystemSkillRow() {
+  const [state, setState] = useState<SystemSkillState>({ status: 'loading' })
+  const [expanded, setExpanded] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const data = await getCodingAgentSystemSkill()
+        if (!cancelled) setState({ status: 'ready', data })
+      } catch (err) {
+        if (!cancelled) {
+          setState({
+            status: 'error',
+            message:
+              err instanceof ApiError
+                ? err.message
+                : err instanceof Error
+                  ? err.message
+                  : 'Failed to load system skill',
+          })
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (state.status === 'loading') {
+    return (
+      <div
+        className="ab-list-row"
+        style={{ opacity: 0.6, fontSize: 13, color: 'var(--text-dim)' }}
+      >
+        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+          <FileIcon />
+        </div>
+        <div className="ab-list-row-head">
+          <div className="ab-list-row-title">Loading system skill…</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (state.status === 'error') {
+    return (
+      <div className="ab-list-row" style={{ fontSize: 13 }}>
+        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+          <FileIcon />
+        </div>
+        <div className="ab-list-row-head">
+          <div className="ab-list-row-title">System skill (unavailable)</div>
+          <div className="ab-list-row-sub" style={{ color: 'var(--warn)' }}>
+            {state.message}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (state.data.ok === false) {
+    return (
+      <div className="ab-list-row" style={{ fontSize: 13 }}>
+        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+          <FileIcon />
+        </div>
+        <div className="ab-list-row-head">
+          <div className="ab-list-row-title">System skill (unavailable)</div>
+          <div className="ab-list-row-sub" style={{ color: 'var(--warn)' }}>
+            {state.data.message}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const skill = state.data
+  return (
+    <>
+      <button
+        type="button"
+        className="ab-list-row"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        style={{
+          width: '100%',
+          background: 'transparent',
+          border: 'none',
+          font: 'inherit',
+          textAlign: 'left',
+          cursor: 'pointer',
+        }}
+      >
+        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+          <FileIcon />
+        </div>
+        <div className="ab-list-row-head">
+          <div className="ab-list-row-title">
+            Coding-agent toolkit guidance
+          </div>
+          <div className="ab-list-row-sub">
+            Always last in prompt order · v{skill.version} ·{' '}
+            {skill.body.length.toLocaleString()} chars
+          </div>
+        </div>
+        <div className="ab-list-row-meta">
+          <Pill kind="accent">Built-in</Pill>
+          <span
+            className="ab-row-affordance"
+            aria-hidden="true"
+            style={{
+              transform: expanded ? 'rotate(180deg)' : undefined,
+              transition: 'transform 160ms var(--ease-out)',
+              display: 'inline-flex',
+            }}
+          >
+            <ChevronDownIcon />
+          </span>
+        </div>
+      </button>
+      {expanded && (
+        <div
+          style={{
+            padding: '14px 18px 14px 62px',
+            fontSize: 13,
+            lineHeight: 1.55,
+            background: 'var(--surface-hi)',
+            borderTop: '1px solid var(--border)',
+          }}
+        >
+          <Markdown source={skill.body} />
+        </div>
+      )}
+    </>
+  )
+}
+
+// ─── GitNexus library skills row ────────────────────────────────────────
+
+type GitnexusLibSkillsState =
+  | { status: 'loading' }
+  | { status: 'ready'; data: GitnexusLibrarySkillsResponse }
+  | { status: 'error'; message: string }
+
+/**
+ * Read-only row at the bottom of the Skills list. Surfaces the
+ * markdown skill files that ship inside the gitnexus npm package
+ * (`node_modules/.../gitnexus/skills/*.md`) which `composeInstructions`
+ * auto-attaches to every agent's instructions. Operators see them
+ * for transparency; can't edit (vendor content, version-locked).
+ *
+ * Expand to see the list of attached skill names; click one to read
+ * its body inline. Mirrors the SystemSkillRow accordion pattern.
+ */
+function GitnexusLibrarySkillsRow() {
+  const [state, setState] = useState<GitnexusLibSkillsState>({
+    status: 'loading',
+  })
+  const [expanded, setExpanded] = useState(false)
+  const [openSlug, setOpenSlug] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      try {
+        const data = await getGitnexusLibrarySkills()
+        if (!cancelled) setState({ status: 'ready', data })
+      } catch (err) {
+        if (!cancelled) {
+          setState({
+            status: 'error',
+            message:
+              err instanceof ApiError
+                ? err.message
+                : err instanceof Error
+                  ? err.message
+                  : 'Failed to load gitnexus library skills',
+          })
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  if (state.status === 'loading') {
+    return (
+      <div
+        className="ab-list-row"
+        style={{ opacity: 0.6, fontSize: 13, color: 'var(--text-dim)' }}
+      >
+        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+          <FileIcon />
+        </div>
+        <div className="ab-list-row-head">
+          <div className="ab-list-row-title">Loading gitnexus library skills…</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (state.status === 'error') {
+    return (
+      <div className="ab-list-row" style={{ fontSize: 13 }}>
+        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+          <FileIcon />
+        </div>
+        <div className="ab-list-row-head">
+          <div className="ab-list-row-title">GitNexus library skills (unavailable)</div>
+          <div className="ab-list-row-sub" style={{ color: 'var(--warn)' }}>
+            {state.message}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (state.data.ok === false) {
+    return (
+      <div className="ab-list-row" style={{ fontSize: 13 }}>
+        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+          <FileIcon />
+        </div>
+        <div className="ab-list-row-head">
+          <div className="ab-list-row-title">GitNexus library skills (unavailable)</div>
+          <div className="ab-list-row-sub" style={{ color: 'var(--warn)' }}>
+            {state.data.message}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const data = state.data
+  if (data.skills.length === 0) {
+    return (
+      <div className="ab-list-row" style={{ fontSize: 13 }}>
+        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+          <FileIcon />
+        </div>
+        <div className="ab-list-row-head">
+          <div className="ab-list-row-title">GitNexus library skills</div>
+          <div className="ab-list-row-sub" style={{ color: 'var(--text-muted)' }}>
+            No skills shipped with this gitnexus version.
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const totalBytes = data.skills.reduce((sum, s) => sum + s.bytes, 0)
+  return (
+    <>
+      <button
+        type="button"
+        className="ab-list-row"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        style={{
+          width: '100%',
+          background: 'transparent',
+          border: 'none',
+          font: 'inherit',
+          textAlign: 'left',
+          cursor: 'pointer',
+        }}
+      >
+        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+          <FileIcon />
+        </div>
+        <div className="ab-list-row-head">
+          <div className="ab-list-row-title">
+            GitNexus library skills ({data.skills.length})
+          </div>
+          <div className="ab-list-row-sub">
+            Vendor-shipped from gitnexus v{data.version} ·{' '}
+            {totalBytes.toLocaleString()} chars total
+          </div>
+        </div>
+        <div className="ab-list-row-meta">
+          <Pill kind="accent">Built-in</Pill>
+          <span
+            className="ab-row-affordance"
+            aria-hidden="true"
+            style={{
+              transform: expanded ? 'rotate(180deg)' : undefined,
+              transition: 'transform 160ms var(--ease-out)',
+              display: 'inline-flex',
+            }}
+          >
+            <ChevronDownIcon />
+          </span>
+        </div>
+      </button>
+      {expanded && (
+        <div
+          style={{
+            background: 'var(--surface-hi)',
+            borderTop: '1px solid var(--border)',
+          }}
+        >
+          {data.skills.map((s) => {
+            const isOpen = openSlug === s.slug
+            return (
+              <div key={s.slug} style={{ borderTop: '1px solid var(--border)' }}>
+                <button
+                  type="button"
+                  className="ab-list-row"
+                  onClick={() => setOpenSlug(isOpen ? null : s.slug)}
+                  aria-expanded={isOpen}
+                  style={{
+                    width: '100%',
+                    background: 'transparent',
+                    border: 'none',
+                    font: 'inherit',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+                    <FileIcon />
+                  </div>
+                  <div className="ab-list-row-head">
+                    <div className="ab-list-row-title">{s.name}</div>
+                    <div className="ab-list-row-sub">
+                      {s.description} · {s.bytes.toLocaleString()} chars
+                    </div>
+                  </div>
+                  <div className="ab-list-row-meta">
+                    <span
+                      className="ab-row-affordance"
+                      aria-hidden="true"
+                      style={{
+                        transform: isOpen ? 'rotate(180deg)' : undefined,
+                        transition: 'transform 160ms var(--ease-out)',
+                        display: 'inline-flex',
+                      }}
+                    >
+                      <ChevronDownIcon />
+                    </span>
+                  </div>
+                </button>
+                {isOpen && (
+                  <div
+                    style={{
+                      padding: '14px 18px 14px 62px',
+                      fontSize: 13,
+                      lineHeight: 1.55,
+                      borderTop: '1px solid var(--border)',
+                    }}
+                  >
+                    <Markdown source={s.body} />
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
     </>
   )
 }

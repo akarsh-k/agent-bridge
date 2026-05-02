@@ -21,6 +21,11 @@ import { encodingForModel, getEncoding, type TiktokenEncoding } from 'js-tiktoke
 import { and, asc, eq } from 'drizzle-orm'
 import type { AgentBridgeDb } from '@agent-bridge/db'
 import { schema } from '@agent-bridge/db'
+import {
+  CODING_AGENT_SYSTEM_SKILL_VERSION,
+  loadCodingAgentSystemSkill,
+} from './coding-agent/system-skill.js'
+import { loadGitnexusLibrarySkills } from './coding-agent/gitnexus-library-skills.js'
 import { loadGitnexusToolDefinitions } from './system-tools.js'
 
 // Known cap per model. The Configure-tab card shows a percentage of
@@ -116,6 +121,24 @@ export interface TokenEstimateTool {
   readonly source: 'gitnexus' | 'mcp' | 'custom'
 }
 
+export interface TokenEstimateSystemSkill {
+  /** Display name for the budget card row. */
+  readonly name: string
+  /** Skill version. bumping it flushes the BuiltAgent cache. */
+  readonly version: string
+  /** Tokens the .md body contributes to every prompt. */
+  readonly tokens: number
+}
+
+export interface TokenEstimateGitnexusLibrarySkills {
+  /** gitnexus npm package version (e.g. `1.6.3`). */
+  readonly version: string
+  /** Number of skill files attached. */
+  readonly count: number
+  /** Tokens the concatenated bodies + heading contribute to every prompt. */
+  readonly tokens: number
+}
+
 export interface TokenEstimate {
   readonly model: string | null
   readonly encoding: TiktokenEncoding
@@ -124,6 +147,21 @@ export interface TokenEstimate {
     readonly systemPrompt: number
     readonly skills: ReadonlyArray<TokenEstimateSkill>
     readonly skillsTotal: number
+    /**
+     * Coding-agent system skill. the markdown body
+     * `composeInstructions` auto-appends to every agent. Always
+     * present since P2; budget card surfaces it as "Built-in skill".
+     * `null` only when the .md fails to load (build artifact missing
+     * in dist), which the UI flags as a config gap.
+     */
+    readonly systemSkill: TokenEstimateSystemSkill | null
+    /**
+     * GitNexus library skills (vendor-shipped guidance from the
+     * gitnexus npm package's `skills/` dir). Auto-attached to every
+     * agent's instructions in `composeInstructions`. `null` when
+     * the gitnexus package isn't reachable or the dir is empty.
+     */
+    readonly gitnexusLibrarySkills: TokenEstimateGitnexusLibrarySkills | null
     readonly attachedReposHint: number
     readonly repoEdgesHint: number
     readonly tools: ReadonlyArray<TokenEstimateTool>
@@ -206,6 +244,56 @@ export async function estimateAgentTokens(
     }))
   const skillsTotal = skills.reduce((sum, s) => sum + s.tokens, 0)
 
+  // Coding-agent system skill. auto-appended in `composeInstructions`
+  // after the operator's skills. Same fail-silent contract as the
+  // gitnexus tool list below: a load failure (missing .md in
+  // `dist/src/coding-agent/`) gives 0 tokens and a null entry, which
+  // the budget card surfaces as a config gap. Skipping the auto-attach
+  // when an operator override is present is rare; we charge the full
+  // body here regardless to keep the estimator deterministic.
+  let systemSkill: TokenEstimateSystemSkill | null = null
+  try {
+    const skillBody = await loadCodingAgentSystemSkill()
+    systemSkill = {
+      name: 'Coding-agent toolkit guidance',
+      version: CODING_AGENT_SYSTEM_SKILL_VERSION,
+      tokens: tokenize(enc, skillBody),
+    }
+  } catch {
+    // Leave `systemSkill` null. The card flags this distinctly from
+    // "0 tokens" to nudge the operator toward a rebuild.
+  }
+
+  // GitNexus library skills. vendor-shipped from the npm package,
+  // auto-appended in `composeInstructions`. Same fail-silent contract:
+  // an empty list (loader couldn't resolve gitnexus) gives null;
+  // a non-empty list contributes the concatenated bodies + the
+  // section heading we render around them.
+  let gitnexusLibrarySkills: TokenEstimateGitnexusLibrarySkills | null = null
+  try {
+    const lib = await loadGitnexusLibrarySkills()
+    if (lib.skills.length > 0) {
+      // Mirror the rendered shape from `renderGitnexusLibrarySkills`
+      // so the count matches what the LLM will actually see.
+      const bodies = lib.skills.map((s) => `### ${s.name}\n\n${s.body}`)
+      const head =
+        '## GitNexus library skills\n\n' +
+        'The following skills are shipped inside the gitnexus npm package and ' +
+        'auto-attached here. They are written by gitnexus\'s authors to teach ' +
+        'an LLM how to call `gitnexus_*` tools effectively. Treat them as ' +
+        'authoritative for tool-call shapes and recipes when answering ' +
+        'questions that need code-graph evidence.'
+      const block = [head, ...bodies].join('\n\n')
+      gitnexusLibrarySkills = {
+        version: lib.version,
+        count: lib.skills.length,
+        tokens: tokenize(enc, block),
+      }
+    }
+  } catch {
+    /* leave null. budget card surfaces "library skills unavailable" */
+  }
+
   // Attached-repos hint mirrors `appendGitnexusRepoHint`. Only counts
   // when the agent has ≥1 ready repo (otherwise gitnexus doesn't
   // mount and the hint isn't appended).
@@ -266,11 +354,55 @@ export async function estimateAgentTokens(
     }
   }
 
+  // Wiki tools. auto-mounted when at least one attached repo has
+  // `wikiStatus='ready'`. Two tools with known descriptions; we
+  // count them with the same name+description+wrapper formula
+  // gitnexus uses above. Fail-silent if the count query throws -
+  // same rationale as gitnexus.
+  try {
+    const wikiReady = await db
+      .select({ id: schema.repos.id })
+      .from(schema.agentRepos)
+      .innerJoin(schema.repos, eq(schema.agentRepos.repoId, schema.repos.id))
+      .where(
+        and(
+          eq(schema.agentRepos.agentId, agentId),
+          eq(schema.repos.wikiStatus, 'ready'),
+        ),
+      )
+    if (wikiReady.length > 0) {
+      const wikiToolDefs: Array<{ name: string; description: string }> = [
+        {
+          name: 'gitnexus_wiki_list_pages',
+          description:
+            'List the pages in a repo\'s pre-generated wiki. narrative summaries written by `gitnexus wiki`. Cheaper than fanning out 5+ graph queries when you need a high-level "how does X work" overview. Pass the repo\'s friendly label (role / alias / URL tail). Returns an ordered tree.',
+        },
+        {
+          name: 'gitnexus_wiki_get_page',
+          description:
+            'Read one page of a repo\'s pre-generated wiki. Use AFTER `gitnexus_wiki_list_pages` told you which slug to fetch. Returns the markdown body. The wiki is a snapshot. verify any concrete file/line claim against `gitnexus_context` before quoting it.',
+        },
+      ]
+      for (const t of wikiToolDefs) {
+        const text = JSON.stringify({
+          name: t.name,
+          description: t.description,
+        })
+        const tokens = tokenize(enc, text) + 60
+        tools.push({ name: t.name, tokens, source: 'gitnexus' })
+      }
+    }
+  } catch {
+    /* skip silently. same fail-open as gitnexus above */
+  }
+
   const toolsTotal = tools.reduce((sum, t) => sum + t.tokens, 0)
 
   const baselineTotal =
     systemPromptTokens +
     skillsTotal +
+    (systemSkill?.tokens ?? 0) +
+    (gitnexusLibrarySkills?.tokens ?? 0) +
     attachedReposHint +
     repoEdgesHint +
     toolsTotal
@@ -283,6 +415,8 @@ export async function estimateAgentTokens(
       systemPrompt: systemPromptTokens,
       skills,
       skillsTotal,
+      systemSkill,
+      gitnexusLibrarySkills,
       attachedReposHint,
       repoEdgesHint,
       tools,

@@ -96,6 +96,16 @@ export interface GitnexusRepoLabel {
    * having to introspect file trees.
    */
   readonly description?: string
+  /**
+   * Operator-curated extra names this repo answers to: local folder
+   * names, short codes, legacy names. Read by the resolver
+   * (`coding-agent/repo-resolver.ts`) and rendered into the system
+   * prompt's repo inventory so the LLM can map idiomatic names to
+   * the right repo. Always `[]` until the P5 migration adds
+   * `agent_repos.aliases`; the field is plumbed through ahead of
+   * time so P5 is a one-line swap.
+   */
+  readonly aliases?: readonly string[]
 }
 
 export interface MountedGitnexus {
@@ -218,6 +228,7 @@ export async function mountGitnexusMcp(
         label: r.label,
         remoteUrl: r.remoteUrl,
         branch: r.branch,
+        aliases: r.aliases,
         ...(r.description ? { description: r.description } : {}),
       })),
     },
@@ -232,6 +243,8 @@ interface ReadyRepo {
   readonly branch: string
   readonly label: string
   readonly description?: string
+  /** Empty until P5 wires `agent_repos.aliases jsonb`. */
+  readonly aliases: readonly string[]
 }
 
 /**
@@ -251,6 +264,7 @@ async function loadReadyRepos(
       branch: schema.repos.branch,
       role: schema.agentRepos.role,
       description: schema.agentRepos.description,
+      aliases: schema.agentRepos.aliases,
     })
     .from(schema.agentRepos)
     .innerJoin(schema.repos, eq(schema.agentRepos.repoId, schema.repos.id))
@@ -268,6 +282,7 @@ async function loadReadyRepos(
       remoteUrl: r.remoteUrl,
       branch: r.branch,
       label: r.role?.trim() || guessLabelFromUrl(r.remoteUrl),
+      aliases: r.aliases ?? [],
       ...(desc ? { description: desc } : {}),
     }
   })

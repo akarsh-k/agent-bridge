@@ -8,7 +8,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  BRIDGE_TOOL_RESERVED_PREFIX,
+  CODING_AGENT_TOOL_METADATA,
   type BridgeToolResponse,
   type RunListRow,
 } from '@agent-bridge/shared'
@@ -179,7 +179,11 @@ function ToolsCard() {
       <div className="ab-section-head">
         <div className="ab-section-title">Exposed tools</div>
         <div className="ab-section-sub">
-          {exposed.length} agent{exposed.length === 1 ? '' : 's'} ready
+          {exposed.length} agent{exposed.length === 1 ? '' : 's'} exposed
+          to your IDE. Each one ships{' '}
+          {CODING_AGENT_TOOL_METADATA.length} built-in tools for the
+          coding agent (plan, debug, ask, investigate, impact, list
+          repos). Add your own tools per-agent on the Bridge tools tab.
           {skipped > 0 && ` · ${skipped} skipped (no LLM provider)`}
         </div>
       </div>
@@ -231,7 +235,19 @@ function ExposedAgentRow({
   highlight: boolean
   defaultOpen: boolean
 }) {
-  const toolName = `${BRIDGE_TOOL_RESERVED_PREFIX}${agent.slug}`
+  // Virtual tools (always-on coding-agent toolkit) are slug-prefixed
+  // by the bridge: `<slug>__plan_feature` etc. Explicit rows from
+  // `bridge_tools` ship by their literal `name`. The expanded panel
+  // below renders both, mirroring what the IDE actually sees on
+  // `tools/list`.
+  const virtualNames = useMemo(
+    () =>
+      CODING_AGENT_TOOL_METADATA.map((t) => ({
+        wireName: `${agent.slug}__${t.name}`,
+        meta: t,
+      })),
+    [agent.slug],
+  )
   const [open, setOpen] = useState(defaultOpen)
   const [bridgeTools, setBridgeTools] = useState<
     readonly BridgeToolResponse[] | null
@@ -309,9 +325,11 @@ function ExposedAgentRow({
           {agent.name.charAt(0).toUpperCase()}
         </div>
         <div className="ab-list-row-head">
-          <div className="ab-list-row-title ab-mono">{toolName}</div>
+          <div className="ab-list-row-title">{agent.name}</div>
           <div className="ab-list-row-sub">
-            {agent.name}
+            <span className="ab-mono" style={{ color: 'var(--text-dim)' }}>
+              {agent.slug}
+            </span>
             {agent.description &&
               ' · ' + truncate(agent.description, 80)}
           </div>
@@ -354,20 +372,21 @@ function ExposedAgentRow({
             background: 'var(--surface-hi)',
           }}
         >
-          <div
-            className="ab-section-sub"
-            style={{ marginBottom: 8, fontSize: 12 }}
-          >
-            <strong style={{ color: 'var(--text-dim)' }}>
-              Bridge tools (Phase 7)
-            </strong>{' '}
-            — typed functions this agent advertises through MCP. The IDE
-            sees them as{' '}
-            <code className="ab-mono">
-              query_{agent.slug}__&lt;tool_name&gt;
-            </code>
-            .
-          </div>
+          <ToolGroup
+            label="Coding-agent toolkit"
+            sub="Built-in. The IDE sees these on every agent. Names are prefixed with the agent's slug so multi-agent installs don't collide."
+            tools={virtualNames.map((v) => ({
+              name: v.wireName,
+              description: v.meta.summary,
+              enabled: true,
+              tag: v.meta.synchronous
+                ? 'sync'
+                : v.meta.allowAllRepos
+                  ? 'any-repo'
+                  : 'single-repo',
+            }))}
+          />
+
           {loadingBridgeTools && (
             <div
               style={{
@@ -376,11 +395,11 @@ function ExposedAgentRow({
                 gap: 8,
                 color: 'var(--text-dim)',
                 fontSize: 12,
-                padding: '4px 0',
+                padding: '8px 0 4px',
               }}
             >
               <span className="ab-pulse-dot" />
-              Loading…
+              Loading custom bridge tools…
             </div>
           )}
           {bridgeToolsErr && (
@@ -391,64 +410,108 @@ function ExposedAgentRow({
               {bridgeToolsErr}
             </div>
           )}
-          {bridgeTools && bridgeTools.length === 0 && (
+          {bridgeTools && bridgeTools.length > 0 && (
+            <ToolGroup
+              label="Custom bridge tools"
+              sub="Tools you added on this agent's Bridge tools tab. The IDE sees these by their literal name. If the name matches a built-in, your version replaces it."
+              tools={bridgeTools.map((bt) => ({
+                name: bt.name,
+                description: bt.description || undefined,
+                enabled: bt.enabled,
+              }))}
+            />
+          )}
+
+          {bridgeTools && bridgeTools.length === 0 && !loadingBridgeTools && (
             <div
               className="ab-field-help"
-              style={{ fontStyle: 'italic' }}
+              style={{ marginTop: 8, fontStyle: 'italic' }}
             >
-              No bridge tools yet — this agent only exposes the
-              built-in <code className="ab-mono">{toolName}</code>{' '}
-              query function.
-            </div>
-          )}
-          {bridgeTools && bridgeTools.length > 0 && (
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 4,
-              }}
-            >
-              {bridgeTools.map((bt) => (
-                <div
-                  key={bt.id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 10,
-                    padding: '6px 0',
-                    fontSize: 12,
-                  }}
-                >
-                  <span
-                    className="ab-mono"
-                    style={{ color: 'var(--text)' }}
-                  >
-                    query_{agent.slug}__{bt.name}
-                  </span>
-                  <Pill kind={bt.enabled ? 'success' : 'neutral'} dot>
-                    {bt.enabled ? 'Enabled' : 'Disabled'}
-                  </Pill>
-                  {bt.description && (
-                    <span
-                      style={{
-                        color: 'var(--text-muted)',
-                        flex: 1,
-                        minWidth: 0,
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
-                      {bt.description}
-                    </span>
-                  )}
-                </div>
-              ))}
+              No custom tools on this agent. The IDE sees just the{' '}
+              {CODING_AGENT_TOOL_METADATA.length} built-ins above. Add a
+              custom tool from the agent's Bridge tools tab.
             </div>
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+interface ToolGroupTool {
+  readonly name: string
+  readonly description?: string | undefined
+  readonly enabled: boolean
+  readonly tag?: 'sync' | 'any-repo' | 'single-repo'
+}
+
+/**
+ * Compact list-of-tools renderer used twice in the expanded agent
+ * row. once for the always-on coding-agent toolkit and once for
+ * operator-authored explicit `bridge_tools` rows. Same visual
+ * shape so the two sources read as a single conceptual list ("all
+ * the tools your IDE sees").
+ */
+function ToolGroup({
+  label,
+  sub,
+  tools,
+}: {
+  label: string
+  sub: string
+  tools: readonly ToolGroupTool[]
+}) {
+  return (
+    <div style={{ marginTop: 8 }}>
+      <div className="ab-section-sub" style={{ marginBottom: 6, fontSize: 12 }}>
+        <strong style={{ color: 'var(--text-dim)' }}>{label}</strong> · {sub}
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {tools.map((t) => (
+          <div
+            key={t.name}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              padding: '6px 0',
+              fontSize: 12,
+            }}
+          >
+            <span className="ab-mono" style={{ color: 'var(--text)' }}>
+              {t.name}
+            </span>
+            <Pill kind={t.enabled ? 'success' : 'neutral'} dot>
+              {t.enabled ? 'Enabled' : 'Disabled'}
+            </Pill>
+            {t.tag && (
+              <Pill
+                kind={t.tag === 'single-repo' ? 'accent' : 'neutral'}
+              >
+                {t.tag === 'sync'
+                  ? 'Sync'
+                  : t.tag === 'any-repo'
+                    ? 'Any repo'
+                    : 'Single repo'}
+              </Pill>
+            )}
+            {t.description && (
+              <span
+                style={{
+                  color: 'var(--text-muted)',
+                  flex: 1,
+                  minWidth: 0,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                {t.description}
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   )
 }

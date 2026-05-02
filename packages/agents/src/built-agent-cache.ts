@@ -41,7 +41,9 @@
 
 import type { AgentBridgeDb } from '@agent-bridge/db'
 
+import { EXPECTED_GITNEXUS_VERSION } from '@agent-bridge/shared/gitnexus'
 import { buildAgent, type BuildAgentInput, type BuiltAgent } from './build-agent.js'
+import { CODING_AGENT_SYSTEM_SKILL_VERSION } from './coding-agent/system-skill.js'
 
 const MAX_ENTRIES = 8
 const TTL_MS = 30 * 60_000
@@ -275,6 +277,13 @@ async function computeAgentVersion(
   // Concatenate with a separator that can't appear inside a timestamp
   // string. Hashing isn't necessary — equality on the joined text is
   // O(constant length) and the consumer just compares strings.
+  //
+  // The trailing `skill:<version>` segment makes the coding-agent
+  // system skill body part of the cache identity. When we bump
+  // `CODING_AGENT_SYSTEM_SKILL_VERSION` (after editing
+  // `system-skill.md`), every cached BuiltAgent invalidates on next
+  // access. long-running backend processes pick up the new body
+  // without an explicit redeploy hook.
   return [
     row.agent_updated ?? '',
     row.skills_updated ?? '',
@@ -285,5 +294,7 @@ async function computeAgentVersion(
     row.mcp_tools_updated ?? '',
     row.mcp_connections_updated ?? '',
     row.provider_updated ?? '',
+    `skill:${CODING_AGENT_SYSTEM_SKILL_VERSION}`,
+    `gitnexus:${EXPECTED_GITNEXUS_VERSION}`,
   ].join('|')
 }

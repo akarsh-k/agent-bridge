@@ -200,6 +200,12 @@ place in the repo that imports `mastra`, `@mastra/memory`, `@mastra/pg`, etc.
 — every other workspace sees a pure `Agent` / `RunResult` interface. This
 keeps the Mastra boundary explicit and swappable.
 
+The package also exposes the **coding-agent toolkit** primitives
+(`loadAttachedRepos`, `resolveRepoHint`, `resolveRelatedRepos`,
+`loadCodingAgentSystemSkill`, the URL normaliser, the wiki-tool
+mount, and the virtual bridge-tool definitions). Full design lives
+in §10 below.
+
 ## 3. Isolation guarantees (must not regress)
 
 Every runtime write the app makes lives under **one** path, the
@@ -873,3 +879,229 @@ The dialog store (`ui/dialog-store.ts`) replaces `pending` with a
 fresh array reference on resolve (NOT splice) so React's `Object.is`
 check fires and the host re-renders. Mutating in place is a footgun
 that previously left dialogs hanging.
+
+## 10. Coding-agent toolkit
+
+A purpose-built MCP surface that turns every Agent Bridge agent into
+a multi-repo aware "code-context oracle" for IDE coding agents
+(Cursor, Claude Code, Codex, …). The IDE's coding agent only sees
+one repo (the one open in the editor); Agent Bridge sees every repo
+the operator attached plus the relationships between them. The
+toolkit closes that gap with six standard tools the IDE LLM can call.
+
+### 10.1 Six virtual bridge tools
+
+Defined in `packages/agents/src/coding-agent/bridge-tool-defs.ts`,
+registered automatically by `apps/mcp-bridge` for every exposable
+agent:
+
+| Tool                   | Scope         | What it answers                                                      |
+| ---------------------- | ------------- | -------------------------------------------------------------------- |
+| `plan_feature`         | single repo   | Affected files, reusable hooks/components, cross-repo touch points, naming patterns, risks, follow-ups. |
+| `plan_bugfix`          | single repo   | Suspect call sites with line numbers, recent related changes, risks. |
+| `ask_general`          | single / all  | Free-form Q&A grounded in cited file paths.                           |
+| `investigate_codebase` | single / all  | Ordered trace of hops from a starting anchor toward a goal, optional Mermaid graph. |
+| `assess_impact`        | single / all  | Cross-repo blast radius (direct + transitive consumers) of a proposed change. |
+| `list_repos`           | n/a (sync)    | Lists the agent's attached repos. Deterministic, no LLM call.        |
+
+"Virtual" because they're code-defined, not rows in `bridge_tools`.
+Operators can shadow any of them by inserting an explicit row whose
+`name` matches the slug-prefixed wire name. The Phase-5
+`query_<slug>` default is no longer auto-emitted -
+`<slug>__ask_general` subsumes it. The `query_` prefix stays
+reserved on the `bridge_tools.name` CHECK constraint in case a
+future flag re-introduces the default.
+
+### 10.2 Slug-prefixed wire names
+
+`apps/mcp-bridge`'s tool registry is one global namespace per server
+process. Multi-agent installs would collide on bare names like
+`plan_feature`, so every virtual tool registers as
+`<agent.slug>__<def.name>` (mirrors the `<connection-slug>__<rawTool>`
+convention in `mcp/external-mcps.ts`). The bare canonical name
+travels on the JSON envelope's `tool` field for IDE-side
+identification.
+
+### 10.3 Multi-signal repo resolver
+
+`packages/agents/src/coding-agent/repo-resolver.ts` runs **before**
+any LLM call. The IDE supplies a hint object with up to four
+optional fields:
+
+```jsonc
+{ "repo_hint": "frontend",                      // friendly label
+  "remote_url": "https://github.com/co/web",    // highest-signal
+  "local_folder": "web-app",                    // IDE workspace dir
+  "branch": "main" }                             // tiebreaker
+```
+
+The resolver scores against the agent's attached repos
+(`agent_repos.role`, `agent_repos.aliases`, `repos.remote_url`) and
+returns one of four outcomes:
+
+- `single`. one confident match, run the LLM
+- `all`. `repo_hint: '__all__'` reserved sentinel (rejected by
+  `plan_feature` / `plan_bugfix`, accepted by everything else)
+- `clarification`. multi-repo agent + no hint, OR `__all__` on a
+  single-repo-only tool. Bridge returns `needs_clarification` with
+  candidate list + pre-baked `suggested_replies` so the IDE can
+  render a one-click picker. **No LLM call**, no `runs` row.
+- `error`. `repo_not_found` / `repo_ambiguous` / `repo_not_ready` /
+  `no_repos_attached`. **No LLM call.**
+
+Decision rule has TWO thresholds (score and margin) so near-tied
+matches return `repo_ambiguous` instead of silently picking. URL
+normalisation folds `https://`, `git@host:owner/repo`, `ssh://`,
+and bare `host/path` forms into a canonical form for exact-match
+short-circuit.
+
+### 10.4 `agent_repos.aliases jsonb`
+
+Operator-curated extra fuzzy-match handles per attached repo. The
+DTO (`packages/shared/src/dtos/repos.ts`) trims, lower-cases, and
+dedupes on save, so the column stores a canonical form the resolver
+can compare without re-normalising. Surfaced as a chip-input on the
+edit-attached-repo sheet plus a compact pill row on the agent's
+Resources tab.
+
+### 10.5 Auto-attached system skill
+
+`packages/agents/src/coding-agent/system-skill.md` is appended to
+every agent's `instructions` by `composeInstructions` in
+`build-agent.ts`, after the operator's authored skills and before
+the gitnexus repo inventory. This is the same auto-attach pattern
+as the existing repo inventory + edges blocks. code, not data.
+
+The skill teaches the LLM:
+
+- The output contract (valid JSON, match the active tool's shape
+  exactly, never bleed `investigate_codebase`'s trace shape into
+  `assess_impact`'s blast_radius shape).
+- The hallucination floor (every concrete claim cites a live
+  `gitnexus_*` result; empty results mean "no matches", not "doesn't
+  exist"; verify-before-declaring-missing).
+- Verified density (within what gitnexus has shown, be exhaustive;
+  return all 30 affected files with citations, not 3 plus
+  speculation).
+- Source-of-truth ordering: gitnexus tools are always the primary
+  source, the wiki is supporting context only (snapshot, may have
+  drifted).
+- Always-explain-bounds: e.g. `assess_impact`'s summary must say
+  whether cross-repo expansion happened, why, and against which
+  repos.
+
+`CODING_AGENT_SYSTEM_SKILL_VERSION` (currently `0.8.0`) keys the
+BuiltAgent cache hash in `built-agent-cache.ts`. bumping it
+invalidates every cached agent on next access. The body is read
+asynchronously from disk (`new URL('./system-skill.md',
+import.meta.url)`); the build script copies the .md into
+`dist/src/coding-agent/` so production resolution works the same
+as dev.
+
+### 10.6 Wiki tool. system tool, sibling to gitnexus
+
+`packages/agents/src/coding-agent/wiki-tool.ts` is the second auto-
+mounted system tool surface (the first being gitnexus). Mounts
+when at least one attached repo has `wikiStatus='ready'`. Two
+Mastra tools:
+
+- `gitnexus_wiki_list_pages(repo)`. reads `module_tree.json` (or
+  falls back to a directory scan) for the resolved repo's wiki
+  output at `<source>/.gitnexus/wiki/`.
+- `gitnexus_wiki_get_page(repo, slug)`. reads
+  `<wikiDir>/<slug>.md`. Path-traversal guarded:
+  `slug` must match `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` AND the resolved
+  path must stay under wikiDir.
+
+Available to **every** entry point. Chat tab, IDE bridge, future
+surfaces. The skill positions the wiki as supporting context only;
+the LLM uses it for orientation and architectural framing, then
+verifies any concrete claim against gitnexus before quoting.
+
+The `/api/system/tools/gitnexus` route returns the wiki tools
+alongside gitnexus's own catalog so the operator-facing Resources
+→ Tools "System defaults" card lists everything the agent has
+auto-mounted.
+
+### 10.7 Wire envelope
+
+The bridge handler (`apps/mcp-bridge/src/coding-agent-handler.ts`)
+returns one of two envelope shapes:
+
+```jsonc
+// Success
+{ "ok": true, "tool": "plan_feature",
+  "agent": { "id": "...", "slug": "..." },
+  "resolved_repo": { "id": "...", "label": "frontend", ... } | null,
+  "related_repos": [{ "id": "...", "label": "backend", "via": "..." }],
+  "scope": "single" | "all",
+  "confidence": "high" | "medium" | "low",
+  "groundedness": { "claims": N, "grounded": N, "ungrounded": N },
+  "answer": { /* tool-specific shape */ },
+  "uncertainty_notes": [...],
+  "warnings": [...],
+  "schema_unmatched"?: true }
+
+// Error / clarification
+{ "ok": false,
+  "code": "needs_clarification" | "repo_not_found" | ... ,
+  "message": "...",
+  "candidates"?: [...],
+  "clarification"?: { "kind": ..., "candidates": ..., "suggested_replies": ... } }
+```
+
+The bridge fills in the bridge-managed fields (`ok`, `tool`,
+`agent`, `resolved_repo`, `related_repos`, `scope`); the LLM emits
+the rest. The handler builds an XML-ish `<coding_agent_call>` block
+from the resolver's output and prepends it to the operator's
+prompt template, so the LLM cannot retroactively claim a different
+repo.
+
+JSON-parse failure on the LLM output downgrades to
+`{ schema_unmatched: true, confidence: 'low' }` with the raw text
+under `answer.text` so the IDE always gets structured output.
+
+### 10.8 Telemetry
+
+Three new `runEventKinds` in `packages/shared/src/events.ts`:
+
+- `coding-agent.repo.resolved`. emitted after `createRun`,
+  before `dispatchRun`. Payload carries the IDE hint, scope,
+  picked repo + matched signal + confidence, top-3 score table,
+  alias count, unresolved related-hint count.
+- `coding-agent.repo.clarification_requested`. fan-out only (no
+  `runs` row exists when the resolver short-circuits). Logged as
+  a normal event so it doesn't bias failure-rate dashboards.
+- `coding-agent.tool.completed`. after `dispatchRun` returns.
+  Carries `confidence`, `groundedness`, `duration_ms`,
+  `schema_unmatched?`.
+
+`runs.bridge_tool_name` is populated with the slug-prefixed wire
+name for every virtual-tool call so the runs/logs UI can filter
+IDE traffic distinctly. The Logs tab buckets coding-agent events
+under the `tool` filter with `bridge` as the source label.
+
+### 10.9 Token budget
+
+`estimateAgentTokens` (`packages/agents/src/token-estimate.ts`)
+includes the system skill body and the wiki tool descriptions in
+the breakdown so the Configure-tab budget card shows their real
+cost. The system skill is typically ~2-3k tokens of every prompt;
+worth surfacing because operators planning a small-context model
+need to see what's already baked into baseline.
+
+### 10.10 Direction summary
+
+Crucial to keep straight when reading this code:
+
+| Concept | Direction | Where defined | Visible to IDE? |
+| --- | --- | --- | --- |
+| **Agent tools** (gitnexus, external MCPs, custom HTTP/shell) | inbound. agent calls them | `tools` table, `mcp_connections` + `agent_mcp_tools`, `mcp/gitnexus-mcp.ts`, `mcp/external-mcps.ts` | NO |
+| **Wiki tool** | inbound. agent calls it | `coding-agent/wiki-tool.ts` | NO |
+| **System skill** | not a tool. prompt content only | `coding-agent/system-skill.md` | NO |
+| **Bridge tools** (operator-authored) | outbound. IDE calls them | `bridge_tools` table | YES |
+| **Coding-agent toolkit** (six virtuals) | outbound. IDE calls them | `coding-agent/bridge-tool-defs.ts` | YES |
+
+Both directions exist on the same `apps/mcp-bridge` process: the
+bridge IS the IDE-facing MCP server (outbound surface) AND it
+constructs the agent that uses the inbound tools to answer.
