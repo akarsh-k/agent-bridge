@@ -4,12 +4,14 @@
  * (chat default, embedding default, full model chip grid) and the
  * agent build tab (chat model picker).
  *
- * Owns two dicts keyed by model id (`state` + `message`) and exposes
- * a `test(modelId, capability?)` action that hits
- * `testLlmProvider(...)` and updates the dicts in place. Consumers
- * read the result via `stateOf(model)` / `messageOf(model)` for the
- * inline `<ModelTestStatus>` pill, or grab the raw dicts directly
- * when they iterate (e.g. the chip grid).
+ * State is keyed by `(capability, modelId)`, NOT modelId alone, because
+ * a single model id can legitimately appear under both capabilities on
+ * local providers (e.g. one llama.cpp GGUF advertised by /v1/models
+ * with no per-model capability hint, so the same id passes both
+ * `isChatCapable` and `isEmbeddingCapable` filters). Without the
+ * compound key, a chat-test pass would silently overwrite a previous
+ * embedding-test fail for the same id, and the embedding pill would
+ * flip green even though the embedding endpoint never succeeded.
  *
  * Provider-change reset: when `providerId` flips to a new value the
  * cached state is cleared. Test results are provider-scoped — a
@@ -25,16 +27,41 @@ export type ModelTestState = 'pending' | 'ok' | 'error'
 export type ModelTestCapability = 'chat' | 'embedding'
 
 export interface UseModelTesterReturn {
-  /** Fire a test for `modelId`. Defaults to chat capability. */
-  readonly test: (modelId: string, capability?: ModelTestCapability) => Promise<void>
-  /** Look up the current state of one model id. */
-  readonly stateOf: (modelId: string | null | undefined) => ModelTestState | undefined
+  /**
+   * Fire a test for `modelId`. Defaults to chat capability.
+   *
+   * `providerIdOverride` is needed by call sites that just changed the
+   * agent's provider in the same tick — the hook's closure-captured
+   * `providerId` is still the previous value until the next render,
+   * so a naive `tester.test(...)` would hit the wrong endpoint. Pass
+   * the new id explicitly to avoid the off-by-one render.
+   */
+  readonly test: (
+    modelId: string,
+    capability?: ModelTestCapability,
+    providerIdOverride?: string,
+  ) => Promise<void>
+  /**
+   * Look up the current state for one (modelId, capability) pair.
+   * Capability defaults to 'chat' so existing call sites that aren't
+   * capability-aware (build-tab's chat-only model dropdown) keep
+   * working without extra wiring.
+   */
+  readonly stateOf: (
+    modelId: string | null | undefined,
+    capability?: ModelTestCapability,
+  ) => ModelTestState | undefined
   /** Look up the message (timing on success, error reason on failure). */
-  readonly messageOf: (modelId: string | null | undefined) => string | undefined
-  /** Raw dicts for callers that iterate (chip grids, etc). */
-  readonly stateMap: Readonly<Record<string, ModelTestState>>
-  readonly messageMap: Readonly<Record<string, string>>
+  readonly messageOf: (
+    modelId: string | null | undefined,
+    capability?: ModelTestCapability,
+  ) => string | undefined
 }
+
+const stateKey = (
+  modelId: string,
+  capability: ModelTestCapability,
+): string => `${capability}:${modelId}`
 
 export function useModelTester(
   providerId: string | null | undefined,
@@ -57,32 +84,38 @@ export function useModelTester(
   }
 
   const test = useCallback(
-    async (modelId: string, capability: ModelTestCapability = 'chat') => {
-      if (!providerId) return
-      setStateMap((s) => ({ ...s, [modelId]: 'pending' }))
+    async (
+      modelId: string,
+      capability: ModelTestCapability = 'chat',
+      providerIdOverride?: string,
+    ) => {
+      const pid = providerIdOverride ?? providerId
+      if (!pid) return
+      const key = stateKey(modelId, capability)
+      setStateMap((s) => ({ ...s, [key]: 'pending' }))
       setMessageMap((s) => {
         const next = { ...s }
-        delete next[modelId]
+        delete next[key]
         return next
       })
       try {
-        const res = await testLlmProvider(providerId, {
+        const res = await testLlmProvider(pid, {
           defaultModel: modelId,
           capability,
         })
         if (res.ok) {
-          setStateMap((s) => ({ ...s, [modelId]: 'ok' }))
-          setMessageMap((s) => ({ ...s, [modelId]: `${res.durationMs}ms` }))
+          setStateMap((s) => ({ ...s, [key]: 'ok' }))
+          setMessageMap((s) => ({ ...s, [key]: `${res.durationMs}ms` }))
           return
         }
         const reason = res.message ?? res.code
-        setStateMap((s) => ({ ...s, [modelId]: 'error' }))
-        setMessageMap((s) => ({ ...s, [modelId]: reason }))
+        setStateMap((s) => ({ ...s, [key]: 'error' }))
+        setMessageMap((s) => ({ ...s, [key]: reason }))
         // Surface the failure reason in a toast — the red pill alone
         // signals "something broke" but the actionable detail
         // (auth / model not found / rate limit) only lives in the
         // tooltip otherwise, which is easy to miss.
-        toast.error(`${modelId} failed: ${reason}`)
+        toast.error(`${modelId} (${capability}) failed: ${reason}`)
       } catch (e) {
         const reason =
           e instanceof ApiError
@@ -90,9 +123,9 @@ export function useModelTester(
             : e instanceof Error
               ? e.message
               : 'failed'
-        setStateMap((s) => ({ ...s, [modelId]: 'error' }))
-        setMessageMap((s) => ({ ...s, [modelId]: reason }))
-        toast.error(`${modelId} failed: ${reason}`)
+        setStateMap((s) => ({ ...s, [key]: 'error' }))
+        setMessageMap((s) => ({ ...s, [key]: reason }))
+        toast.error(`${modelId} (${capability}) failed: ${reason}`)
       }
     },
     [providerId],
@@ -100,9 +133,9 @@ export function useModelTester(
 
   return {
     test,
-    stateOf: (m) => (m ? stateMap[m] : undefined),
-    messageOf: (m) => (m ? messageMap[m] : undefined),
-    stateMap,
-    messageMap,
+    stateOf: (m, capability = 'chat') =>
+      m ? stateMap[stateKey(m, capability)] : undefined,
+    messageOf: (m, capability = 'chat') =>
+      m ? messageMap[stateKey(m, capability)] : undefined,
   }
 }

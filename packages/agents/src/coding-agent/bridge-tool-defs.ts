@@ -270,9 +270,10 @@ const planFeatureTemplate = [
   'Anchors the IDE already knows about: {{files_or_symbols}}',
   '',
   'Return a `plan_feature` answer per the documented output schema:',
-  'summary, affected_files, reusable, cross_repo, naming_patterns, risks,',
-  'follow_ups, open_questions. Ground every file path / symbol in a',
-  'gitnexus_* result on the resolved repo (or one of the related repos).',
+  'summary, codebase_context, affected_files, reusable, cross_repo,',
+  'naming_patterns, risks, follow_ups, open_questions. Ground every file',
+  'path / symbol in a gitnexus_* result on the resolved repo (or one of',
+  'the related repos). codebase_context is required on every reply.',
 ].join('\n')
 
 const planBugfixTemplate = [
@@ -291,9 +292,10 @@ const planBugfixTemplate = [
   'Suspected files / symbols: {{files_or_symbols}}',
   '',
   'Return a `plan_bugfix` answer per the documented output schema:',
-  'summary, suspect_call_sites (path + line + reason),',
+  'summary, codebase_context, suspect_call_sites (path + line + reason),',
   'recent_related_changes, risks, follow_ups, open_questions.',
-  'Ground every claim in a gitnexus_* result.',
+  'Ground every claim in a gitnexus_* result. codebase_context is',
+  'required on every reply.',
 ].join('\n')
 
 const askGeneralTemplate = [
@@ -303,10 +305,11 @@ const askGeneralTemplate = [
   '{{query}}',
   '',
   'Return an `ask_general` answer per the documented output schema:',
-  'summary, answer.text (markdown), answer.citations (array of',
-  '{ repo, path, line? }), uncertainty_notes, open_questions.',
+  'summary, codebase_context, answer.text (markdown), answer.citations',
+  '(array of { repo, path, line? }), uncertainty_notes, open_questions.',
   'Cite every concrete claim. When the resolution preamble says scope=all,',
-  'fan gitnexus_query across every attached repo.',
+  'fan gitnexus_query across every attached repo. codebase_context is',
+  'required on every reply.',
 ].join('\n')
 
 const investigateCodebaseTemplate = [
@@ -317,10 +320,12 @@ const investigateCodebaseTemplate = [
   '',
   'Starting anchor: {{start}}',
   '',
-  'Return an `investigate_codebase` answer: a `trace` array of hops',
-  '({ repo, path, symbol?, why }) walking from the start anchor toward',
-  'the goal. Use gitnexus_cypher on the start, then gitnexus_query for',
-  'each hop. Include a `mermaid` graph only when the trace is >= 3 hops.',
+  'Return an `investigate_codebase` answer: summary, codebase_context,',
+  'and a `trace` array of hops ({ repo, path, symbol?, why }) walking',
+  'from the start anchor toward the goal. Use gitnexus_cypher on the',
+  'start, then gitnexus_query for each hop. Include a `mermaid` graph',
+  'only when the trace is >= 3 hops. codebase_context is required on',
+  'every reply.',
 ].join('\n')
 
 const assessImpactTemplate = [
@@ -330,11 +335,13 @@ const assessImpactTemplate = [
   '',
   'Proposed change: {{proposed_change}}',
   '',
-  'Return an `assess_impact` answer: blast_radius array of',
+  'Return an `assess_impact` answer: summary, codebase_context, and a',
+  'blast_radius array of',
   '{ repo, path, kind: "direct" | "transitive", reason }.',
   'Use gitnexus_impact on each entry of files/symbols/package.',
   'Combine with repo_edges for cross-repo expansion. Stop at depth 2',
-  'unless the user asked for more.',
+  'unless the user asked for more. codebase_context is required on',
+  'every reply.',
 ].join('\n')
 
 const listReposTemplate = [

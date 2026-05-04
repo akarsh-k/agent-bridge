@@ -36,7 +36,7 @@ import { readFile } from 'node:fs/promises'
  * `system-skill.md`. The BuiltAgent cache uses string equality, not
  * semver-aware compare. any change forces a rebuild.
  */
-export const CODING_AGENT_SYSTEM_SKILL_VERSION = '0.9.1' as const
+export const CODING_AGENT_SYSTEM_SKILL_VERSION = '0.16.3' as const
 
 /**
  * Heading marker used by `composeInstructions` to detect operator

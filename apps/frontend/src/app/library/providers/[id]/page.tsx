@@ -11,7 +11,7 @@ import { navigate } from '../../../../lib/router'
 import { Button } from '../../../../ui/button'
 import { Pill } from '../../../../ui/pill'
 import { Dropdown, type DropdownOption } from '../../../../ui/dropdown'
-import { ApiError, refreshLlmProviderModels, testLlmProvider } from '../../../../lib/rpc'
+import { ApiError, refreshLlmProviderModels } from '../../../../lib/rpc'
 import { toast } from '../../../../ui/toast-store'
 import { confirmDialog } from '../../../../ui/dialog-store'
 import { useDefaultProviderId } from '../../../../lib/use-default-provider'
@@ -74,8 +74,6 @@ export function ProviderDetailPage({ id }: { id: string }) {
   const [apiKey, setApiKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
-  const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<string | null>(null)
   const [modelSearch, setModelSearch] = useState('')
   const { defaultProviderId, setDefaultProviderId } = useDefaultProviderId()
   const tester = useModelTester(provider?.id ?? null)
@@ -117,9 +115,16 @@ export function ProviderDetailPage({ id }: { id: string }) {
         value: defaultModel,
         label: defaultModel,
         monoLabel: true,
-        sub: 'current value (not in catalog)',
+        sub: 'stale — not in current catalog',
       })
     }
+    // Sentinel that maps to empty/null so the operator can clear the
+    // chat default without picking a different model. Mirrors the
+    // embedding-side sentinel a few blocks below.
+    opts.unshift({
+      value: '',
+      label: '(none — no provider-level default)',
+    })
     return opts
   }, [provider, defaultModel])
 
@@ -141,7 +146,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
         value: defaultEmbeddingModel,
         label: defaultEmbeddingModel,
         monoLabel: true,
-        sub: 'current value (not in catalog)',
+        sub: 'stale — not in current catalog',
       })
     }
     // Sentinel that maps to empty/null so the user can disable
@@ -152,6 +157,34 @@ export function ProviderDetailPage({ id }: { id: string }) {
       label: '(none — disable semantic recall)',
     })
     return opts
+  }, [provider, defaultEmbeddingModel])
+
+  // Stale-default detection. The saved default lives in the form
+  // state (`defaultModel` / `defaultEmbeddingModel`); we cross-check
+  // it against the current chat-/embedding-capable cached lists. A
+  // stale default — set to a model the provider no longer advertises
+  // (gemma user with `llama-3.1` still saved) — is silently selectable
+  // in the dropdown, which has bitten us. Surfacing it as a warning
+  // banner above the dropdown lets the operator one-click clear or
+  // re-pick. Whitespace-only values count as "no default", not stale.
+  const chatModelStale = useMemo(() => {
+    if (!provider) return false
+    const v = defaultModel.trim()
+    if (!v) return false
+    const cachedChat = (provider.models?.models ?? []).filter((m) =>
+      isChatCapable(m, provider.kind),
+    )
+    return !cachedChat.includes(v)
+  }, [provider, defaultModel])
+
+  const embeddingModelStale = useMemo(() => {
+    if (!provider) return false
+    const v = defaultEmbeddingModel.trim()
+    if (!v) return false
+    const cachedEmbedding = (provider.models?.models ?? []).filter((m) =>
+      isEmbeddingCapable(m, provider.kind),
+    )
+    return !cachedEmbedding.includes(v)
   }, [provider, defaultEmbeddingModel])
 
   // Group + filter the cached model list. For openai we bucket by family
@@ -349,6 +382,32 @@ export function ProviderDetailPage({ id }: { id: string }) {
       if (res.ok) {
         patchLlmProviderModels(provider.id, res.models)
         toast.success(`Refreshed · ${res.models.models.length} models cached`)
+
+        // Auto-validate the saved defaults against the new catalog. Two
+        // cases worth distinguishing:
+        //  - Default is still present → re-test it. The endpoint may
+        //    have flipped (operator switched llama-server's GGUF) so a
+        //    silent stale-test could deceive; an explicit re-test
+        //    confirms the new endpoint actually serves what we expect.
+        //  - Default is gone from the catalog → don't auto-test (it
+        //    would just fail). The new `chatModelStale` /
+        //    `embeddingModelStale` warnings render automatically based
+        //    on the freshly-patched models list.
+        const newCatalog = res.models.models
+        const chatStillThere =
+          defaultModel.trim() &&
+          newCatalog
+            .filter((m) => isChatCapable(m, provider.kind))
+            .includes(defaultModel.trim())
+        if (chatStillThere) void testModel(defaultModel.trim(), 'chat')
+
+        const embedStillThere =
+          defaultEmbeddingModel.trim() &&
+          newCatalog
+            .filter((m) => isEmbeddingCapable(m, provider.kind))
+            .includes(defaultEmbeddingModel.trim())
+        if (embedStillThere)
+          void testModel(defaultEmbeddingModel.trim(), 'embedding')
       } else {
         toast.error(res.message ?? `Refresh failed (${res.code})`)
       }
@@ -365,32 +424,22 @@ export function ProviderDetailPage({ id }: { id: string }) {
     }
   }
 
-  const test = async () => {
-    setTesting(true)
-    setTestResult(null)
-    try {
-      const res = await testLlmProvider(provider.id, {})
-      setTestResult(
-        res.ok
-          ? `OK · ${res.durationMs}ms${res.model ? ` via ${res.model}` : ''}`
-          : `Failed · ${res.message ?? res.code ?? 'unknown'}`,
-      )
-    } catch (e) {
-      setTestResult(
-        e instanceof ApiError
-          ? e.message
-          : e instanceof Error
-            ? e.message
-            : 'Test failed',
-      )
-    } finally {
-      setTesting(false)
-    }
-  }
-
   // Local alias kept so the existing call sites read naturally.
   // The actual state + side effects live in the hook.
   const testModel = tester.test
+
+  // Header "Test connection" button now routes through the same
+  // per-model tester the dropdown + chip grid use, so the result
+  // is reflected on every surface that displays it instead of
+  // living in a parallel state dict that nothing else can see.
+  // Disabled when the operator hasn't picked a chat default yet —
+  // there's nothing concrete to test.
+  const testCurrentDefault = () => {
+    const m = defaultModel.trim()
+    if (!m) return
+    void testModel(m, 'chat')
+  }
+  const headerTestState = tester.stateOf(defaultModel, 'chat')
 
   const remove = async () => {
     const usingNames = dependentAgents
@@ -486,45 +535,47 @@ export function ProviderDetailPage({ id }: { id: string }) {
               variant="secondary"
               onClick={() => {
                 setDefaultProviderId(null)
-                toast.success('Removed as default')
+                toast.success('No longer pre-selected for new agents')
               }}
+              title="Currently pre-selected when creating a new agent. Click to unset."
             >
-              Default ★
+              ★ Default for new agents
             </Button>
           ) : (
             <Button
               variant="ghost"
               onClick={() => {
                 setDefaultProviderId(provider.id)
-                toast.success(`${provider.label} is now the default`)
+                toast.success(
+                  `${provider.label} will be pre-selected for new agents`,
+                )
               }}
+              title="Pre-select this provider when creating a new agent (browser-local)."
             >
-              Set as default
+              Use as default for new agents
             </Button>
           )}
           <Button variant="secondary" onClick={refresh} disabled={refreshing}>
             {refreshing ? 'Refreshing…' : 'Refresh models'}
           </Button>
-          <Button variant="primary" onClick={test} disabled={testing}>
-            {testing ? 'Testing…' : 'Test connection'}
+          <Button
+            variant="primary"
+            onClick={testCurrentDefault}
+            disabled={!defaultModel.trim() || headerTestState === 'pending'}
+            title={
+              !defaultModel.trim()
+                ? 'Pick a chat default first — there\'s nothing to test against.'
+                : `Send a one-token chat to ${defaultModel} to verify the endpoint.`
+            }
+          >
+            {headerTestState === 'pending' ? 'Testing…' : 'Test connection'}
           </Button>
         </div>
       </div>
 
-      {testResult && (
-        <div
-          className="ab-card ab-card-pad ab-form-section"
-          style={{ display: 'flex', alignItems: 'center', gap: 10 }}
-        >
-          <Pill
-            kind={testResult.startsWith('OK') ? 'success' : 'danger'}
-            dot
-          >
-            {testResult.startsWith('OK') ? 'Test passed' : 'Test failed'}
-          </Pill>
-          <span className="ab-section-sub">{testResult}</span>
-        </div>
-      )}
+      {/* No floating result pill anymore — the per-model status pill in
+          the Defaults section already shows pass/fail for the same
+          model. Single source of truth keeps the surfaces in sync. */}
 
       <div className="ab-card ab-card-pad ab-form-section">
         <div className="ab-section-head">
@@ -608,46 +659,109 @@ export function ProviderDetailPage({ id }: { id: string }) {
 
       <div className="ab-card ab-card-pad ab-form-section">
         <div className="ab-section-head">
-          <div className="ab-section-title">Defaults</div>
+          <div className="ab-section-title">Provider fallbacks</div>
           <div className="ab-section-sub">
-            Used when an agent picks this provider but doesn't override the
-            model.
+            Per-provider defaults. Each agent picks its own chat model in
+            the agent builder; these only apply when an agent attaches
+            this provider without overriding. The embedding choice is
+            always provider-level — agents inherit it.
           </div>
         </div>
         <div className="ab-field-grid">
           <div className="ab-field">
-            <span className="ab-field-label">Default model</span>
+            <div className="ab-field-label-row">
+              <span className="ab-field-label">Default model</span>
+              <button
+                type="button"
+                className="ab-inline-action"
+                onClick={refresh}
+                disabled={refreshing}
+                title="Re-fetch /v1/models from this provider's endpoint."
+              >
+                {refreshing ? 'Refreshing…' : '↻ Refresh models'}
+              </button>
+            </div>
+            {chatModelStale && (
+              <div className="ab-stale-warning" role="alert">
+                <span>
+                  ⚠ Saved default <code className="ab-mono">{defaultModel}</code>{' '}
+                  isn't in the current catalog. The endpoint may be running a
+                  different model than when this default was set.
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDefaultModel('')}
+                  disabled={busy}
+                >
+                  Clear
+                </Button>
+              </div>
+            )}
             <Dropdown
-              value={defaultModel || null}
+              value={defaultModel || ''}
               onChange={(v) => {
                 setDefaultModel(v ?? '')
-                // Auto-test on user change so the operator sees
-                // pass/fail right next to the dropdown — saves a trip
-                // down to the chip grid. Reuses the same test state
-                // dict, so the chip below this field reflects the
-                // same result. Skip when the value is empty (cleared).
                 if (v) void testModel(v, 'chat')
               }}
               options={chatModelOpts}
               placeholder={
-                chatModelOpts.length === 0
-                  ? 'Refresh models to populate'
+                chatModelOpts.length <= 1
+                  ? 'No models cached — click Refresh ↻'
                   : 'Pick a chat model'
               }
               disabled={chatModelOpts.length === 0}
             />
             <ModelTestStatus
               model={defaultModel}
-              state={tester.stateOf(defaultModel)}
-              message={tester.messageOf(defaultModel)}
+              state={tester.stateOf(defaultModel, 'chat')}
+              message={tester.messageOf(defaultModel, 'chat')}
             />
             <span className="ab-field-help">
               Used as the chat model for any agent on this provider that
               doesn't override it.
+              {provider.models?.fetchedAt && (
+                <>
+                  {' '}
+                  <span
+                    title={new Date(provider.models.fetchedAt).toLocaleString()}
+                  >
+                    Catalog refreshed {timeAgo(provider.models.fetchedAt)}.
+                  </span>
+                </>
+              )}
             </span>
           </div>
           <div className="ab-field">
-            <span className="ab-field-label">Default embedding model</span>
+            <div className="ab-field-label-row">
+              <span className="ab-field-label">Default embedding model</span>
+              <button
+                type="button"
+                className="ab-inline-action"
+                onClick={refresh}
+                disabled={refreshing}
+              >
+                {refreshing ? 'Refreshing…' : '↻ Refresh models'}
+              </button>
+            </div>
+            {embeddingModelStale && (
+              <div className="ab-stale-warning" role="alert">
+                <span>
+                  ⚠ Saved embedding default{' '}
+                  <code className="ab-mono">{defaultEmbeddingModel}</code> isn't
+                  in the current catalog. Stored vectors using this model are
+                  still readable, but new embeddings will fail.
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setDefaultEmbeddingModel('')}
+                  disabled={busy}
+                >
+                  Clear
+                </Button>
+              </div>
+            )}
             <Dropdown
               value={defaultEmbeddingModel || ''}
               onChange={(v) => {
@@ -659,8 +773,8 @@ export function ProviderDetailPage({ id }: { id: string }) {
             />
             <ModelTestStatus
               model={defaultEmbeddingModel}
-              state={tester.stateOf(defaultEmbeddingModel)}
-              message={tester.messageOf(defaultEmbeddingModel)}
+              state={tester.stateOf(defaultEmbeddingModel, 'embedding')}
+              message={tester.messageOf(defaultEmbeddingModel, 'embedding')}
             />
             <span className="ab-field-help">
               Powers semantic-recall memory. Pick (none) to disable
@@ -780,16 +894,39 @@ export function ProviderDetailPage({ id }: { id: string }) {
                             )
                           }
 
-                          const state = tester.stateOf(m)
-                          const msg = tester.messageOf(m)
+                          const capability: 'chat' | 'embedding' =
+                            groupName === 'Embeddings' ? 'embedding' : 'chat'
+                          const state = tester.stateOf(m, capability)
+                          const msg = tester.messageOf(m, capability)
                           const stateClass =
                             state === 'ok'
                               ? ' is-passed'
                               : state === 'error'
                                 ? ' is-failed'
                                 : ''
-                          const capability =
-                            groupName === 'Embeddings' ? 'embedding' : 'chat'
+                          // Per-chip "Set as default" affordance. Skipped
+                          // for chips that already match the relevant
+                          // default; otherwise renders a span-role-button
+                          // that promotes the chip to the appropriate
+                          // default with stopPropagation so the outer
+                          // chip's test-on-click doesn't also fire.
+                          const promoteEmbed =
+                            capability === 'embedding' && !isEmbedDefault
+                          const promoteChat =
+                            capability === 'chat' && !isDefault
+                          const promote = promoteChat
+                            ? {
+                                glyph: '★',
+                                title: `Make ${m} the default chat model`,
+                                handler: () => setDefaultModel(m),
+                              }
+                            : promoteEmbed
+                              ? {
+                                  glyph: '✶',
+                                  title: `Make ${m} the default embedding model`,
+                                  handler: () => setDefaultEmbeddingModel(m),
+                                }
+                              : null
                           return (
                             <button
                               key={m}
@@ -835,6 +972,29 @@ export function ProviderDetailPage({ id }: { id: string }) {
                               {isEmbedDefault && (
                                 <span className="ab-model-chip-default-badge">
                                   embed default
+                                </span>
+                              )}
+                              {promote && (
+                                <span
+                                  role="button"
+                                  tabIndex={0}
+                                  className="ab-model-chip-promote"
+                                  title={promote.title}
+                                  aria-label={promote.title}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    e.preventDefault()
+                                    promote.handler()
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') {
+                                      e.preventDefault()
+                                      e.stopPropagation()
+                                      promote.handler()
+                                    }
+                                  }}
+                                >
+                                  {promote.glyph}
                                 </span>
                               )}
                             </button>

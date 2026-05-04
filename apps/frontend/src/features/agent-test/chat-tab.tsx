@@ -530,19 +530,23 @@ function MessageRow({
               {tc.status === 'pending' && ' · running…'}
               {tc.status === 'error' && ' · error'}
             </div>
-            <div style={{ whiteSpace: 'pre-wrap' }}>
-              {compactJson(tc.input)}
-              {tc.output !== undefined && (
-                <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
-                  {compactJson(tc.output)}
-                </div>
-              )}
-              {tc.error && (
-                <div style={{ marginTop: 6, color: 'var(--danger)' }}>
-                  {tc.error}
-                </div>
-              )}
-            </div>
+            <JsonBlock value={tc.input} />
+            {tc.output !== undefined && (
+              <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
+                <JsonBlock value={tc.output} />
+              </div>
+            )}
+            {tc.error && (
+              <div
+                style={{
+                  marginTop: 6,
+                  color: 'var(--danger)',
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                {tc.error}
+              </div>
+            )}
           </div>
         ))}
         {msg.text &&
@@ -557,12 +561,7 @@ function MessageRow({
               )}
             </div>
           ) : (
-            <div className="ab-msg-bubble ab-msg-bubble-md">
-              <Markdown source={msg.text} />
-              {msg.status === 'streaming' && (
-                <span style={{ opacity: 0.5 }}> ▍</span>
-              )}
-            </div>
+            <AssistantBubble msg={msg} />
           ))}
         {msg.role === 'assistant' &&
           msg.status === 'streaming' &&
@@ -688,14 +687,80 @@ function formatTime(ts: number): string {
   })
 }
 
-function compactJson(v: unknown): string {
-  try {
-    const s = JSON.stringify(v)
-    if (!s) return ''
-    return s.length > 240 ? s.slice(0, 237) + '…' : s
-  } catch {
-    return String(v)
+/** Pretty-print a JS value as indented JSON. Long values collapse to a
+ *  preview with a "Show all" toggle. Returns nothing when the value
+ *  serialises to an empty string (undefined / functions / etc.). */
+function JsonBlock({ value }: { value: unknown }) {
+  const text = useMemo(() => {
+    if (value === undefined) return ''
+    try {
+      const s = JSON.stringify(value, null, 2)
+      return typeof s === 'string' ? s : ''
+    } catch {
+      return String(value)
+    }
+  }, [value])
+  const lineCount = text ? text.split('\n').length : 0
+  const isLong = lineCount > JSON_BLOCK_PREVIEW_LINES + 2
+  const [open, setOpen] = useState(false)
+  if (!text) return null
+  if (!isLong) {
+    return <pre className="ab-msg-json">{text}</pre>
   }
+  const visible = open
+    ? text
+    : text.split('\n').slice(0, JSON_BLOCK_PREVIEW_LINES).join('\n') + '\n…'
+  return (
+    <div className="ab-msg-json-collapse">
+      <pre className="ab-msg-json">{visible}</pre>
+      <button
+        type="button"
+        className="ab-msg-json-toggle"
+        onClick={() => setOpen((o) => !o)}
+      >
+        {open ? 'Show less' : `Show all (${lineCount} lines)`}
+      </button>
+    </div>
+  )
+}
+
+const JSON_BLOCK_PREVIEW_LINES = 12
+
+/** True when the entire trimmed string parses to a JSON object/array.
+ *  Used to detect when an assistant message is a JSON-only payload
+ *  (e.g. coding-agent toolkit output) so we render it as a code block
+ *  instead of feeding it to the markdown renderer. */
+function tryParseJson(text: string): unknown {
+  const t = text.trim()
+  if (!t.startsWith('{') && !t.startsWith('[')) return undefined
+  try {
+    const v = JSON.parse(t)
+    return typeof v === 'object' && v !== null ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function AssistantBubble({ msg }: { msg: ChatMessage }) {
+  // Only treat the message as JSON once streaming has finished;
+  // partial JSON tokens won't parse cleanly mid-stream.
+  const jsonValue =
+    msg.status === 'streaming' ? undefined : tryParseJson(msg.text)
+  if (jsonValue !== undefined) {
+    return (
+      <div className="ab-msg-bubble">
+        <JsonBlock value={jsonValue} />
+      </div>
+    )
+  }
+  return (
+    <div className="ab-msg-bubble ab-msg-bubble-md">
+      <Markdown source={msg.text} />
+      {msg.status === 'streaming' && (
+        <span style={{ opacity: 0.5 }}> ▍</span>
+      )}
+    </div>
+  )
 }
 
 function ThreadRail({

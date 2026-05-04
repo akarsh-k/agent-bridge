@@ -47,7 +47,9 @@ import {
   assertExpectedGitnexusVersion,
   EXPECTED_GITNEXUS_VERSION,
 } from '@agent-bridge/shared/gitnexus'
+import { repoDirName } from '@agent-bridge/shared/paths'
 import { buildSandboxedEnv } from '@agent-bridge/shared/spawn'
+import { normalizeRemoteUrl } from '../coding-agent/url-normalize.js'
 import { MCPClient } from '@mastra/mcp'
 import type { Tool } from '@mastra/core/tools'
 import { and, eq } from 'drizzle-orm'
@@ -216,9 +218,30 @@ export async function mountGitnexusMcp(
     )
   }
 
+  // Ask gitnexus what it has actually got registered. The `name` it
+  // returns for each entry is what `resolveRepo` matches against —
+  // could be the bridge's `--name <slug>` (when this repo was indexed
+  // through the worker job) or the URL-tail (when the operator ran
+  // `gitnexus analyze` themselves on a manual clone, no `--name`). We
+  // can only translate the LLM's label arg to whatever string is
+  // actually keyed in gitnexus's registry, so we read it live rather
+  // than assume. Failures fall back to the slug guess so a flaky
+  // gitnexus call doesn't take agent startup down with it.
+  const liveEntries = await fetchGitnexusList(tools, log)
+  const enriched = enrichWithCanonicalName(readyRepos, liveEntries)
+
+  // Translate friendly labels / aliases the LLM passes into the canonical
+  // gitnexus registry name before forwarding to the subprocess. Without
+  // this, an operator's role label like "payment repo" reaches gitnexus,
+  // which knows the same repo as `react-stripe-js` (or
+  // `stripe__react-stripe-js__master__<shortId>`, depending on how it
+  // was registered) and rejects with "Repository not found". See
+  // `wrapToolsWithRepoArgRewriter` below.
+  const wrappedTools = wrapToolsWithRepoArgRewriter(tools, enriched)
+
   return {
     client,
-    tools,
+    tools: wrappedTools,
     meta: {
       mounted: true,
       repoCount: readyRepos.length,
@@ -245,6 +268,16 @@ interface ReadyRepo {
   readonly description?: string
   /** Empty until P5 wires `agent_repos.aliases jsonb`. */
   readonly aliases: readonly string[]
+  /**
+   * The exact registry name `gitnexus analyze --name <slug>` was invoked
+   * with at index time — `<owner>__<repo>__<branch>__<shortId>`. This is
+   * what gitnexus's `resolveRepo` matches by (name, case-insensitive),
+   * so it's the only string the LLM's `repo: …` arg can be safely
+   * rewritten to. Computed via `repoDirName` so the worker job and the
+   * MCP wrapper stay in lockstep — if we ever change the slug rules,
+   * one helper changes and both sides follow.
+   */
+  readonly canonicalName: string
 }
 
 /**
@@ -277,15 +310,303 @@ async function loadReadyRepos(
 
   return rows.map((r) => {
     const desc = r.description?.trim()
+    // canonicalName is left at the slug guess here. The mount-time
+    // `enrichWithCanonicalName` step replaces it with whatever
+    // gitnexus_list_repos actually reports for this remoteUrl, when
+    // available. The slug remains as a fallback for repos that aren't
+    // in gitnexus's registry yet (or whose live lookup failed).
     return {
       repoId: r.repoId,
       remoteUrl: r.remoteUrl,
       branch: r.branch,
       label: r.role?.trim() || guessLabelFromUrl(r.remoteUrl),
       aliases: r.aliases ?? [],
+      canonicalName: repoDirName({
+        id: r.repoId,
+        remoteUrl: r.remoteUrl,
+        branch: r.branch,
+      }),
       ...(desc ? { description: desc } : {}),
     }
   })
+}
+
+interface GitnexusListEntry {
+  readonly name: string
+  readonly remoteUrl?: string
+  readonly path?: string
+}
+
+/**
+ * Call `gitnexus_list_repos` once at mount time to learn what gitnexus
+ * has *actually* registered. We need the live name string to translate
+ * the LLM's label arg into something `resolveRepo` will match — bridge-
+ * indexed repos are keyed by the `--name <slug>` we passed to
+ * `analyze`, but operator-indexed repos (manual `gitnexus analyze`)
+ * are keyed by the URL-tail. Only the live registry knows which.
+ *
+ * Best-effort: any failure (tool missing, parse error, subprocess hiccup)
+ * returns an empty list and we fall back to the slug guess. Don't take
+ * agent startup down for a hint that's only used to improve grounding.
+ */
+async function fetchGitnexusList(
+  tools: Record<string, Tool<any, any, any, any>>,
+  log: ((line: string) => void) | undefined,
+): Promise<GitnexusListEntry[]> {
+  const tool = tools['gitnexus_list_repos']
+  if (!tool || !tool.execute) return []
+  try {
+    const raw = await tool.execute({} as never, {} as never)
+    return parseGitnexusList(raw)
+  } catch (err) {
+    const msg = `[gitnexus-mcp] gitnexus_list_repos pre-fetch failed; using slug fallback for repo arg rewriting: ${errMsg(err)}`
+    if (log) log(msg)
+    else console.warn(msg)
+    return []
+  }
+}
+
+/**
+ * Pull `[{ name, remoteUrl?, path? }]` out of whatever shape gitnexus
+ * returned. Mastra's MCP wrapper either hands us the structuredContent
+ * directly (an array, ideally) or the full CallToolResult envelope
+ * (`{ content: [{ type: 'text', text: '<json>' }] }`) when there's no
+ * structured shape. We accept both, plus a `{ repos: [...] }` wrapper
+ * for forward-compat. Anything we can't recognise comes back as `[]`.
+ */
+function parseGitnexusList(raw: unknown): GitnexusListEntry[] {
+  const candidates: unknown[] = []
+  const collect = (value: unknown): void => {
+    if (Array.isArray(value)) {
+      candidates.push(...value)
+      return
+    }
+    if (!value || typeof value !== 'object') return
+    const obj = value as Record<string, unknown>
+    if (Array.isArray(obj['repos'])) candidates.push(...(obj['repos'] as unknown[]))
+    if (Array.isArray(obj['content'])) {
+      for (const c of obj['content'] as unknown[]) {
+        if (!c || typeof c !== 'object') continue
+        const part = c as Record<string, unknown>
+        if (part['type'] === 'text' && typeof part['text'] === 'string') {
+          const parsed = parseTextPayload(part['text'] as string)
+          if (parsed !== undefined) collect(parsed)
+        }
+      }
+    }
+  }
+  collect(raw)
+
+  const out: GitnexusListEntry[] = []
+  for (const c of candidates) {
+    if (!c || typeof c !== 'object') continue
+    const o = c as Record<string, unknown>
+    const name = typeof o['name'] === 'string' ? o['name'] : null
+    if (!name) continue
+    const remoteUrl =
+      typeof o['remoteUrl'] === 'string' ? o['remoteUrl'] : undefined
+    const repoPath = typeof o['path'] === 'string' ? o['path'] : undefined
+    out.push({
+      name,
+      ...(remoteUrl ? { remoteUrl } : {}),
+      ...(repoPath ? { path: repoPath } : {}),
+    })
+  }
+  return out
+}
+
+/**
+ * Pull JSON out of the `text` part of an MCP `CallToolResult`. Gitnexus's
+ * MCP server (`mcp/server.js:142`) emits `JSON.stringify(result)` then
+ * appends a markdown "next-step hint" (default divider `\n\n---\n**Next:** …`).
+ *
+ * We try three strategies in order, returning the first one that parses:
+ *
+ *   1. Strip on the known divider, parse the prefix.
+ *   2. Parse the full text — covers the case where the hint is dropped
+ *      in a future gitnexus version.
+ *   3. Slice up to the last top-level `]` or `}` and parse that — covers
+ *      the case where the divider format changes (e.g. `---` → `***`).
+ *
+ * On total failure we log a warning instead of swallowing silently, so a
+ * future gitnexus format change shows up in the worker's stderr rather
+ * than as a mysterious slug-fallback regression.
+ */
+function parseTextPayload(text: string): unknown | undefined {
+  const candidates: string[] = []
+
+  const dividerIdx = text.indexOf('\n\n---\n')
+  if (dividerIdx >= 0) candidates.push(text.slice(0, dividerIdx))
+
+  candidates.push(text)
+
+  const lastBracket = Math.max(text.lastIndexOf(']'), text.lastIndexOf('}'))
+  if (lastBracket >= 0 && lastBracket < text.length - 1) {
+    candidates.push(text.slice(0, lastBracket + 1))
+  }
+
+  for (const c of candidates) {
+    const trimmed = c.trim()
+    if (trimmed.length === 0) continue
+    try {
+      return JSON.parse(trimmed)
+    } catch {
+      /* try next strategy */
+    }
+  }
+
+  console.warn(
+    `[gitnexus-mcp] could not parse list_repos text payload ` +
+      `(length=${text.length}, first 80=${JSON.stringify(text.slice(0, 80))}); ` +
+      `falling back to slug-based repo arg rewriting. ` +
+      `Likely gitnexus output format change — re-check the parser strategies.`,
+  )
+  return undefined
+}
+
+/**
+ * Replace each `ReadyRepo`'s slug-guess `canonicalName` with the live
+ * gitnexus name, matched by normalised `remoteUrl`. Repos with no live
+ * match keep the slug — they may have been indexed under that name by
+ * the bridge's worker, or simply not be in gitnexus's registry yet
+ * (in which case the LLM's call will fail with gitnexus's own
+ * "Available: ..." error, which is informative enough).
+ */
+function enrichWithCanonicalName(
+  readyRepos: ReadonlyArray<ReadyRepo>,
+  liveEntries: ReadonlyArray<GitnexusListEntry>,
+): ReadyRepo[] {
+  if (liveEntries.length === 0) return readyRepos.map((r) => ({ ...r }))
+
+  const byNormalisedUrl = new Map<string, GitnexusListEntry>()
+  for (const e of liveEntries) {
+    if (!e.remoteUrl) continue
+    const key = normalizeRemoteUrl(e.remoteUrl)
+    if (!key || byNormalisedUrl.has(key)) continue
+    byNormalisedUrl.set(key, e)
+  }
+
+  return readyRepos.map((r) => {
+    const key = normalizeRemoteUrl(r.remoteUrl)
+    const live = key ? byNormalisedUrl.get(key) : undefined
+    if (!live) return { ...r }
+    return { ...r, canonicalName: live.name }
+  })
+}
+
+/**
+ * Wrap each MCP tool so any `repo` argument the LLM sends gets translated
+ * from a friendly label / alias / URL-tail into the canonical gitnexus
+ * registry name we passed to `gitnexus analyze --name <slug>`.
+ *
+ * The LLM keeps reasoning in the operator's role labels (what shows up
+ * in the system-prompt inventory) while gitnexus only ever sees the
+ * names it has actually indexed. Tools whose input schema doesn't
+ * include a `repo` field pass through unchanged.
+ *
+ * Ambiguous lookup keys (same label spelled across two repos) are
+ * deleted from the map and pass through to gitnexus, which will then
+ * surface its own disambiguation error — better than silently picking
+ * the wrong repo.
+ */
+function wrapToolsWithRepoArgRewriter(
+  tools: Record<string, Tool<any, any, any, any>>,
+  readyRepos: ReadonlyArray<ReadyRepo>,
+): Record<string, Tool<any, any, any, any>> {
+  const rewrite = buildRepoArgRewriter(readyRepos)
+  if (!rewrite) return tools
+  const out: Record<string, Tool<any, any, any, any>> = {}
+  for (const [name, tool] of Object.entries(tools)) {
+    out[name] = wrapToolExecute(tool, rewrite)
+  }
+  return out
+}
+
+/**
+ * Build the label → canonical-name map and return a pure function that
+ * rewrites a tool-call input's `repo` field when it matches. Returns
+ * `null` when there's nothing to rewrite (no repos, or every label is
+ * already canonical), so the caller can short-circuit.
+ */
+function buildRepoArgRewriter(
+  readyRepos: ReadonlyArray<ReadyRepo>,
+): ((input: unknown) => unknown) | null {
+  if (readyRepos.length === 0) return null
+
+  const map = new Map<string, string>()
+  const ambiguous = new Set<string>()
+
+  const claim = (key: string | undefined | null, canonical: string): void => {
+    if (!key) return
+    const k = key.toLowerCase()
+    if (k.length === 0) return
+    if (k === canonical.toLowerCase()) return // already canonical, nothing to do
+    const prior = map.get(k)
+    if (prior && prior !== canonical) {
+      ambiguous.add(k)
+      return
+    }
+    map.set(k, canonical)
+  }
+
+  for (const r of readyRepos) {
+    const canonical = r.canonicalName
+    claim(r.label, canonical)
+    claim(guessLabelFromUrl(r.remoteUrl), canonical)
+    for (const alias of r.aliases) claim(alias, canonical)
+  }
+  for (const k of ambiguous) map.delete(k)
+
+  if (map.size === 0) return null
+
+  return (input: unknown): unknown => {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      return input
+    }
+    const obj = input as Record<string, unknown>
+    // Two shapes Mastra passes execute() args in: the parsed input
+    // directly, or `{ context: <input>, ... }` from the agent runtime.
+    // Try the direct case first; fall back to context.
+    const direct = rewriteRepoField(obj, map)
+    if (direct !== obj) return direct
+    if (obj['context'] && typeof obj['context'] === 'object') {
+      const ctx = obj['context'] as Record<string, unknown>
+      const rewritten = rewriteRepoField(ctx, map)
+      if (rewritten !== ctx) return { ...obj, context: rewritten }
+    }
+    return input
+  }
+}
+
+function rewriteRepoField(
+  obj: Record<string, unknown>,
+  map: ReadonlyMap<string, string>,
+): Record<string, unknown> {
+  const repo = obj['repo']
+  if (typeof repo !== 'string') return obj
+  const canonical = map.get(repo.toLowerCase())
+  if (!canonical) return obj
+  return { ...obj, repo: canonical }
+}
+
+/**
+ * Replace a tool's `execute` with a version that runs `rewrite` over the
+ * input first. Tools without an `execute` (rare, but allowed by the
+ * type) pass through. The wrapped tool keeps every other field
+ * identical so Mastra's downstream wiring (id, schema, requireApproval,
+ * mcpMetadata) is preserved verbatim.
+ */
+function wrapToolExecute(
+  tool: Tool<any, any, any, any>,
+  rewrite: (input: unknown) => unknown,
+): Tool<any, any, any, any> {
+  const original = tool.execute
+  if (!original) return tool
+  return {
+    ...tool,
+    execute: ((input: unknown, context: unknown) =>
+      original(rewrite(input) as never, context as never)) as typeof original,
+  }
 }
 
 /**

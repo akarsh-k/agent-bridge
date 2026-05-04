@@ -10,7 +10,8 @@ import { useWorkspace } from '../../lib/workspace-context'
 import { Dropdown, type DropdownOption } from '../../ui/dropdown'
 import { toast } from '../../ui/toast-store'
 import { confirmDialog } from '../../ui/dialog-store'
-import { ApiError } from '../../lib/rpc'
+import { ApiError, refreshLlmProviderModels } from '../../lib/rpc'
+import { Button } from '../../ui/button'
 import {
   categorizeOpenAIModel,
   isChatCapable,
@@ -22,7 +23,8 @@ import { ContextBudgetCard } from './context-budget-card'
 const LOCAL_KINDS = new Set(['llama_cpp', 'ollama', 'openai_compatible'])
 
 export function BuildTab({ agentId }: { agentId: string }) {
-  const { agents, llmProviders, patchAgent } = useWorkspace()
+  const { agents, llmProviders, patchAgent, patchLlmProviderModels } =
+    useWorkspace()
   const agent = agents.find((a) => a.id === agentId)
 
   // We track the agent id we've reset for; whenever it changes we
@@ -38,6 +40,10 @@ export function BuildTab({ agentId }: { agentId: string }) {
   // next successful save so a follow-up edit doesn't accidentally
   // wipe again.
   const [pendingWipe, setPendingWipe] = useState(false)
+  // In-flight indicator for the inline "Refresh models" button next to
+  // the model dropdown. Lets the operator repopulate the catalog
+  // without leaving the agent-builder.
+  const [refreshingModels, setRefreshingModels] = useState(false)
   // Shared test machinery — owns per-model state + clears the cache
   // when providerId flips so OpenAI test results don't carry into a
   // local-Ollama run after the user switches providers.
@@ -74,60 +80,158 @@ export function BuildTab({ agentId }: { agentId: string }) {
    * doesn't silently kick off the wipe-then-save cascade.
    */
   const handleProviderChange = async (next: string | null) => {
-    if (!agent) {
-      setProviderId(next)
-      return
+    // Compare against the FORM's current value, not the agent's saved
+    // value. Otherwise toggling Provider away from openai (unsaved) and
+    // back to whatever-was-saved short-circuits the auto-pick branch
+    // and leaves a stale `model` in the form.
+    if (next === providerId) return
+
+    // Wipe-vectors confirm only fires when we have a saved agent AND
+    // we're actually moving away from the saved provider's embedding
+    // setup. Going back to whatever's saved is a no-op for vectors —
+    // we'd be returning to the same vector space.
+    if (agent) {
+      const oldSavedId = agent.llmProviderId
+      if (next !== oldSavedId) {
+        const recallEnabled =
+          agent.memoryEnabled &&
+          !!agent.memoryConfig &&
+          !!(agent.memoryConfig as { semanticRecall?: unknown }).semanticRecall
+        const oldEmbed = oldSavedId
+          ? llmProviders.find((p) => p.id === oldSavedId)
+              ?.defaultEmbeddingModel ?? null
+          : null
+        const newEmbed = next
+          ? llmProviders.find((p) => p.id === next)?.defaultEmbeddingModel ??
+            null
+          : null
+        if (recallEnabled && oldEmbed && oldEmbed !== newEmbed) {
+          const ok = await confirmDialog({
+            title: 'Switch provider?',
+            body:
+              `This agent has semantic recall enabled with embedding model ` +
+              `${oldEmbed}. The new provider uses ${newEmbed ?? '(none)'}, ` +
+              `so the agent's stored vectors are about to live in the wrong ` +
+              `vector space — they'd produce irrelevant recall results.\n\n` +
+              `Confirm to switch and wipe this agent's stored vectors. ` +
+              `The agent re-embeds naturally on subsequent conversations. ` +
+              `Working memory and recent-message replay are unaffected.`,
+            confirmLabel: 'Switch and wipe vectors',
+            destructive: true,
+          })
+          if (!ok) return
+          setPendingWipe(true)
+        }
+      }
     }
-    const oldId = agent.llmProviderId
-    if (next === oldId) {
-      setProviderId(next)
-      return
-    }
-    const recallEnabled =
-      agent.memoryEnabled &&
-      !!agent.memoryConfig &&
-      !!(agent.memoryConfig as { semanticRecall?: unknown }).semanticRecall
-    const oldEmbed = oldId
-      ? llmProviders.find((p) => p.id === oldId)?.defaultEmbeddingModel ?? null
-      : null
-    const newEmbed = next
-      ? llmProviders.find((p) => p.id === next)?.defaultEmbeddingModel ?? null
-      : null
-    if (recallEnabled && oldEmbed && oldEmbed !== newEmbed) {
-      const ok = await confirmDialog({
-        title: 'Switch provider?',
-        body:
-          `This agent has semantic recall enabled with embedding model ` +
-          `${oldEmbed}. The new provider uses ${newEmbed ?? '(none)'}, ` +
-          `so the agent's stored vectors are about to live in the wrong ` +
-          `vector space — they'd produce irrelevant recall results.\n\n` +
-          `Confirm to switch and wipe this agent's stored vectors. ` +
-          `The agent re-embeds naturally on subsequent conversations. ` +
-          `Working memory and recent-message replay are unaffected.`,
-        confirmLabel: 'Switch and wipe vectors',
-        destructive: true,
-      })
-      if (!ok) return
-      setPendingWipe(true)
-    }
+
     setProviderId(next)
+
+    // Auto-pick a sensible model for the new provider so the operator
+    // doesn't land in an "old model still selected, not in new catalog"
+    // limbo. Three cases:
+    //  - Provider cleared → also clear the model. Without this, the
+    //    dropdown's "current value (not in catalog)" entry keeps the
+    //    stale string visible.
+    //  - New provider's chat-capable catalog includes the current
+    //    model → keep it. The operator made a deliberate choice and
+    //    it's still valid.
+    //  - New provider's catalog doesn't include the current model →
+    //    fall back to the new provider's `defaultModel` (or null) and
+    //    auto-test so pass/fail surfaces immediately.
+    if (!next) {
+      setModel(null)
+      return
+    }
+    const nextProvider = llmProviders.find((p) => p.id === next)
+    if (!nextProvider) return
+    const newCachedChat = (nextProvider.models?.models ?? []).filter((m) =>
+      isChatCapable(m, nextProvider.kind),
+    )
+    const currentStillValid =
+      model !== null && model.length > 0 && newCachedChat.includes(model)
+    if (currentStillValid) return
+    const fallback = nextProvider.defaultModel?.trim() || null
+    setModel(fallback)
+    // Pass the new provider id explicitly. tester.test's closure
+    // still has the previous providerId at this point (React hasn't
+    // re-rendered yet), so a naive call would race-test the fallback
+    // against the previous provider's endpoint and flip the chip
+    // red. The user then has to click again to get a green that
+    // wasn't actually wrong about the new endpoint.
+    if (fallback) void tester.test(fallback, 'chat', next)
   }
 
-  const isDirty = useMemo(() => {
+  /**
+   * Inline "Refresh models" handler for the model dropdown row. Lifted
+   * from the provider-detail page so the operator can re-pull the
+   * catalog without leaving the agent-builder. Same patch-into-workspace
+   * pattern: on success the dropdown re-renders with the fresh list on
+   * the next tick. Errors surface as toasts; soft failures (no key,
+   * host unreachable) come back as `{ ok: false, code, message }` and
+   * we surface those too — the operator needs to know why their
+   * dropdown is empty.
+   */
+  const refreshModels = async (): Promise<void> => {
+    if (!provider) return
+    setRefreshingModels(true)
+    try {
+      const res = await refreshLlmProviderModels(provider.id)
+      if (res.ok) {
+        patchLlmProviderModels(provider.id, res.models)
+        toast.success(
+          `Refreshed · ${res.models.models.length} model${res.models.models.length === 1 ? '' : 's'} cached`,
+        )
+      } else {
+        toast.error(res.message ?? `Refresh failed (${res.code})`)
+      }
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : 'Refresh failed',
+      )
+    } finally {
+      setRefreshingModels(false)
+    }
+  }
+
+  // Identity fields — auto-saved on the 800ms debounce. Low-stakes
+  // text edits feel snappy this way: type and forget.
+  const isIdentityDirty = useMemo(() => {
     if (!agent) return false
     if (seededFor !== agent.id) return false
     return (
       draft.name !== agent.name ||
       draft.slug !== agent.slug ||
-      draft.systemPrompt !== agent.systemPrompt ||
-      draft.llmProviderId !== agent.llmProviderId ||
-      draft.model !== agent.model
+      draft.systemPrompt !== agent.systemPrompt
     )
-  }, [agent, seededFor, draft])
+  }, [agent, seededFor, draft.name, draft.slug, draft.systemPrompt])
+
+  // Model section — provider, model, and the wipe-vectors flag — are
+  // manual-save only. These have side effects (cost, behavior change,
+  // potential vector wipe) that warrant an explicit Save click rather
+  // than a sneaky 800ms debounce.
+  const isModelDirty = useMemo(() => {
+    if (!agent) return false
+    if (seededFor !== agent.id) return false
+    return (
+      draft.llmProviderId !== agent.llmProviderId ||
+      draft.model !== agent.model ||
+      pendingWipe
+    )
+  }, [agent, seededFor, draft.llmProviderId, draft.model, pendingWipe])
+
+  // In-flight indicator for the manual save (sticky banner + bottom
+  // row). Kept separate from the auto-save state machine so the two
+  // surfaces don't compete for the same status.
+  const [manualSaving, setManualSaving] = useState(false)
 
   useEffect(() => {
     if (!agent) return
-    if (!isDirty) return
+    if (!isIdentityDirty) return
     if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
     let cancelled = false
     autoSaveTimer.current = setTimeout(async () => {
@@ -138,14 +242,16 @@ export function BuildTab({ agentId }: { agentId: string }) {
       }
       setAutoSaveState('saving')
       try {
-        await patchAgent(agent.id, draft)
+        // Only ship identity fields. provider / model / pendingWipe
+        // ride on the explicit Save in the sticky banner.
+        await patchAgent(agent.id, {
+          name: draft.name,
+          slug: draft.slug,
+          systemPrompt: draft.systemPrompt,
+        })
         if (!cancelled) {
           setAutoSaveState('saved')
           setSavedAt(Date.now())
-          // Clear the wipe flag so a subsequent edit doesn't
-          // accidentally re-send it on a save that has nothing to do
-          // with the provider change.
-          setPendingWipe(false)
         }
       } catch (e) {
         if (cancelled) return
@@ -169,7 +275,58 @@ export function BuildTab({ agentId }: { agentId: string }) {
       cancelled = true
       if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
     }
-  }, [agent, isDirty, draft, patchAgent])
+  }, [
+    agent,
+    isIdentityDirty,
+    draft.name,
+    draft.slug,
+    draft.systemPrompt,
+    patchAgent,
+  ])
+
+  /**
+   * Manual save for the Model section. Pushes provider, model, and
+   * the wipe-vectors flag (set when the user confirmed via the
+   * dialog in `handleProviderChange`) in one patch. Does NOT touch
+   * identity fields — those auto-save on their own. After a
+   * successful save the wipe flag is cleared so a follow-up edit
+   * doesn't accidentally re-wipe.
+   */
+  const manualSaveModel = async (): Promise<void> => {
+    if (!agent) return
+    setManualSaving(true)
+    try {
+      await patchAgent(agent.id, {
+        llmProviderId: providerId,
+        model,
+        ...(pendingWipe ? { wipeSemanticVectors: true as const } : {}),
+      })
+      setPendingWipe(false)
+      toast.success('Model saved')
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : 'Save failed',
+      )
+    } finally {
+      setManualSaving(false)
+    }
+  }
+
+  /**
+   * Discard pending Model section changes and revert to whatever's
+   * persisted. Identity edits are left alone — they're already
+   * saved (or about to be on the next debounce tick).
+   */
+  const discardModelChanges = (): void => {
+    if (!agent) return
+    setProviderId(agent.llmProviderId)
+    setModel(agent.model)
+    setPendingWipe(false)
+  }
 
   if (agent && seededFor !== agent.id) {
     setSeededFor(agent.id)
@@ -237,6 +394,32 @@ export function BuildTab({ agentId }: { agentId: string }) {
 
   return (
     <div>
+      {isModelDirty && (
+        <div className="ab-save-bar">
+          <span className="ab-save-bar-status">
+            <span className="ab-pulse-dot" aria-hidden />
+            Unsaved model changes
+          </span>
+          <div className="ab-save-bar-actions">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={discardModelChanges}
+              disabled={manualSaving}
+            >
+              Discard
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => void manualSaveModel()}
+              disabled={manualSaving}
+            >
+              {manualSaving ? 'Saving…' : 'Save changes'}
+            </Button>
+          </div>
+        </div>
+      )}
       {/* Identity */}
       <div className="ab-card ab-card-pad ab-form-section">
         <div className="ab-section-head">
@@ -320,10 +503,10 @@ export function BuildTab({ agentId }: { agentId: string }) {
               Auto-save failed
             </span>
           )}
-          {autoSaveState === 'idle' && !isDirty && savedAt !== null && (
+          {autoSaveState === 'idle' && !isIdentityDirty && savedAt !== null && (
             <SavedAgo since={savedAt} />
           )}
-          {autoSaveState === 'idle' && !isDirty && savedAt === null && (
+          {autoSaveState === 'idle' && !isIdentityDirty && savedAt === null && (
             <span>All changes saved.</span>
           )}
         </div>
@@ -353,7 +536,20 @@ export function BuildTab({ agentId }: { agentId: string }) {
             />
           </div>
           <div className="ab-field">
-            <span className="ab-field-label">Model</span>
+            <div className="ab-field-label-row">
+              <span className="ab-field-label">Model</span>
+              {provider && (
+                <button
+                  type="button"
+                  className="ab-inline-action"
+                  onClick={() => void refreshModels()}
+                  disabled={refreshingModels}
+                  title="Re-fetch /v1/models from this provider"
+                >
+                  {refreshingModels ? 'Refreshing…' : '↻ Refresh models'}
+                </button>
+              )}
+            </div>
             <Dropdown
               value={model}
               onChange={(v) => {
@@ -365,7 +561,13 @@ export function BuildTab({ agentId }: { agentId: string }) {
                 if (v) void tester.test(v)
               }}
               options={modelOpts}
-              placeholder={providerId ? 'Pick a model' : 'Pick a provider first'}
+              placeholder={
+                !providerId
+                  ? 'Pick a provider first'
+                  : modelOpts.length === 0
+                    ? 'No models cached — click Refresh ↻'
+                    : 'Pick a model'
+              }
               disabled={!providerId || modelOpts.length === 0}
             />
             <ModelTestStatus
@@ -373,8 +575,48 @@ export function BuildTab({ agentId }: { agentId: string }) {
               state={tester.stateOf(model)}
               message={tester.messageOf(model)}
             />
+            {provider?.models?.fetchedAt && (
+              <span
+                className="ab-field-help"
+                title={new Date(provider.models.fetchedAt).toLocaleString()}
+              >
+                Catalog refreshed {timeAgoShort(provider.models.fetchedAt)}.
+              </span>
+            )}
           </div>
         </div>
+        {/* Bottom save row for users who scroll-and-commit. Mirrors the
+            sticky banner above; both call the same handlers. Hidden
+            when there's nothing to save so the section doesn't carry
+            a permanently-visible disabled button. */}
+        {isModelDirty && (
+          <div
+            style={{
+              marginTop: 14,
+              display: 'flex',
+              gap: 8,
+              justifyContent: 'flex-end',
+              alignItems: 'center',
+            }}
+          >
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={discardModelChanges}
+              disabled={manualSaving}
+            >
+              Discard
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => void manualSaveModel()}
+              disabled={manualSaving}
+            >
+              {manualSaving ? 'Saving…' : 'Save changes'}
+            </Button>
+          </div>
+        )}
       </div>
 
       <ContextBudgetCard agentId={agentId} />
@@ -382,6 +624,15 @@ export function BuildTab({ agentId }: { agentId: string }) {
   )
 }
 
+
+function timeAgoShort(iso: string): string {
+  const ms = Date.now() - Date.parse(iso)
+  if (Number.isNaN(ms)) return ''
+  if (ms < 60_000) return 'just now'
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`
+  return `${Math.floor(ms / 86_400_000)}d ago`
+}
 
 function SavedAgo({ since }: { since: number }) {
   // Tick once a second so the relative timestamp stays fresh while

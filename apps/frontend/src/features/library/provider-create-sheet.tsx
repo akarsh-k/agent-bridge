@@ -15,7 +15,7 @@ import { Sheet } from '../../ui/sheet'
 import { Dropdown, type DropdownOption } from '../../ui/dropdown'
 import { useWorkspace } from '../../lib/workspace-context'
 import { toast } from '../../ui/toast-store'
-import { ApiError } from '../../lib/rpc'
+import { ApiError, refreshLlmProviderModels } from '../../lib/rpc'
 import { useDirtyClose } from '../../lib/use-dirty-close'
 
 const LOCAL_KINDS: ReadonlyArray<LlmProviderKind> = [
@@ -33,7 +33,7 @@ const KIND_LABEL: Record<LlmProviderKind, string> = {
 }
 
 function ProviderCreateForm({ onClose }: { onClose: () => void }) {
-  const { createLlmProvider } = useWorkspace()
+  const { createLlmProvider, patchLlmProviderModels } = useWorkspace()
   const [label, setLabel] = useState('')
   const [kind, setKind] = useState<LlmProviderKind>('openai')
   const [baseUrl, setBaseUrl] = useState('')
@@ -77,9 +77,32 @@ function ProviderCreateForm({ onClose }: { onClose: () => void }) {
     }
     setBusy(true)
     try {
-      await createLlmProvider(parsed.data)
+      const created = await createLlmProvider(parsed.data)
       toast.success(`Provider “${label.trim()}” added`)
       onClose()
+      // Kick off model refresh in the background. Don't block the close
+      // — the user has moved on; we just want the cache populated by the
+      // time they pick this provider in agent-builder. Local providers
+      // without a key are still worth probing (no auth needed for
+      // ollama / llama.cpp /v1/models). Errors only surface as toasts.
+      void (async () => {
+        try {
+          const res = await refreshLlmProviderModels(created.id)
+          if (res.ok) {
+            patchLlmProviderModels(created.id, res.models)
+            toast.success(
+              `${created.label} · ${res.models.models.length} model${res.models.models.length === 1 ? '' : 's'} cached`,
+            )
+          } else {
+            // Soft failures (no key, host unreachable) — silent here so
+            // we don't double-toast on a brand-new local provider that
+            // the user hasn't started yet. The provider detail page
+            // surfaces the same error explicitly when they get there.
+          }
+        } catch {
+          /* network hiccup; provider detail page can retry */
+        }
+      })()
     } catch (e) {
       const msg =
         e instanceof ApiError
@@ -167,7 +190,8 @@ function ProviderCreateForm({ onClose }: { onClose: () => void }) {
           placeholder="claude-opus-4-7"
         />
         <span className="ab-field-help">
-          We refresh the full model list after creation.
+          Optional. The full model list refreshes automatically after
+          creation; this just pre-fills the agent-builder dropdown.
         </span>
       </div>
       {err && (

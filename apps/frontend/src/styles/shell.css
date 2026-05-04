@@ -1084,10 +1084,68 @@
   font-weight: 500;
   color: var(--text-dim);
 }
+/* Row that wraps an `.ab-field-label` plus an inline action button
+ * (e.g. "↻ Refresh models"). Baseline-aligned so the action sits on
+ * the same text baseline as the label, and the row height is driven
+ * by the label, not the action. Without this, a Button-component
+ * action grew the row to ~32px while sibling fields without an
+ * action stayed at label height (~18px), leaving dropdowns
+ * vertically misaligned in the same field-grid row. */
+.ab-field-label-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ab-inline-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent-300);
+  cursor: pointer;
+  line-height: 1;
+}
+.ab-inline-action:hover:not(:disabled) {
+  text-decoration: underline;
+}
+.ab-inline-action:disabled {
+  color: var(--text-muted);
+  cursor: default;
+}
+[data-theme='light'] .ab-inline-action {
+  color: var(--accent-500);
+}
 .ab-field-help {
   font-size: 12px;
   color: var(--text-muted);
   line-height: 1.5;
+}
+/* Stale-default banner shown above a Provider fallback dropdown when
+ * the saved value is no longer present in the live catalog. Same warn
+ * tint used by other "needs attention" pills, but with the inline
+ * Clear button we want to surface here. */
+.ab-stale-warning {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  background: var(--warn-bg);
+  border: 1px solid rgba(217, 119, 6, 0.28);
+  border-radius: var(--radius);
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.45;
+}
+.ab-stale-warning > span {
+  flex: 1;
+  min-width: 0;
 }
 .ab-input,
 .ab-textarea {
@@ -1835,6 +1893,36 @@ button.ab-list-row {
   padding: 1px 5px;
   border-radius: var(--radius-xs);
   background: var(--accent-bg);
+}
+/* Per-chip "Set as default" affordance. Hidden by default; revealed
+ * on chip hover / focus-within so resting chips look uncluttered.
+ * Acts as a button (role + onClick handlers in the JSX) — not a real
+ * <button> because it lives inside a <button> and HTML disallows
+ * nested interactive widgets; the role+tabIndex make it accessible
+ * enough for this scope. */
+.ab-model-chip-promote {
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 5px;
+  margin-left: -2px;
+  border-radius: var(--radius-xs);
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+.ab-model-chip:hover .ab-model-chip-promote,
+.ab-model-chip:focus-within .ab-model-chip-promote,
+.ab-model-chip-promote:focus-visible {
+  opacity: 1;
+}
+.ab-model-chip-promote:hover {
+  color: var(--accent-300);
+  background: var(--accent-bg);
+}
+[data-theme='light'] .ab-model-chip-promote:hover {
+  color: var(--accent-500);
 }
 
 /* Back-to-list link that sits ABOVE the detail header on every
@@ -2657,6 +2745,44 @@ button.ab-list-row {
 .ab-msg-tool-head svg {
   width: 12px;
   height: 12px;
+}
+/* Pretty-printed JSON blocks for tool inputs / outputs and JSON-only
+ * assistant messages. Inherits font + color from its container
+ * (.ab-msg-tool gives mono + dim; .ab-msg-bubble gives normal); we
+ * just add whitespace + wrap rules. */
+.ab-msg-json {
+  margin: 0;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.ab-msg-bubble .ab-msg-json {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.ab-msg-json-collapse {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+.ab-msg-json-toggle {
+  background: transparent;
+  border: none;
+  font: inherit;
+  font-size: 11px;
+  color: var(--accent-300);
+  padding: 0;
+  cursor: pointer;
+}
+.ab-msg-json-toggle:hover {
+  text-decoration: underline;
+}
+[data-theme='light'] .ab-msg-json-toggle {
+  color: var(--accent-500);
 }
 /* Floating composer — sticky to the bottom of the chat thread with
  * a soft fade gradient that lets messages above feather under.

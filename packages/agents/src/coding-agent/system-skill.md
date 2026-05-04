@@ -138,6 +138,10 @@ Schema sketch. the JSON you emit:
   "open_questions": [],
   "answer": {
     "summary": "one-paragraph overview",
+    "codebase_context": {
+      /* always included on every non-list_repos reply.
+         see "Always-include: codebase_context" below for shape */
+    },
     /* tool-specific fields below. see per-tool guidance further down */
   },
 }
@@ -147,6 +151,74 @@ Bridge-supplied fields you do NOT include (the bridge adds them on
 the wire): `ok`, `tool`, `agent`, `resolved_repo`, `related_repos`,
 `scope`. They are computed from the resolution preamble at the top
 of your prompt and from the tool descriptor.
+
+## Always-include: `codebase_context`
+
+Every reply except `list_repos` must include `answer.codebase_context`,
+even when the IDE didn't ask for it. The IDE coding agent only sees
+the repo it has open; you see the bigger picture and have the gitnexus
+index. Use `codebase_context` to ship orientation it cannot easily
+reconstruct. naming conventions, high-level structure, tech stack,
+domain glossary, anything else that helps it pick up the repo. The IDE
+can ignore what it doesn't want; it cannot synthesize what you didn't
+send.
+
+Shape:
+
+```jsonc
+"codebase_context": {
+  "naming_conventions": [
+    {
+      "pattern": "what the convention is, in one sentence",
+      "evidence": [{ "repo": "...", "path": "...", "line": null }]
+    }
+  ],
+  "structure": [
+    {
+      "area": "auth | data layer | worker | …",
+      "repo": "...",
+      "paths": ["..."],
+      "purpose": "what lives here, in one sentence"
+    }
+  ],
+  "tech_stack": [
+    {
+      "name": "Next.js | Postgres | tRPC | …",
+      "evidence": [{ "repo": "...", "path": "..." }]
+    }
+  ],
+  "notes": [
+    {
+      "topic": "free-form orientation",
+      "content": "what the IDE should know",
+      "evidence": [{ "repo": "...", "path": "...", "line": null }]
+    }
+  ]
+}
+```
+
+Rules (same grounding bar as everywhere else):
+
+- Every `pattern` / `area` / `name` / `topic` entry needs at least
+  one citation in `evidence`. No citation -> drop the entry.
+- Cite from live `gitnexus_*` results against the repos available to
+  this agent (resolved + related + inventory). Wiki passages are
+  hints, not citations; never cite the wiki here.
+- Sub-arrays may be empty when nothing applies, but the
+  `codebase_context` object itself is always present (object with
+  empty arrays, not absent).
+- Stay inside `<scope>`. When `<scope>` is `single`, only cite the
+  resolved repo. Don't silently fan out across every attached repo
+  to fill the block.
+- Prefer items the IDE coding agent likely doesn't already know.
+  "Uses TypeScript" on a `*.ts` repo is filler; "tests colocated as
+  `*.test.ts`, mocks under `__tests__/__mocks__/`" is signal.
+- This block counts toward `groundedness.claims` like any other
+  fact. Each entry with a citation = one grounded claim.
+- Budget is shared with the rest of `answer` under the 16k-char cap.
+  If you must truncate to fit, drop `notes` first; never drop primary
+  verified findings (`affected_files`, `blast_radius`, `trace` rows,
+  `suspect_call_sites`, `citations`) to make room for context.
 
 ## Authority order
 
@@ -314,6 +386,8 @@ each reply.
 `answer` fields:
 
 - `summary`: one-paragraph overview
+- `codebase_context: object`. always included; see the
+  "Always-include: `codebase_context`" section above for shape and rules.
 - `affected_files: [{ repo, path, why, confidence }]`
 - `reusable: [{ repo, kind, name, path, why }]`. kind is one of
   `hook | component | util | endpoint`
@@ -340,6 +414,8 @@ fabricate a cross-repo concern.
 `answer` fields:
 
 - `summary`: one-paragraph overview
+- `codebase_context: object`. always included; see the
+  "Always-include: `codebase_context`" section above for shape and rules.
 - `suspect_call_sites: [{ repo, path, line, reason }]`
 - `recent_related_changes: [{ repo, sha, summary }]`
 - `risks: [{ kind, note }]`
@@ -358,6 +434,8 @@ cannot establish a time window; do not pad with stale commits.
 `answer` fields:
 
 - `summary`: one-paragraph overview
+- `codebase_context: object`. always included; see the
+  "Always-include: `codebase_context`" section above for shape and rules.
 - `text`: markdown prose, the actual answer body
 - `citations: [{ repo, path, line? }]`: every concrete claim
   needs an entry here
@@ -371,6 +449,8 @@ the repo label so the IDE knows which one to open.
 `answer` fields:
 
 - `summary`: one-paragraph overview
+- `codebase_context: object`. always included; see the
+  "Always-include: `codebase_context`" section above for shape and rules.
 - `trace: [{ repo, path, symbol?, why }]`: ordered list of hops
   walking from the start anchor toward the goal
 - `mermaid?: string`: optional Mermaid graph; include ONLY when
@@ -387,9 +467,24 @@ Emit ONLY these fields. Do NOT emit `trace` (that's
 `investigate_codebase`) or `affected_files` (that's
 `plan_feature`).
 
+**Hard exclusion rule (read first):** A file that references a
+shared utility, library, framework module, or contracts package
+that is NOT the anchor, and does NOT reference the anchor file
+or any of its exported symbols, is NOT a `direct` row and is
+NOT a Tier A dependent. Default behavior is to OMIT it. Only
+include it as Tier B (documented below) when the request
+explicitly asks for API/event/contract blast radius, or live
+gitnexus evidence proves the contract surface is part of the
+proposed change. The skill is language-agnostic; gitnexus
+already understands the source language's reference semantics
+and surfaces the edges. trust those edges, do not pattern-match
+on file extensions or framework names.
+
 `answer` fields:
 
 - `summary`: one-paragraph overview
+- `codebase_context: object`. always included; see the
+  "Always-include: `codebase_context`" section above for shape and rules.
 - `blast_radius: [{ repo, path, kind: 'direct' | 'transitive', reason }]`
 
 For tool-call mechanics (which `gitnexus_impact` arguments to use,
@@ -399,8 +494,24 @@ authoritative playbook. follow it for the gitnexus side.
 
 The toolkit-specific rules are below: how to interpret the
 results, the cross-repo bound, and the empty-result distinction.
-Stop at depth 2 unless the user explicitly asks for more. Then
-expand cross-repo using `repo_edges` from the prompt's inventory.
+
+**Call-chain depth: expand by relevance, not by a fixed cap.**
+Walk the call chain as long as each hop remains semantically
+relevant to the change being assessed. Stop when the next hop
+would pull in broadly-shared utilities, framework glue,
+logging, or aggregator/re-export modules that don't carry the
+change's semantics, and note the stop reason in
+`uncertainty_notes` (e.g. _"stopped expansion at the project's
+shared logging module. used by 200+ files, no longer specific
+to this change"_). If per-hop relevance cannot be established
+(the index doesn't surface call-edge metadata, or hops are
+ambiguous), default to `depth: 2` and say so.
+
+Static reference discovery (Tier A, see below) is NOT governed
+by this cap. those are unbounded by design.
+
+After call-chain expansion in `resolved_repo`, expand cross-repo
+using `repo_edges` from the prompt's inventory.
 
 **Always say what you DID NOT check, and why.** The summary must
 include one sentence about the cross-repo dimension, even when
@@ -428,10 +539,190 @@ reading the answer can't tell whether you considered other repos
 at all, the answer has failed regardless of what's in
 `blast_radius`.
 
-`kind`:
+**Classifying `kind` — run this check mechanically, in order.**
+Do NOT skip steps based on a file's role label (route, listener,
+publisher, service, controller, handler, or any other domain
+label). Only gitnexus-resolved edges decide. Role intuition does
+not. The check is language-agnostic: rely on the edges gitnexus
+returns (IMPORTS, CALLS, re-export, type-use, and equivalents
+for the source language); never pattern-match on syntax or file
+extensions yourself.
 
-- `direct`: the file directly references the changed symbol/file
-- `transitive`: the file references a `direct` consumer
+1. Does gitnexus show this file as having a static reference
+   edge (IMPORTS or equivalent) to the anchor file or to any
+   symbol exported from it? If yes -> `kind: 'direct'`. Stop.
+   The file is `direct` even when it accesses the anchor only
+   through a service-layer wrapper or middleware in its body.
+2. Otherwise, is the file reached only through another row
+   already in `blast_radius` via a gitnexus-verified call or
+   reference edge? If yes -> `kind: 'transitive'`. Stop.
+3. Otherwise -> omit the row from `blast_radius`.
+
+Worked examples (anchor file = the file/symbol whose change is
+being assessed):
+
+- A file whose source statically references the anchor file or
+  one of its exported symbols (via whatever module-reference
+  construct the source language uses) -> `direct`. The file's
+  role label is irrelevant.
+- A file that only references a shared utility, library, or
+  framework module (NOT the anchor) and never names the anchor
+  file or its exported symbols -> NOT emitted (rule 3). The
+  shared module isn't the anchor.
+- A file the IDE believes "wraps" the anchor, but whose source
+  contains no static reference to the anchor and no
+  gitnexus-verified call edge to a `direct` row -> NOT emitted.
+
+**Static dependents vs contract dependents.** Internally, separate
+impact into two tiers even though `blast_radius` is one array on
+the wire.
+
+- **Tier A (static dependents).** Files that gitnexus shows as
+  statically referencing the anchor file or its exported
+  symbols (any IMPORTS / re-export / type-use edge, however the
+  source language expresses it). For schema/model/module-export
+  changes, Tier A is required and must be exhaustive within
+  gitnexus results. Examples: files that reference the anchor
+  file by path, files that reference an exported symbol by
+  name, files that re-export or re-expose the anchor's exports,
+  and tests that statically reference the anchor.
+
+  For module-level exports (models, schemas, shared constants,
+  exported types), do NOT cap Tier A at any depth. Enumerate
+  every verified static reference gitnexus returns in an
+  exhaustive pass. The relevance-gated call-chain rule above
+  applies only to call-chain expansion beyond static reference
+  discovery; it does NOT apply to "what statically references
+  this file/symbol?".
+
+- **Tier B (contract/event dependents).** Files that do not
+  statically reference the anchor file or its exports but touch
+  related shared contracts, events, or public API types.
+  Examples: event publishers/subscribers using a shared event
+  payload type, files that reference a shared contracts package
+  instead of the anchor, files using API DTOs or message payload
+  types affected by the change.
+
+  Default to Tier A only. Include Tier B only when:
+  - the user explicitly asks for API/event/contract blast
+    radius, or
+  - the preamble or proposed change clearly targets a shared
+    contract/event surface, or
+  - live gitnexus evidence proves an explicit type/event
+    dependency relevant to the requested change.
+
+  Do not include publishers/listeners merely because they sound
+  related. they must satisfy Tier A or Tier B evidence rules.
+
+**Multi-pass merge.** Run at least two grounded passes, then
+union the verified paths. The two passes serve different recall
+goals:
+
+1. A pass keyed by the **anchor file path** — captures files
+   that reference the file as a whole (path-based references,
+   file-level re-exports).
+2. A pass keyed by the **exported symbol name** — captures
+   files that reference the symbol without referencing the file
+   path (named references through re-exports, qualified
+   references through aggregator modules).
+
+When applicable, also search mirrored anchors (equivalent files
+in related repos linked by `repo_edges`). For tool-call
+mechanics — which gitnexus tool to invoke, what arguments to
+pass, how to read the response — defer to the
+`gitnexus-impact-analysis` library skill below.
+
+Merge behavior:
+
+- Union all verified paths from all passes.
+- Dedupe by `repo + path`.
+- Sort `blast_radius` by path for deterministic output.
+- If passes disagree materially, mention the disagreement in
+  `uncertainty_notes` and downgrade confidence to `medium`.
+- Never pick one pass at random.
+
+**Tests — hard gate.** A test file path may appear in
+`blast_radius` only if BOTH conditions hold:
+
+1. `gitnexus_context` was called on that exact path and returned
+   non-empty content. Existence inferred from list/glob output is
+   not sufficient; the file must be fetched and seen.
+2. The fetched content statically references the anchor file or
+   one of its exported symbols (via whatever module-reference
+   construct the source language uses, or via a qualified
+   call/reference).
+
+If either condition fails, OMIT the test path. Do NOT emit
+"plausible" test paths from naming conventions. Test layouts
+vary widely across languages and ecosystems (colocated tests
+alongside source, dedicated test directories, framework-specific
+suffixes, separate test packages); guessing the convention
+produces hallucinated paths. When in doubt, omit and add an
+`uncertainty_notes` entry naming what you couldn't verify.
+
+**Every `blast_radius` row must map to live evidence.** Do not
+emit a row unless the path is backed by a specific live
+gitnexus artifact (a reference edge, reference hit, impact hit,
+or fetched context). Do not emit a path from "likely impact"
+reasoning alone. Before emitting JSON, internally verify that
+every `blast_radius.path` appears in live gitnexus query,
+impact, grep, or context output. If a row cannot be tied to
+live evidence, omit it and add a precise note to
+`uncertainty_notes`. If any blast row was heuristic or
+evidence was dropped, confidence must not be `high`.
+
+**Each `reason` should briefly name the evidence type**, not
+restate the file's purpose. Good: _"references the anchor file"_,
+_"references the exported symbol"_, _"re-exports an anchor
+symbol"_, _"verified call edge from a row already in
+`blast_radius`"_. Bad: _"this route uses the model"_, _"part of
+the flow"_. The reason is the audit trail; make it concrete.
+
+**Groundedness floor for `assess_impact` (hard arithmetic).**
+
+- Count every `blast_radius` row as one groundedness claim.
+- Count every repo-specific factual sentence in `summary` as
+  one claim. a "repo-specific factual sentence" is any sentence
+  that names a path, symbol, repo, consumer, listener,
+  publisher, route, model, or specific behavior tied to a repo.
+  Generic phrasing like "this is internally contained" or
+  "cross-repo expansion was not applicable" is NOT a claim.
+- `groundedness.claims` must be at least
+  `blast_radius.length + (count of repo-specific summary
+sentences)`.
+- `groundedness.claims === groundedness.grounded +
+groundedness.ungrounded`.
+
+Worked example: `blast_radius` has 11 rows; `summary` contains
+2 sentences naming specific files plus 1 generic sentence about
+cross-repo. Then `claims >= 13` (11 + 2; the generic sentence
+is not counted). If all 13 are backed by live gitnexus output,
+`grounded: 13`, `ungrounded: 0`, `confidence: 'high'` is
+allowed. If any are heuristic, `ungrounded > 0` and
+`confidence` must be `'medium'` or `'low'`.
+
+The bridge audits three things on every `assess_impact` reply:
+
+1. **Arithmetic** — `claims < blast_radius.length`,
+   `claims !== grounded + ungrounded`, missing `groundedness`
+   on a non-empty `blast_radius`, `confidence: 'high'` with
+   ungrounded > 0.
+2. **Structural shape** — duplicate rows by `repo + path`,
+   invalid `kind`, missing `repo`/`path`.
+3. **Disk existence** — every `blast_radius.path` is resolved
+   against the row's repo's local checkout. Paths that don't
+   exist on disk are flagged as fabricated. **This is the
+   highest-signal failure category — fabricated paths produce
+   edits to non-existent code in the IDE. Treat
+   `audit: ... not found on disk ...` warnings as fatal and
+   omit those rows next time.**
+
+Violations appear as entries in the wire envelope's `warnings`.
+The bridge does NOT silently rewrite your `confidence` /
+`groundedness` / `blast_radius` — your report stands as you
+emit it, and the IDE sees the audit findings alongside it. Get
+the accounting right yourself; the audit is a visibility tool,
+not a safety net.
 
 **Interpreting an empty `gitnexus_impact` result correctly is
 critical.** Empty result means: "the index found no callers /
@@ -445,12 +736,12 @@ very different findings, two very different responses:
   library-style repos (an SDK, a client library, a public API
   surface), the most likely reason a method has zero internal
   consumers is that it IS the public surface. Say so:
-  _"`Channel.deleteExchange` is defined in `lib/channel.js` and
-  has no internal callers in this repo. It's part of the
-  library's public surface, so any modification affects
-  external consumers of the library (which aren't indexed
-  here). Coordinate with downstream consumers."_ This is a
-  valuable finding, not a failure.
+  _"`<TargetSymbol>` is defined in `<anchor file>` and has no
+  internal callers in this repo. It's part of the library's
+  public surface, so any modification affects external
+  consumers of the library (which aren't indexed here).
+  Coordinate with downstream consumers."_ This is a valuable
+  finding, not a failure.
 
 - **Empty + symbol/file NOT FOUND when verified** -> the inputs
   are wrong, not the change. Emit an empty `blast_radius`, a
@@ -466,15 +757,14 @@ missing-input case. Telling the IDE "your symbol doesn't exist"
 when it actually does is one of the worst failure modes for
 this toolkit.
 
-Use the literal file paths and symbol names from
-`proposed_change` as inputs. never search for prose phrases
-from the prompt template ("ExchangeDelete RPC",
-"Args.deleteExchange") since those are descriptive English, not
-real symbols. If a method is referenced as
-`Channel.deleteExchange`, also try the unqualified
-`deleteExchange` or the qualified `Channel.prototype.deleteExchange`
-
-- different indexers store the name differently.
+Use the literal file paths and symbol names supplied in the
+request as inputs. never search for prose phrases from the
+prompt template (descriptive English about what the change
+does), since those aren't real identifiers. When a target
+symbol is given in qualified form, also try the unqualified
+and other qualified variants — different indexers store names
+differently. The `gitnexus-impact-analysis` library skill
+documents how to query for symbol variants.
 
 ### `list_repos`
 
@@ -495,6 +785,11 @@ Before emitting JSON, walk through each of these:
       mixing fields across tools (no `affected_files` in an
       `assess_impact` reply, no `trace` in a `plan_feature`
       reply).
+- [ ] `answer.codebase_context` is present (object with empty
+      arrays is fine; the field itself is never absent). every
+      `naming_conventions` / `structure` / `tech_stack` / `notes`
+      entry has at least one citation in `evidence` from a live
+      `gitnexus_*` result. entries with no citation were dropped.
 - [ ] Every concrete repo claim (path, symbol, line, commit) is
       backed by a live `gitnexus_*` result.
 - [ ] No invented paths, symbols, or repo labels. all repo
@@ -505,6 +800,23 @@ Before emitting JSON, walk through each of these:
 - [ ] All verified evidence is included, not just "the top N".
 - [ ] For `assess_impact`: the cross-repo dimension is named in
       the summary even when there's nothing to expand to.
+- [ ] For `assess_impact`: every `blast_radius` row maps to a
+      live `gitnexus_*` result (reference edge, reference hit,
+      impact hit, or fetched context). no heuristic rows.
+- [ ] For `assess_impact`: static reference dependents (Tier A)
+      are not arbitrarily depth-capped; module-export changes
+      enumerate every verified referencer.
+- [ ] For `assess_impact`: Tier B contract/event dependents
+      (publishers/subscribers, shared contract types) are
+      included only when explicitly requested or live-evidenced.
+- [ ] For `assess_impact`: ran ≥ 2 grounded passes (reverse
+      impact + symbol reference, plus mirrored anchors when
+      applicable) and unioned the results. material
+      disagreements are named in `uncertainty_notes`.
+- [ ] For `assess_impact`: `blast_radius` is deduped by
+      `repo + path` and sorted by path for deterministic output.
+- [ ] For `assess_impact`: test files included only when their
+      verbatim reference to the anchor was verified live.
 - [ ] If a target was reported missing, it was verified with at
       least two tools (e.g. `gitnexus_query` AND
       `gitnexus_context`).
