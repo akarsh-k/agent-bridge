@@ -30,10 +30,14 @@
 
 import { zValidator } from '@hono/zod-validator'
 import { Hono } from 'hono'
-import { and, desc, eq, like } from 'drizzle-orm'
+import { and, asc, desc, eq, like } from 'drizzle-orm'
+import { z } from 'zod'
 import {
   RUN_LIST_PREVIEW_CHARS,
   runListQuerySchema,
+  type RunDetailEvent,
+  type RunDetailResponse,
+  type RunDetailRow,
   type RunListResponse,
   type RunListRow,
   type RunSource,
@@ -154,6 +158,97 @@ export const runsRouter = new Hono().get(
     })
 
     const body: RunListResponse = { ok: true, runs: out }
+    return c.json(body)
+  },
+).get(
+  '/:id',
+  zValidator(
+    'param',
+    z.object({ id: z.uuid() }),
+    (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    },
+  ),
+  async (c) => {
+    const { id } = c.req.valid('param')
+    const handle = getDb()
+
+    // One run row + LEFT JOIN agents for slug/name. Same defensive
+    // join the list endpoint does.
+    const [row] = await handle.db
+      .select({
+        id: schema.runs.id,
+        agentId: schema.runs.agentId,
+        status: schema.runs.status,
+        streamId: schema.runs.streamId,
+        inputPrompt: schema.runs.inputPrompt,
+        outputSummary: schema.runs.outputSummary,
+        errorMessage: schema.runs.errorMessage,
+        startedAt: schema.runs.startedAt,
+        finishedAt: schema.runs.finishedAt,
+        promptTokens: schema.runs.promptTokens,
+        completionTokens: schema.runs.completionTokens,
+        agentSlug: schema.agents.slug,
+        agentName: schema.agents.name,
+      })
+      .from(schema.runs)
+      .leftJoin(schema.agents, eq(schema.agents.id, schema.runs.agentId))
+      .where(eq(schema.runs.id, id))
+      .limit(1)
+
+    if (!row) {
+      return c.json({ ok: false, code: 'not_found' as const, message: `Run ${id} not found` }, 404)
+    }
+
+    // All events for this run, oldest first (the timeline reads top-down).
+    // Index `run_events_run_ts_idx` covers (run_id, ts) so this is cheap
+    // even with thousands of events on one run.
+    const eventRows = await handle.db
+      .select({
+        id: schema.runEvents.id,
+        ts: schema.runEvents.ts,
+        kind: schema.runEvents.kind,
+        payloadJson: schema.runEvents.payloadJson,
+      })
+      .from(schema.runEvents)
+      .where(eq(schema.runEvents.runId, id))
+      .orderBy(asc(schema.runEvents.ts), asc(schema.runEvents.id))
+
+    const startedAt = row.startedAt.toISOString()
+    const finishedAt = row.finishedAt ? row.finishedAt.toISOString() : null
+    const durationMs = row.finishedAt
+      ? Math.max(0, row.finishedAt.getTime() - row.startedAt.getTime())
+      : null
+
+    const run: RunDetailRow = {
+      id: row.id,
+      agentId: row.agentId,
+      agentSlug: row.agentSlug ?? '<deleted>',
+      agentName: row.agentName ?? '(deleted agent)',
+      status: row.status as RunStatus,
+      source: deriveSource(row.streamId),
+      streamId: row.streamId,
+      inputPrompt: row.inputPrompt ?? '',
+      outputSummary: row.outputSummary,
+      errorMessage: row.errorMessage,
+      startedAt,
+      finishedAt,
+      durationMs,
+      promptTokens: row.promptTokens,
+      completionTokens: row.completionTokens,
+    }
+
+    const events: RunDetailEvent[] = eventRows.map((e) => ({
+      // bigserial — stringify so JSON.parse on the wire doesn't lose
+      // precision past 2^53. The UI uses it as an opaque key.
+      id: e.id.toString(),
+      ts: e.ts.toISOString(),
+      kind: e.kind,
+      payload: e.payloadJson,
+    }))
+
+    const body: RunDetailResponse = { ok: true, run, events }
     return c.json(body)
   },
 )

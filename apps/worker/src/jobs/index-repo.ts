@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs'
 import type { Job } from 'bullmq'
 
-import { reposRepo } from '@agent-bridge/db'
+import { reposRepo, workerJobsRepo } from '@agent-bridge/db'
 import {
   indexRepoJobSchema,
   repoStreamId,
@@ -62,7 +62,30 @@ export async function handleIndexRepoJob(
   const bus = getEventBus()
   const db = getDb()
 
-  const publish = (event: RunEvent): Promise<number> => bus.publish(event)
+  // `jobId` is set after the repo-existence + state checks pass.
+  // Until then `publish` is publish-only (no FK target). After,
+  // every event ALSO appends to `worker_events` so the /logs page
+  // can replay this attempt's full timeline. See clone-repo.ts for
+  // the same pattern with the same fail-soft policy.
+  let jobId: string | null = null
+  const publish = async (event: RunEvent): Promise<number> => {
+    const subscribers = await bus.publish(event)
+    if (jobId) {
+      try {
+        await workerJobsRepo.appendWorkerEvent(db, {
+          jobId,
+          kind: event.kind,
+          payload: event.data ?? null,
+          ts: new Date(event.ts),
+        })
+      } catch (err) {
+        console.warn(
+          `[index-repo] failed to audit ${event.kind} for job ${jobId}: ${errMsg(err)}`,
+        )
+      }
+    }
+    return subscribers
+  }
   const now = (): number => Date.now()
 
   const row = await reposRepo.getForWorker(db, input.repoId)
@@ -100,6 +123,20 @@ export async function handleIndexRepoJob(
     throw new Error(message)
   }
 
+  // Repo + status checks passed — create the lifecycle row so all
+  // subsequent events are auditable.
+  try {
+    const jobRow = await workerJobsRepo.createWorkerJob(db, {
+      repoId: input.repoId,
+      jobKind: 'index',
+    })
+    jobId = jobRow.id
+  } catch (err) {
+    console.warn(
+      `[index-repo] failed to create worker_jobs row for repo ${input.repoId}: ${errMsg(err)}`,
+    )
+  }
+
   if (!row.localPath) {
     const message = `Repo ${input.repoId} has no localPath — clone must land before index`
     await failAndPublish({
@@ -108,6 +145,7 @@ export async function handleIndexRepoJob(
       streamId,
       repoId: input.repoId,
       lastError: message,
+      jobId,
     })
     throw new Error(message)
   }
@@ -136,6 +174,7 @@ export async function handleIndexRepoJob(
       streamId,
       repoId: input.repoId,
       lastError: message,
+      jobId,
     })
     throw new Error(message)
   }
@@ -195,6 +234,18 @@ export async function handleIndexRepoJob(
       } satisfies RepoIndexOkPayload,
     })
 
+    if (jobId) {
+      try {
+        await workerJobsRepo.markWorkerJobFinished(db, jobId, {
+          status: 'completed',
+        })
+      } catch (err) {
+        console.warn(
+          `[index-repo] failed to finalise job ${jobId}: ${errMsg(err)}`,
+        )
+      }
+    }
+
     return {
       repoId: row.id,
       status: 'ready',
@@ -208,6 +259,7 @@ export async function handleIndexRepoJob(
       streamId,
       repoId: row.id,
       lastError: message,
+      jobId,
     })
     throw new Error(message)
   }
@@ -330,12 +382,27 @@ async function failAndPublish(args: {
   streamId: string
   repoId: string
   lastError: string
+  /** When set, marks the matching `worker_jobs` row as errored
+   *  before the terminal event publishes. Best-effort. */
+  jobId?: string | null
 }): Promise<void> {
-  const { publish, db, streamId, repoId, lastError } = args
+  const { publish, db, streamId, repoId, lastError, jobId } = args
   await reposRepo.finishIndex(db, repoId, {
     status: 'error',
     lastError,
   })
+  if (jobId) {
+    try {
+      await workerJobsRepo.markWorkerJobFinished(db, jobId, {
+        status: 'error',
+        errorMessage: lastError,
+      })
+    } catch (err) {
+      console.warn(
+        `[index-repo] failed to finalise job ${jobId}: ${errMsg(err)}`,
+      )
+    }
+  }
   await publish({
     kind: 'repo.index.fail',
     ts: Date.now(),

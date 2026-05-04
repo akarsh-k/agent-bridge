@@ -394,6 +394,62 @@ export async function getBridgeConfig(): Promise<BridgeConfigResponse> {
 }
 
 /**
+ * List recent worker jobs (clone / index / wiki) across the
+ * workspace, newest-first. Powers the /logs page's worker rows.
+ *
+ * Optional filters mirror the backend's query schema. `repoId`
+ * narrows to one repo's history, `jobKind` to one of clone /
+ * index / wiki.
+ */
+export async function listWorkerJobs(
+  query: {
+    readonly limit?: number
+    readonly repoId?: string
+    readonly jobKind?: 'clone' | 'index' | 'wiki'
+  } = {},
+): Promise<import('@agent-bridge/shared').WorkerJobListResponse> {
+  const params = new URLSearchParams()
+  if (query.limit !== undefined) params.set('limit', String(query.limit))
+  if (query.repoId) params.set('repoId', query.repoId)
+  if (query.jobKind) params.set('jobKind', query.jobKind)
+  const qs = params.toString()
+  const url =
+    `${apiBaseUrl}/api/worker-jobs` + (qs.length > 0 ? `?${qs}` : '')
+  return callApi<import('@agent-bridge/shared').WorkerJobListResponse>(
+    fetch(url),
+  )
+}
+
+/**
+ * Fetch one worker job's full detail — the lifecycle row + every
+ * `worker_events` entry ordered by ts. Powers the run-detail sheet
+ * when a worker-job row is clicked.
+ */
+export async function fetchWorkerJob(
+  id: string,
+): Promise<import('@agent-bridge/shared').WorkerJobDetailResponse> {
+  const url = `${apiBaseUrl}/api/worker-jobs/${encodeURIComponent(id)}`
+  return callApi<import('@agent-bridge/shared').WorkerJobDetailResponse>(
+    fetch(url),
+  )
+}
+
+/**
+ * Fetch one run's full detail — untruncated input + output + every
+ * row from `run_events` ordered by ts. Powers the run-detail sheet
+ * opened from the global Logs page and per-agent activity views.
+ *
+ * Same Hono-mount caveat as `listRuns` below: the runs router is a
+ * sub-mount so we type via cast on the `callApi` generic.
+ */
+export async function fetchRun(
+  id: string,
+): Promise<import('@agent-bridge/shared').RunDetailResponse> {
+  const url = `${apiBaseUrl}/api/runs/${encodeURIComponent(id)}`
+  return callApi<import('@agent-bridge/shared').RunDetailResponse>(fetch(url))
+}
+
+/**
  * Fetch the global runs feed. Powers the bridge view (filters
  * `source=bridge`) and a future UI-runs view (`source=ui`).
  */

@@ -90,3 +90,44 @@ export const runListResponseSchema = z.object({
 })
 
 export type RunListResponse = z.infer<typeof runListResponseSchema>
+
+/**
+ * Per-run detail row. Same fields as `runListRowSchema` plus the FULL
+ * (untruncated) prompt + output, used by `GET /api/runs/:id`. Distinct
+ * from the list shape so a future "show 5 most recent runs" preview
+ * surface keeps shipping a small payload, while the detail page gets
+ * everything.
+ */
+export const runDetailRowSchema = runListRowSchema
+  .omit({ inputPromptPreview: true, outputSummaryPreview: true })
+  .extend({
+    inputPrompt: z.string(),
+    outputSummary: z.string().nullable(),
+  })
+
+export type RunDetailRow = z.infer<typeof runDetailRowSchema>
+
+/**
+ * One row from `run_events`. Mirrors the SSE `RunEvent` envelope shape
+ * but with persisted `id` (bigint serialised as string for JSON safety
+ * — `bigserial` overflows `Number` past 2^53). The `payloadJson` field
+ * is whatever the producer wrote at insert time; consumers should
+ * treat it as opaque and parse against the producer's known shapes
+ * when displaying.
+ */
+export const runDetailEventSchema = z.object({
+  id: z.string(),
+  ts: z.iso.datetime(),
+  kind: z.string(),
+  payload: z.unknown().nullable(),
+})
+
+export type RunDetailEvent = z.infer<typeof runDetailEventSchema>
+
+export const runDetailResponseSchema = z.object({
+  ok: z.literal(true),
+  run: runDetailRowSchema,
+  events: z.array(runDetailEventSchema),
+})
+
+export type RunDetailResponse = z.infer<typeof runDetailResponseSchema>

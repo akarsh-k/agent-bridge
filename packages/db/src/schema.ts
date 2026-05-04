@@ -580,6 +580,71 @@ export const agentConfigEvents = pgTable(
   (t) => [index('agent_config_events_agent_ts_idx').on(t.agentId, t.ts)],
 )
 
+// ─── worker_jobs (lifecycle row per repo background job) ─────────────────
+// Mirrors the `runs` table for agent invocations: one row per discrete
+// clone / index / wiki attempt, with start/finish timestamps and a
+// status enum. The /logs page renders these alongside agent runs so
+// the operator has one timeline for "everything that happened in the
+// workspace". `worker_events` carries the granular per-line events.
+//
+// `job_kind` is `text` rather than `pgEnum` for the same reason
+// `RunStatus` is — adds-without-migration. Enforced at the edges via
+// Zod / TS literal types in `@agent-bridge/shared`.
+
+export const workerJobs = pgTable(
+  'worker_jobs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    repoId: uuid('repo_id')
+      .notNull()
+      .references(() => repos.id, { onDelete: 'cascade' }),
+    jobKind: text('job_kind').notNull(),
+    status: text('status').notNull().default('running'),
+    startedAt: timestamp('started_at', {
+      withTimezone: true,
+      mode: 'date',
+    })
+      .notNull()
+      .defaultNow(),
+    finishedAt: timestamp('finished_at', {
+      withTimezone: true,
+      mode: 'date',
+    }),
+    errorMessage: text('error_message'),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    // "Recent jobs for this repo, newest first" — drives both the
+    // /logs feed (when filtered to one repo) and the run-detail
+    // sheet's "previous attempts" affordance.
+    index('worker_jobs_repo_started_idx').on(t.repoId, t.startedAt),
+    // Global "all recent worker jobs" — same access pattern the
+    // runs router uses for its newest-first list.
+    index('worker_jobs_started_idx').on(t.startedAt),
+  ],
+)
+
+// ─── worker_events (append-only audit log for worker jobs) ───────────────
+// Same shape as `run_events`, just keyed by `job_id` (worker_jobs).
+// `bigserial` because volume is high — a long index job emits hundreds
+// of progress lines. ON DELETE CASCADE so a job removal cleans up.
+
+export const workerEvents = pgTable(
+  'worker_events',
+  {
+    id: bigserial('id', { mode: 'bigint' }).primaryKey(),
+    jobId: uuid('job_id')
+      .notNull()
+      .references(() => workerJobs.id, { onDelete: 'cascade' }),
+    ts: timestamp('ts', { withTimezone: true, mode: 'date' })
+      .notNull()
+      .defaultNow(),
+    kind: text('kind').notNull(),
+    payloadJson: jsonb('payload_json'),
+  },
+  (t) => [index('worker_events_job_ts_idx').on(t.jobId, t.ts)],
+)
+
 // ─── Inferred row / insert types ──────────────────────────────────────────
 
 export type LlmProviderRow = typeof llmProviders.$inferSelect
@@ -624,6 +689,12 @@ export type RunEventInsert = typeof runEvents.$inferInsert
 export type AgentConfigEventRow = typeof agentConfigEvents.$inferSelect
 export type AgentConfigEventInsert = typeof agentConfigEvents.$inferInsert
 
+export type WorkerJobRow = typeof workerJobs.$inferSelect
+export type WorkerJobInsert = typeof workerJobs.$inferInsert
+
+export type WorkerEventRow = typeof workerEvents.$inferSelect
+export type WorkerEventInsert = typeof workerEvents.$inferInsert
+
 /**
  * Canonical table list. Used by `/api/health/db` to build the row-count map
  * without hardcoding table names in two places. Skip `run_events` for the
@@ -645,6 +716,8 @@ export const allTables = [
   runs,
   runEvents,
   agentConfigEvents,
+  workerJobs,
+  workerEvents,
 ] as const
 
 /**
@@ -667,6 +740,8 @@ export const tableNames = [
   'runs',
   'run_events',
   'agent_config_events',
+  'worker_jobs',
+  'worker_events',
 ] as const
 
 export type TableName = (typeof tableNames)[number]

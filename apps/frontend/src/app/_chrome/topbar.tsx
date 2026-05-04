@@ -247,7 +247,12 @@ function NotificationFlyout({
               type="button"
               onClick={() => {
                 onClose()
-                navigate(`/agents/${row.agentId}/logs`)
+                // Deep-link into the global Logs page with the run's
+                // detail sheet auto-opened. Replaces the previous
+                // jump to /agents/<id>/logs which lost the per-event
+                // detail; the new page surfaces the full run_events
+                // timeline by default.
+                navigate(`/logs/${row.id}`)
               }}
               style={{
                 display: 'flex',

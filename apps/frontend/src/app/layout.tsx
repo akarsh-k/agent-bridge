@@ -17,6 +17,7 @@ import {
   matchLibraryMcp,
   matchLibraryProviders,
   matchLibraryRepos,
+  matchLogs,
   matchOAuthCallback,
   matchSettings,
   navigate,
@@ -42,6 +43,7 @@ import { RepoDetailPage } from './library/repos/[id]/page'
 import { McpPage } from './library/mcp/page'
 import { McpDetailPage } from './library/mcp/[id]/page'
 import { BridgePage } from './bridge/page'
+import { LogsPage } from './logs/page'
 import { SettingsPage } from './settings/page'
 import { OAuthCallbackPage } from './oauth/callback/page'
 
@@ -70,6 +72,7 @@ function RouterOutlet() {
     if (matchLibraryRepos(path)) return { kind: 'repos' as const }
     if (matchLibraryMcp(path)) return { kind: 'mcp' as const }
     if (matchBridge(path)) return { kind: 'bridge' as const }
+    if (matchLogs(path)) return { kind: 'logs' as const }
     if (matchSettings(path)) return { kind: 'settings' as const }
     return { kind: 'not-found' as const }
   }, [path])
@@ -123,6 +126,8 @@ function RouterOutlet() {
       }
       case 'bridge':
         return [{ label: 'Workspace', to: '/' }, { label: 'Bridge' }]
+      case 'logs':
+        return [{ label: 'Workspace', to: '/' }, { label: 'Logs' }]
       case 'settings':
         return [{ label: 'Workspace', to: '/' }, { label: 'Settings' }]
       default:
@@ -172,6 +177,7 @@ function RouterOutlet() {
         <McpDetailPage id={route.id} />
       )}
       {route.kind === 'bridge' && <BridgePage />}
+      {route.kind === 'logs' && <LogsPage />}
       {route.kind === 'settings' && <SettingsPage />}
       {route.kind === 'not-found' && (
         <div className="ab-page">

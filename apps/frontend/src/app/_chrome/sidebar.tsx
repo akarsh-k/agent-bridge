@@ -11,6 +11,7 @@ import {
   AgentsIcon,
   BridgeIcon,
   HomeIcon,
+  LogsIcon,
   McpIcon,
   ProvidersIcon,
   ReposIcon,
@@ -47,6 +48,7 @@ export function Sidebar() {
       count: agents.length,
     },
     { to: '/bridge', label: 'Bridge', Icon: BridgeIcon, matchPrefix: '/bridge' },
+    { to: '/logs', label: 'Logs', Icon: LogsIcon, matchPrefix: '/logs' },
   ]
 
   const library: NavSpec[] = [

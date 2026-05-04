@@ -1,49 +1,29 @@
 /**
- * Bridge dashboard — real backend wiring (matches the prior
- * BridgeView): config block from `GET /api/bridge/config`, exposed
- * tools = agents with `llmProviderId !== null` rendered as
- * `query_<slug>`, runs feed polled from `GET /api/runs?source=bridge`
- * every 4s.
+ * Bridge dashboard — config block from `GET /api/bridge/config`,
+ * exposed tools = agents with `llmProviderId !== null` rendered as
+ * `query_<slug>`. The runs card was removed in favour of the global
+ * /logs page; users select Source=Bridge there for the equivalent
+ * filtered view, with full per-event detail per row.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CODING_AGENT_TOOL_METADATA,
   type BridgeToolResponse,
-  type RunListRow,
 } from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
 import {
   ApiError,
   getBridgeConfig,
   listBridgeTools,
-  listRuns,
   type BridgeConfigResponse,
 } from '../../lib/rpc'
 import { PageHeader } from '../_chrome/page-header'
 import { Pill } from '../../ui/pill'
-import { Tabs } from '../../ui/tabs'
 import { EmptyState } from '../../ui/empty'
 import { BridgeIcon, CheckIcon, CopyIcon } from '../../ui/icons'
 
-const RUNS_POLL_MS = 4_000
-const RUNS_LIMIT = 50
-
 export function BridgePage() {
-  // Hash-to-scroll: when the user lands here from `/bridge#runs` (the
-  // notifications flyout's "See all activity in Bridge" button), scroll
-  // the runs section into view. Defer to next paint so the lazy
-  // `<RunsCard />` content has had a chance to mount.
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const id = window.location.hash.slice(1)
-    if (!id) return
-    requestAnimationFrame(() => {
-      const el = document.getElementById(id)
-      el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    })
-  }, [])
-
   return (
     <div className="ab-page">
       <PageHeader
@@ -52,7 +32,6 @@ export function BridgePage() {
       />
       <SetupCard />
       <ToolsCard />
-      <RunsCard />
     </div>
   )
 }
@@ -514,256 +493,6 @@ function ToolGroup({
       </div>
     </div>
   )
-}
-
-function RunsCard() {
-  const [runs, setRuns] = useState<readonly RunListRow[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [lastRefresh, setLastRefresh] = useState<number | null>(null)
-  const [groupBy, setGroupBy] = useState<'time' | 'agent'>('time')
-
-  useEffect(() => {
-    let active = true
-    let timer: ReturnType<typeof setTimeout> | null = null
-
-    const tick = async (): Promise<void> => {
-      try {
-        const res = await listRuns({ source: 'bridge', limit: RUNS_LIMIT })
-        if (!active) return
-        setRuns(res.runs)
-        setError(null)
-        setLastRefresh(Date.now())
-      } catch (err) {
-        if (!active) return
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : err instanceof Error
-              ? err.message
-              : 'Failed to load runs',
-        )
-      } finally {
-        if (active) setLoading(false)
-      }
-    }
-
-    void tick()
-    const schedule = (): void => {
-      if (!active) return
-      timer = setTimeout(async () => {
-        await tick()
-        schedule()
-      }, RUNS_POLL_MS)
-    }
-    schedule()
-
-    return () => {
-      active = false
-      if (timer) clearTimeout(timer)
-    }
-  }, [])
-
-  // Group rows by agent when requested.
-  const grouped = useMemo(() => {
-    if (groupBy === 'time') return null
-    const map = new Map<string, RunListRow[]>()
-    for (const r of runs) {
-      const key = `${r.agentSlug}|${r.agentName}`
-      const arr = map.get(key) ?? []
-      arr.push(r)
-      map.set(key, arr)
-    }
-    return [...map.entries()].sort(
-      (a, b) => b[1].length - a[1].length,
-    )
-  }, [groupBy, runs])
-
-  return (
-    <div id="runs" className="ab-card ab-card-pad ab-form-section">
-      <div
-        className="ab-section-head"
-        style={{ display: 'flex', alignItems: 'center', gap: 12 }}
-      >
-        <div style={{ flex: 1 }}>
-          <div className="ab-section-title">Recent IDE runs</div>
-          <div className="ab-section-sub">
-            {loading
-              ? 'Loading…'
-              : runs.length === 0
-                ? 'No IDE invocations yet'
-                : `${runs.length} run${runs.length === 1 ? '' : 's'}`}
-            {lastRefresh && ` · refreshed ${formatRelative(lastRefresh)}`}
-          </div>
-        </div>
-        {runs.length > 0 && (
-          <Tabs<'time' | 'agent'>
-            value={groupBy}
-            onChange={setGroupBy}
-            tabs={[
-              { value: 'time', label: 'By time' },
-              { value: 'agent', label: 'By agent' },
-            ]}
-            className="ab-tabs-inline"
-          />
-        )}
-      </div>
-
-      {error && (
-        <div
-          className="ab-field-help"
-          style={{ color: 'var(--danger)', marginBottom: 8 }}
-        >
-          {error}
-        </div>
-      )}
-
-      {!loading && runs.length === 0 ? (
-        <EmptyState
-          glyph={<BridgeIcon />}
-          title="No IDE invocations yet"
-          body={
-            <>
-              Once your IDE picks up the MCP config above, every call
-              streams in here. Try one of these from the IDE chat:
-              <pre
-                className="ab-mono"
-                style={{
-                  marginTop: 12,
-                  marginBottom: 0,
-                  padding: '10px 12px',
-                  background: 'var(--surface-hi)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 'var(--radius)',
-                  fontSize: 12,
-                  textAlign: 'left',
-                  color: 'var(--text)',
-                  whiteSpace: 'pre-wrap',
-                }}
-              >
-                @query_&lt;slug&gt; "Summarise the README"{'\n'}
-                @query_&lt;slug&gt; "Where do we register routes?"{'\n'}
-                @query_&lt;slug&gt; "Walk me through the auth flow"
-              </pre>
-            </>
-          }
-        />
-      ) : null}
-
-      {runs.length > 0 && groupBy === 'time' && (
-        <div className="ab-card ab-list-card">
-          {runs.map((row) => (
-            <RunRow key={row.id} row={row} />
-          ))}
-        </div>
-      )}
-      {runs.length > 0 &&
-        groupBy === 'agent' &&
-        grouped?.map(([key, list]) => {
-          const [slug, name] = key.split('|') as [string, string]
-          return (
-            <div key={key} style={{ marginBottom: 14 }}>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  margin: '6px 0 8px',
-                }}
-              >
-                <span style={{ fontSize: 13, fontWeight: 600 }}>
-                  {name}
-                </span>
-                <span
-                  className="ab-mono"
-                  style={{ color: 'var(--text-muted)', fontSize: 12 }}
-                >
-                  {slug}
-                </span>
-                <Pill kind="neutral">
-                  {list.length} run{list.length === 1 ? '' : 's'}
-                </Pill>
-              </div>
-              <div className="ab-card ab-list-card">
-                {list.map((row) => (
-                  <RunRow key={row.id} row={row} />
-                ))}
-              </div>
-            </div>
-          )
-        })}
-    </div>
-  )
-}
-
-function RunRow({ row }: { row: RunListRow }) {
-  const kind: Parameters<typeof Pill>[0]['kind'] =
-    row.status === 'completed'
-      ? 'success'
-      : row.status === 'error' || row.status === 'aborted'
-        ? 'danger'
-        : 'accent'
-  return (
-    <div className="ab-list-row is-static" style={{ alignItems: 'flex-start' }}>
-      <Pill kind={kind} dot>
-        {row.status}
-      </Pill>
-      <div className="ab-list-row-head">
-        <div className="ab-list-row-title">
-          {row.agentName}{' '}
-          <span className="ab-mono" style={{ color: 'var(--text-muted)' }}>
-            · {row.agentSlug}
-          </span>
-        </div>
-        <div
-          className="ab-list-row-sub"
-          style={{
-            display: '-webkit-box',
-            WebkitBoxOrient: 'vertical',
-            WebkitLineClamp: 2,
-            overflow: 'hidden',
-          }}
-        >
-          {row.inputPromptPreview}
-        </div>
-        {row.status === 'error' && row.errorMessage && (
-          <div
-            className="ab-field-help"
-            style={{ color: 'var(--danger)', marginTop: 4 }}
-          >
-            {row.errorMessage}
-          </div>
-        )}
-      </div>
-      <div className="ab-list-row-meta">
-        <span className="ab-mono" style={{ color: 'var(--text-muted)' }}>
-          {formatRelative(Date.parse(row.startedAt))}
-          {row.durationMs !== null && ` · ${formatDuration(row.durationMs)}`}
-        </span>
-      </div>
-    </div>
-  )
-}
-
-function formatRelative(ts: number): string {
-  if (Number.isNaN(ts)) return ''
-  const delta = Date.now() - ts
-  if (delta < 5_000) return 'just now'
-  if (delta < 60_000) return `${Math.round(delta / 1000)}s ago`
-  const mins = Math.floor(delta / 60_000)
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  return `${days}d ago`
-}
-
-function formatDuration(ms: number): string {
-  if (ms < 1_000) return `${ms}ms`
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
-  const m = Math.floor(ms / 60_000)
-  const s = Math.floor((ms % 60_000) / 1_000)
-  return `${m}m${s}s`
 }
 
 function truncate(s: string, n: number): string {

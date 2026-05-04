@@ -1,15 +1,16 @@
 /**
  * Agent detail — sticky header + pill-tab strip + tab panels.
- * Build / Chat / Memory / Tools / Bridge / Logs are switched inline
- * (no route change) so the user stays in flow.
+ * Configure / Resources / Chat / Bridge are switched inline
+ * (no route change) so the user stays in flow. The per-agent Logs
+ * tab was removed in favour of the global /logs page; agent-specific
+ * runs are still reachable from there via the agent-multi-select
+ * filter (or by deep-linking from any run row).
  */
 
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { agentStreamId } from '@agent-bridge/shared'
 import { useWorkspace } from '../../../lib/workspace-context'
 import { ApiError, exportAgentBundle } from '../../../lib/rpc'
 import { navigate } from '../../../lib/router'
-import { useSSE } from '../../../lib/use-sse'
 import { Button } from '../../../ui/button'
 import { Pill } from '../../../ui/pill'
 import { Tabs, type TabSpec } from '../../../ui/tabs'
@@ -40,24 +41,19 @@ const BridgeToolsTab = lazy(() =>
     (m) => ({ default: m.BridgeToolsTab }),
   ),
 )
-const LogsTab = lazy(() =>
-  import('../../../features/agent-logs/logs-tab').then((m) => ({
-    default: m.LogsTab,
-  })),
-)
-
-type TabId = 'configure' | 'resources' | 'chat' | 'bridge' | 'logs'
+type TabId = 'configure' | 'resources' | 'chat' | 'bridge'
 
 const TABS: ReadonlyArray<TabSpec<TabId>> = [
   { value: 'configure', label: 'Configure' },
   { value: 'resources', label: 'Resources' },
   { value: 'chat', label: 'Chat' },
   { value: 'bridge', label: 'Bridge' },
-  { value: 'logs', label: 'Logs' },
 ]
 
 // Legacy URL aliases — `/agents/<id>/build` etc. still work but map
-// to the new tab they got folded into.
+// to the new tab they got folded into. `logs` rewrites to the global
+// /logs page (handled in the AgentDetailPage effect below) so old
+// bookmarks keep working.
 const TAB_ALIASES: Record<string, TabId> = {
   build: 'configure',
   memory: 'configure',
@@ -87,14 +83,6 @@ export function AgentDetailPage({
   const [menuOpen, setMenuOpen] = useState(false)
   const [, setBusy] = useState(false)
 
-  // Hoist the per-agent SSE subscription up to the agent detail page
-  // so it stays alive across tab switches. Without this, switching to
-  // the Logs tab would open a fresh subscription that misses every
-  // event fired while the user was on Build / Chat / etc — the
-  // pre-rewrite App.tsx held this subscription at the shell level
-  // and passed events into the Activity panel as props; the rewrite
-  // accidentally moved it down into LogsTab and lost the persistence.
-  const agentEvents = useSSE(agentStreamId(id), { cap: 400 })
   // Reset the active tab whenever we navigate to a different agent
   // OR the URL's tab segment changes — "adjust state based on
   // props" pattern. Tab clicks also write to the URL via
@@ -122,7 +110,13 @@ export function AgentDetailPage({
 
   // If the user landed on a legacy URL (`/agents/<id>/build`), rewrite
   // to the canonical one for the new tab so the URL bar matches.
+  // `/agents/<id>/logs` no longer has a per-agent tab — redirect old
+  // bookmarks to the global /logs page where the same data lives.
   useEffect(() => {
+    if (initialTab === 'logs') {
+      navigate('/logs', { replace: true })
+      return
+    }
     if (initialTab && TAB_ALIASES[initialTab]) {
       const target = TAB_ALIASES[initialTab]
       const path =
@@ -149,16 +143,22 @@ export function AgentDetailPage({
       ) {
         return
       }
-      const map: Record<string, TabId> = {
+      const map: Record<string, TabId | 'logs'> = {
         c: 'configure',
         r: 'resources',
         t: 'chat', // mnemonic: Talk to the agent (c is taken by Configure)
         b: 'bridge',
+        // 'l' jumps to the global Logs page since the per-agent
+        // tab was removed.
         l: 'logs',
       }
       const next = map[e.key.toLowerCase()]
       if (!next) return
       e.preventDefault()
+      if (next === 'logs') {
+        navigate('/logs')
+        return
+      }
       setTabAndUrl(next)
     }
     document.addEventListener('keydown', onKey)
@@ -406,15 +406,6 @@ export function AgentDetailPage({
       {tab === 'bridge' && (
         <Suspense fallback={<TabSpinner />}>
           <BridgeToolsTab agentId={agent.id} />
-        </Suspense>
-      )}
-      {tab === 'logs' && (
-        <Suspense fallback={<TabSpinner />}>
-          <LogsTab
-            agentId={agent.id}
-            events={agentEvents.events}
-            connected={agentEvents.connected}
-          />
         </Suspense>
       )}
     </div>

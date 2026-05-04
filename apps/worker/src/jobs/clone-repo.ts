@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Job } from 'bullmq'
 
-import { reposRepo } from '@agent-bridge/db'
+import { reposRepo, workerJobsRepo } from '@agent-bridge/db'
 import {
   cloneRepoJobSchema,
   redactSecrets,
@@ -61,8 +61,34 @@ export async function handleCloneRepoJob(
   const bus = getEventBus()
   const db = getDb()
 
-  // Publish + DB helpers defined up-front so the error path can use them.
-  const publish = (event: RunEvent) => bus.publish(event)
+  // `jobId` is set after the repo-existence check creates the
+  // `worker_jobs` row. Until then `publish` is publish-only (the
+  // pre-job-start fail path can't audit anywhere — no FK target
+  // would exist for an event row). Once set, every publish ALSO
+  // appends to `worker_events` so the /logs page can replay the
+  // job's full timeline after the fact.
+  let jobId: string | null = null
+  const publish = async (event: RunEvent): Promise<number> => {
+    const subscribers = await bus.publish(event)
+    if (jobId) {
+      try {
+        await workerJobsRepo.appendWorkerEvent(db, {
+          jobId,
+          kind: event.kind,
+          payload: event.data ?? null,
+          ts: new Date(event.ts),
+        })
+      } catch (err) {
+        // Audit-log failure must never break the live stream — log
+        // and continue. Same fail-soft policy the agent dispatcher
+        // uses (see run-dispatcher.ts:799).
+        console.warn(
+          `[clone-repo] failed to audit ${event.kind} for job ${jobId}: ${errMsg(err)}`,
+        )
+      }
+    }
+    return subscribers
+  }
   const now = (): number => Date.now()
 
   // Re-fetch the row inside the worker. The backend already ran `markCloning`
@@ -84,6 +110,23 @@ export async function handleCloneRepoJob(
     throw new Error(message)
   }
 
+  // Create the `worker_jobs` lifecycle row before any subsequent
+  // publish so every event from this point on is auditable. If the
+  // insert itself fails (DB hiccup), we proceed publish-only — the
+  // job still runs, it just won't show up on /logs as a separate
+  // attempt.
+  try {
+    const jobRow = await workerJobsRepo.createWorkerJob(db, {
+      repoId: input.repoId,
+      jobKind: 'clone',
+    })
+    jobId = jobRow.id
+  } catch (err) {
+    console.warn(
+      `[clone-repo] failed to create worker_jobs row for repo ${input.repoId}: ${errMsg(err)}`,
+    )
+  }
+
   const remoteUrl = row.remoteUrl
   const branch = row.branch
   const patEnvelope = row.gitPatEnvelope
@@ -103,6 +146,7 @@ export async function handleCloneRepoJob(
         streamId,
         repoId: input.repoId,
         result: { status: 'error', lastError: message },
+        jobId,
       })
       throw new Error(message)
     }
@@ -169,6 +213,7 @@ export async function handleCloneRepoJob(
       repoId: input.repoId,
       result: { status: 'cloned', localPath: finalDir },
       startedAt,
+      jobId,
     })
 
     // Auto-chain into index. We own the `cloned → indexing` CAS here
@@ -202,6 +247,7 @@ export async function handleCloneRepoJob(
       repoId: input.repoId,
       result: { status: 'error', lastError: message },
       startedAt,
+      jobId,
     })
     // BullMQ shows the thrown error in its admin UI; keep it redacted too.
     throw new Error(message)
@@ -352,9 +398,27 @@ async function finishAndPublish(args: {
   repoId: string
   result: reposRepo.CloneResult
   startedAt?: number
+  /** When set, the matching `worker_jobs` row gets its terminal
+   *  status (completed/error) and `finished_at` written before the
+   *  terminal event is published. Best-effort — a failed update is
+   *  logged and swallowed so the live event still ships. */
+  jobId?: string | null
 }): Promise<void> {
-  const { publish, db, streamId, repoId, result, startedAt } = args
+  const { publish, db, streamId, repoId, result, startedAt, jobId } = args
   await reposRepo.finishClone(db, repoId, result)
+  if (jobId) {
+    try {
+      await workerJobsRepo.markWorkerJobFinished(db, jobId, {
+        status: result.status === 'cloned' ? 'completed' : 'error',
+        errorMessage:
+          result.status === 'error' ? result.lastError ?? null : null,
+      })
+    } catch (err) {
+      console.warn(
+        `[clone-repo] failed to finalise job ${jobId}: ${errMsg(err)}`,
+      )
+    }
+  }
 
   if (result.status === 'cloned') {
     await publish({

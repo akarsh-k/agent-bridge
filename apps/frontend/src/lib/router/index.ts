@@ -74,12 +74,14 @@ const AGENT_TABS = [
   'resources',
   'chat',
   'bridge',
-  'logs',
-  // legacy aliases
+  // legacy aliases — kept so old bookmarks resolve. 'logs' redirects
+  // to the global /logs page (handled in the AgentDetailPage effect);
+  // the others map to a still-active tab via TAB_ALIASES on the page.
   'build',
   'test',
   'memory',
   'tools',
+  'logs',
 ] as const
 export type AgentTabSegment = (typeof AGENT_TABS)[number]
 
@@ -104,6 +106,23 @@ export function matchAgentDetail(
 export function matchBridge(path: string): boolean {
   const parts = path.split('/').filter(Boolean)
   return parts.length === 1 && parts[0] === 'bridge'
+}
+
+/**
+ * Match the global Logs page route. `/logs` is the parent-level
+ * runs feed (every agent, both UI + bridge sources). Per-agent
+ * Logs tab still lives at `/agents/:id/logs` for filtered views.
+ * Optional `:runId` segment opens the run detail sheet on load
+ * (deep-linkable from a tool-call notification, etc.).
+ */
+export function matchLogs(
+  path: string,
+): { runId: string | null } | null {
+  const parts = path.split('/').filter(Boolean)
+  if (parts[0] !== 'logs') return null
+  if (parts.length === 1) return { runId: null }
+  if (parts.length === 2) return { runId: parts[1] ?? null }
+  return null
 }
 
 /** Static path helpers for the new shell. */

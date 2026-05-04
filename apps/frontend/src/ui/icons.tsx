@@ -132,6 +132,16 @@ export const FileIcon = base(
     <path d="M14 2v6h6" />
   </>,
 )
+/* Three stacked horizontal lines + a pulse dot — reads as
+ * "log timeline / activity feed". Used by the global Logs nav entry. */
+export const LogsIcon = base(
+  <>
+    <path d="M4 6h12" />
+    <path d="M4 12h16" />
+    <path d="M4 18h10" />
+    <circle cx="20" cy="6" r="1.6" />
+  </>,
+)
 export const PlugIcon = base(
   <>
     <path d="M9 2v6" />

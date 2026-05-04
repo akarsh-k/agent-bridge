@@ -2,7 +2,7 @@ import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import type { Job } from 'bullmq'
 
-import { llmProvidersRepo, reposRepo } from '@agent-bridge/db'
+import { llmProvidersRepo, reposRepo, workerJobsRepo } from '@agent-bridge/db'
 import {
   generateWikiJobSchema,
   redactSecrets,
@@ -79,7 +79,28 @@ export async function handleGenerateWikiJob(
   const bus = getEventBus()
   const db = getDb()
 
-  const publish = (event: RunEvent): Promise<number> => bus.publish(event)
+  // See clone-repo.ts for the full pattern. publish becomes both
+  // SSE and audit once `jobId` is set; before that it's publish-only
+  // (no FK target).
+  let jobId: string | null = null
+  const publish = async (event: RunEvent): Promise<number> => {
+    const subscribers = await bus.publish(event)
+    if (jobId) {
+      try {
+        await workerJobsRepo.appendWorkerEvent(db, {
+          jobId,
+          kind: event.kind,
+          payload: event.data ?? null,
+          ts: new Date(event.ts),
+        })
+      } catch (err) {
+        console.warn(
+          `[generate-wiki] failed to audit ${event.kind} for job ${jobId}: ${errMsg(err)}`,
+        )
+      }
+    }
+    return subscribers
+  }
   const now = (): number => Date.now()
 
   // Re-fetch the row inside the worker. Backend already CAS-flipped
@@ -117,6 +138,20 @@ export async function handleGenerateWikiJob(
     throw new Error(message)
   }
 
+  // Status checks passed — create the lifecycle row so subsequent
+  // events (started / progress / ok / fail) all audit.
+  try {
+    const jobRow = await workerJobsRepo.createWorkerJob(db, {
+      repoId: input.repoId,
+      jobKind: 'wiki',
+    })
+    jobId = jobRow.id
+  } catch (err) {
+    console.warn(
+      `[generate-wiki] failed to create worker_jobs row for repo ${input.repoId}: ${errMsg(err)}`,
+    )
+  }
+
   if (row.status !== 'ready' || !row.localPath) {
     const message =
       `Repo ${input.repoId} is not ready for wiki generation ` +
@@ -127,6 +162,7 @@ export async function handleGenerateWikiJob(
       streamId,
       repoId: input.repoId,
       lastError: message,
+      jobId,
     })
     throw new Error(message)
   }
@@ -147,6 +183,7 @@ export async function handleGenerateWikiJob(
       streamId,
       repoId: input.repoId,
       lastError: message,
+      jobId,
     })
     throw new Error(message)
   }
@@ -193,6 +230,7 @@ export async function handleGenerateWikiJob(
       streamId,
       repoId: input.repoId,
       lastError: message,
+      jobId,
     })
     throw new Error(message)
   }
@@ -288,6 +326,18 @@ export async function handleGenerateWikiJob(
       } satisfies RepoWikiOkPayload,
     })
 
+    if (jobId) {
+      try {
+        await workerJobsRepo.markWorkerJobFinished(db, jobId, {
+          status: 'completed',
+        })
+      } catch (err) {
+        console.warn(
+          `[generate-wiki] failed to finalise job ${jobId}: ${errMsg(err)}`,
+        )
+      }
+    }
+
     return {
       repoId: row.id,
       status: 'ready',
@@ -308,6 +358,7 @@ export async function handleGenerateWikiJob(
       streamId,
       repoId: row.id,
       lastError: message,
+      jobId,
     })
     // BullMQ admin UI shows the thrown error; keep it redacted too.
     throw new Error(message)
@@ -475,12 +526,27 @@ async function failAndPublish(args: {
   streamId: string
   repoId: string
   lastError: string
+  /** When set, marks the matching `worker_jobs` row as errored
+   *  before the terminal event publishes. Best-effort. */
+  jobId?: string | null
 }): Promise<void> {
-  const { publish, db, streamId, repoId, lastError } = args
+  const { publish, db, streamId, repoId, lastError, jobId } = args
   await reposRepo.finishWiki(db, repoId, {
     status: 'error',
     lastError,
   })
+  if (jobId) {
+    try {
+      await workerJobsRepo.markWorkerJobFinished(db, jobId, {
+        status: 'error',
+        errorMessage: lastError,
+      })
+    } catch (err) {
+      console.warn(
+        `[generate-wiki] failed to finalise job ${jobId}: ${errMsg(err)}`,
+      )
+    }
+  }
   await publish({
     kind: 'repo.wiki.fail',
     ts: Date.now(),

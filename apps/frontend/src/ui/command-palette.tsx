@@ -94,9 +94,12 @@ function Inner({ onClose }: { onClose: () => void }) {
           id: 'agent-logs',
           group: `On ${scopedAgent.name}`,
           label: 'Open Logs',
-          hint: 'live activity',
+          hint: 'global feed',
           Icon: BridgeIcon,
-          run: () => navigate(`/agents/${scopedAgent.id}/logs`),
+          // Per-agent logs tab was removed — global /logs has the
+          // agent multi-select filter; users pick this agent there
+          // for the equivalent view.
+          run: () => navigate('/logs'),
         },
         {
           id: 'agent-bridge',

@@ -34,6 +34,7 @@ import { reposRouter } from './routes/repos.js'
 import { runsRouter } from './routes/runs.js'
 import { skillsRouter } from './routes/skills.js'
 import { toolsRouter } from './routes/tools.js'
+import { workerJobsRouter } from './routes/worker-jobs.js'
 
 const corsOrigin =
   env.CORS_ORIGIN && env.CORS_ORIGIN.length > 0
@@ -113,6 +114,7 @@ const api = new Hono()
   .route('/repos', repoGraphRouter)
   .route('/repos', repoWikiStaticRouter)
   .route('/runs', runsRouter)
+  .route('/worker-jobs', workerJobsRouter)
   .route('/bridge', bridgeRouter)
   .get(
     '/hello',
