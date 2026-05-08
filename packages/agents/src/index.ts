@@ -56,7 +56,10 @@ export type {
   GitnexusSystemToolsOk,
   GitnexusSystemToolsErr,
 } from './system-tools.js'
-export { wipeSemanticVectorsForAgents } from './semantic-wipe.js'
+export {
+  wipeSemanticVectorsForAgents,
+  wipeAllSemanticVectors,
+} from './semantic-wipe.js'
 export type { WipeSemanticVectorsResult } from './semantic-wipe.js'
 export { estimateAgentTokens } from './token-estimate.js'
 export type {

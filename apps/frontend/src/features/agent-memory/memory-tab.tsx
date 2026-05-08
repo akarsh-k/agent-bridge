@@ -121,14 +121,17 @@ export function MemoryTab({ agentId }: { agentId: string }) {
     setSrScope(cfg?.semanticRecall?.scope ?? 'thread')
   }
 
-  const provider = useMemo(
+  // Semantic recall depends on the workspace embedding provider — the
+  // singleton row with `role='embedding'`. Configure one in the
+  // provider library to enable recall.
+  const embeddingDefault = useMemo(
     () =>
-      agent?.llmProviderId
-        ? llmProviders.find((p) => p.id === agent.llmProviderId)
-        : null,
-    [llmProviders, agent],
+      llmProviders.find(
+        (p) => p.role === 'embedding' && !!p.defaultModel,
+      ) ?? null,
+    [llmProviders],
   )
-  const semanticPossible = !!provider?.defaultEmbeddingModel
+  const semanticPossible = !!embeddingDefault
 
   if (!agent) return null
 
@@ -340,12 +343,14 @@ export function MemoryTab({ agentId }: { agentId: string }) {
               Embed every assistant turn and pull the top-K most-similar
               chunks back into context before answering. Useful when
               relevant prior turns sit outside the recent-messages
-              window. Requires an embedding model on the LLM provider.
+              window. Uses the workspace embedding default — set it
+              once in Library and every agent shares the same vector
+              space.
             </div>
           </div>
           {!semanticPossible && (
             <Pill kind="warn" dot>
-              Embedding model not set
+              No workspace embedding default
             </Pill>
           )}
           <Button
@@ -356,7 +361,19 @@ export function MemoryTab({ agentId }: { agentId: string }) {
             {srEnabled ? 'Disable' : 'Enable'}
           </Button>
         </div>
-        {!semanticPossible && provider && (
+        {semanticPossible && embeddingDefault && (
+          <div
+            className="ab-field-help"
+            style={{ marginTop: 8 }}
+          >
+            Workspace embedder:{' '}
+            <strong>{embeddingDefault.label}</strong> ·{' '}
+            <code className="ab-mono">
+              {embeddingDefault.defaultModel}
+            </code>
+          </div>
+        )}
+        {!semanticPossible && (
           <div
             className="ab-field-help"
             style={{
@@ -367,25 +384,16 @@ export function MemoryTab({ agentId }: { agentId: string }) {
               border: '1px solid var(--border)',
             }}
           >
-            Your provider <strong>{provider.label}</strong> doesn't have a
-            default embedding model selected yet. Embedding models live on
-            the LLM provider row so you choose deliberately — switching
-            them later invalidates any vectors already stored.{' '}
+            No embedding provider is configured. Add one in the{' '}
             <Link
-              to={`/library/providers/${provider.id}`}
+              to="/library/providers"
               style={{ color: 'var(--accent-300)' }}
             >
-              Pick one in the provider settings →
-            </Link>
-          </div>
-        )}
-        {!semanticPossible && !provider && (
-          <div
-            className="ab-field-help"
-            style={{ marginTop: 8, color: 'var(--warn)' }}
-          >
-            Attach an LLM provider to this agent first — semantic recall
-            uses the provider's embedding model.
+              provider library →
+            </Link>{' '}
+            (create a provider with role <code className="ab-mono">embedding</code>{' '}
+            and pick a model). One embedding provider serves the whole
+            workspace.
           </div>
         )}
         {srEnabled && (

@@ -1,1 +1,0 @@
-DROP TABLE "repo_index_summary" CASCADE;

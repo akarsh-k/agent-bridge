@@ -97,3 +97,36 @@ export async function wipeSemanticVectorsForAgents(
   )
   return { agentIds, indexNames: memoryIndexes }
 }
+
+/**
+ * Drop every `memory_observations_*` index. Used when the workspace
+ * embedding default changes — the new model produces vectors in a
+ * different geometry (and possibly a different dimension), so every
+ * existing index is unusable. Mastra recreates indexes lazily on the
+ * next vector write, so this is safe to do unconditionally even if
+ * no agent ever turns memory back on.
+ */
+export async function wipeAllSemanticVectors(
+  db: AgentBridgeDb,
+): Promise<{ readonly indexNames: readonly string[] }> {
+  const vector = getProcessVector(db.connectionString)
+  let allIndexes: string[]
+  try {
+    allIndexes = await vector.listIndexes()
+  } catch {
+    return { indexNames: [] }
+  }
+  const memoryIndexes = allIndexes.filter((n) =>
+    n.startsWith(MEMORY_OBSERVATION_PREFIX),
+  )
+  await Promise.all(
+    memoryIndexes.map(async (indexName) => {
+      try {
+        await vector.deleteIndex({ indexName })
+      } catch {
+        /* see deleteVectors note above — best-effort. */
+      }
+    }),
+  )
+  return { indexNames: memoryIndexes }
+}

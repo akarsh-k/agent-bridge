@@ -36,6 +36,7 @@ import type {
   AgentMemoryConfig,
   LlmProviderKind,
   LlmProviderModelsCache,
+  LlmProviderRole,
   McpAuthKind,
   McpTransport,
   RepoStatus,
@@ -67,20 +68,29 @@ export const llmProviders = pgTable(
   {
     id: uuid('id').primaryKey().defaultRandom(),
     kind: text('kind').$type<LlmProviderKind>().notNull(),
+    /**
+     * Whether this provider serves chat completions or text embeddings.
+     * Immutable after creation — flipping a chat row to embedding (or
+     * vice versa) silently changes how every consumer interprets
+     * `default_model`. If you want a different role, create a new row.
+     *
+     * The partial unique index below enforces at most one row with
+     * `role='embedding'`: the workspace has exactly one embedding
+     * model so semantic recall, repo indexing, and any future vector
+     * consumer share one geometry.
+     */
+    role: text('role').$type<LlmProviderRole>().notNull(),
     label: text('label').notNull(),
     /** Nullable for vendor APIs; required for local endpoints. */
     baseUrl: text('base_url'),
-    defaultModel: text('default_model'),
     /**
-     * Embedding model id for Mastra's semantic recall vector store
-     * (Phase 6a). Reuses the same provider's `baseUrl` + `apiKeyEnvelope`,
-     * since every supported provider speaks the OpenAI `/embeddings` HTTP
-     * shape. `null` means "this provider has no embedding endpoint" —
-     * agents using it cannot enable `semanticRecall` (working memory
-     * stays usable). No vendor default is invented; the operator picks
-     * the model deliberately to avoid mixing vector spaces.
+     * The model id this provider serves. `role` governs how it's used:
+     * chat-role rows feed `/v1/chat/completions`, embedding-role rows
+     * feed `/v1/embeddings`. Nullable until the operator picks one
+     * from the refreshed catalog — agents bound to a row with no
+     * `default_model` fail at build time with a clear error.
      */
-    defaultEmbeddingModel: text('default_embedding_model'),
+    defaultModel: text('default_model'),
     /** AES-256-GCM envelope. Nullable for no-auth local endpoints. */
     apiKeyEnvelope: text('api_key_envelope'),
     /**
@@ -94,7 +104,15 @@ export const llmProviders = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex('llm_providers_label_uq').on(t.label)],
+  (t) => [
+    uniqueIndex('llm_providers_label_uq').on(t.label),
+    // Partial unique index — at most one embedding-role row exists.
+    // Many chat-role rows are fine (one OpenAI key, one local Ollama,
+    // …); the workspace embedder is deliberately a singleton.
+    uniqueIndex('llm_providers_embedding_singleton_uq')
+      .on(t.role)
+      .where(sql`${t.role} = 'embedding'`),
+  ],
 )
 
 // ─── agents ───────────────────────────────────────────────────────────────
@@ -115,8 +133,6 @@ export const agents = pgTable(
     llmProviderId: uuid('llm_provider_id').references(() => llmProviders.id, {
       onDelete: 'set null',
     }),
-    /** Specific model; falls back to `llm_providers.default_model`. */
-    model: text('model'),
     memoryEnabled: boolean('memory_enabled').notNull().default(false),
     memoryConfig: jsonb('memory_config').$type<AgentMemoryConfig>(),
     createdAt: createdAt(),

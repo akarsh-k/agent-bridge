@@ -32,7 +32,7 @@ import {
   type LlmProviderResponse,
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
-import { wipeSemanticVectorsForAgents } from '@agent-bridge/agents'
+import { wipeAllSemanticVectors } from '@agent-bridge/agents'
 import { getDb } from '../db.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 import {
@@ -53,10 +53,10 @@ function toLlmProviderResponse(row: LlmProviderRow): LlmProviderResponse {
   return llmProviderResponseSchema.parse({
     id: row.id,
     kind: row.kind,
+    role: row.role,
     label: row.label,
     baseUrl: row.baseUrl,
     defaultModel: row.defaultModel,
-    defaultEmbeddingModel: row.defaultEmbeddingModel,
     apiKey: envelopeToSentinel(row.apiKeyEnvelope),
     models: row.modelsJson ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -83,10 +83,10 @@ export const llmProvidersRouter = new Hono()
           .insert(schema.llmProviders)
           .values({
             kind: body.kind,
+            role: body.role,
             label: body.label,
             baseUrl: body.baseUrl ?? null,
             defaultModel: body.defaultModel ?? null,
-            defaultEmbeddingModel: body.defaultEmbeddingModel ?? null,
             apiKeyEnvelope,
           })
           .returning()
@@ -104,6 +104,20 @@ export const llmProvidersRouter = new Hono()
         )
       } catch (err) {
         if (isPostgresErrorWithCode(err, PG.UNIQUE_VIOLATION)) {
+          // 23505 covers both label uniqueness and the embedding-role
+          // singleton index. Differentiate by whichever index the
+          // error references — Postgres surfaces it as `constraint`.
+          const constraint =
+            err && typeof err === 'object' && 'constraint' in err
+              ? (err as { constraint?: string }).constraint
+              : undefined
+          if (constraint === 'llm_providers_embedding_singleton_uq') {
+            return httpError(c, {
+              code: 'conflict',
+              message:
+                'an embedding provider already exists — delete it first to register a different one',
+            })
+          }
           return httpError(c, {
             code: 'conflict',
             message: `label "${body.label}" is already in use`,
@@ -173,9 +187,6 @@ export const llmProvidersRouter = new Hono()
       const handle = getDb()
       const { db } = handle
 
-      // Snapshot the existing row so we can detect whether the
-      // embedding model is actually changing — that's the trigger for
-      // the optional vector-wipe cascade below.
       const [before] = await db
         .select()
         .from(schema.llmProviders)
@@ -192,12 +203,27 @@ export const llmProvidersRouter = new Hono()
       if ('label' in body) patch.label = body.label
       if ('baseUrl' in body) patch.baseUrl = body.baseUrl ?? null
       if ('defaultModel' in body) patch.defaultModel = body.defaultModel ?? null
-      if ('defaultEmbeddingModel' in body)
-        patch.defaultEmbeddingModel = body.defaultEmbeddingModel ?? null
 
       const nextEnvelope = applySecretInput(body.apiKey)
       if (nextEnvelope !== SECRET_UNCHANGED) {
         patch.apiKeyEnvelope = nextEnvelope
+      }
+
+      // Vector wipe trigger: this row is the embedding provider AND
+      // its `defaultModel` is moving to a different value. Old vectors
+      // sit in the previous model's geometry and would produce garbage
+      // recall. The client must opt-in via `wipeSemanticVectors=true`.
+      const embeddingModelChanged =
+        before.role === 'embedding' &&
+        'defaultModel' in body &&
+        (before.defaultModel ?? null) !== (body.defaultModel ?? null)
+
+      if (embeddingModelChanged && body.wipeSemanticVectors !== true) {
+        return httpError(c, {
+          code: 'validation_failed',
+          message:
+            'embedding model is changing — set wipeSemanticVectors=true to confirm',
+        })
       }
 
       try {
@@ -214,27 +240,8 @@ export const llmProvidersRouter = new Hono()
           })
         }
 
-        // Vector wipe cascade. Triggered when the client confirmed
-        // via the dialog AND the embedding model actually flipped to
-        // something different (set→null, set→other, null→other when
-        // there are old vectors — though null→other is harmless since
-        // there can't be vectors stored under a null model). Affects
-        // every agent currently bound to this provider; their
-        // resourceId stays constant so PgVector's metadata filter
-        // keys cleanly off `agent:<id>`.
-        const embeddingChanged =
-          'defaultEmbeddingModel' in body &&
-          (before.defaultEmbeddingModel ?? null) !==
-            (body.defaultEmbeddingModel ?? null)
-        if (body.wipeSemanticVectors === true && embeddingChanged) {
-          const agentRows = await db
-            .select({ id: schema.agents.id })
-            .from(schema.agents)
-            .where(eq(schema.agents.llmProviderId, id))
-          const agentIds = agentRows.map((r) => r.id)
-          if (agentIds.length > 0) {
-            await wipeSemanticVectorsForAgents(handle, agentIds)
-          }
+        if (embeddingModelChanged) {
+          await wipeAllSemanticVectors(handle)
         }
 
         return c.json({
@@ -389,21 +396,31 @@ export const llmProvidersRouter = new Hono()
     }),
     async (c) => {
       const { id } = c.req.valid('param')
-      const { db } = getDb()
+      const handle = getDb()
+      const { db } = handle
 
-      // `agents.llm_provider_id` → `ON DELETE SET NULL`, so deleting a
-      // provider is always safe (agents just become "unconfigured"). We
-      // rely on the FK action instead of pre-nulling in application code.
+      // Deleting the embedding provider orphans every stored vector
+      // (no row left to embed queries against). Wipe them so a future
+      // re-attached embedder doesn't query against alien geometry.
+      // Chat-role deletes go through `ON DELETE SET NULL` on
+      // `agents.llm_provider_id` and need no extra cleanup.
       const [row] = await db
         .delete(schema.llmProviders)
         .where(eq(schema.llmProviders.id, id))
-        .returning({ id: schema.llmProviders.id })
+        .returning({
+          id: schema.llmProviders.id,
+          role: schema.llmProviders.role,
+        })
 
       if (!row) {
         return httpError(c, {
           code: 'not_found',
           message: `llm provider ${id} not found`,
         })
+      }
+
+      if (row.role === 'embedding') {
+        await wipeAllSemanticVectors(handle)
       }
 
       return c.json({ ok: true as const, id: row.id })

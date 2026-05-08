@@ -32,6 +32,19 @@ export const llmProviderKinds = [
 export type LlmProviderKind = (typeof llmProviderKinds)[number]
 
 /**
+ * What an LLM provider row is for. A row with `role='chat'` answers
+ * `/v1/chat/completions` for any agent that picks it as its chat
+ * provider. A row with `role='embedding'` answers `/v1/embeddings` for
+ * the workspace's vector consumers — semantic recall today, repo
+ * indexing later. Roles are singletons in different ways: many chat
+ * rows may coexist (different keys, different vendors), but at most
+ * one embedding row exists at a time so the workspace has one
+ * vector geometry.
+ */
+export const llmProviderRoles = ['chat', 'embedding'] as const
+export type LlmProviderRole = (typeof llmProviderRoles)[number]
+
+/**
  * Snapshot of `/v1/models` for a configured provider, cached on the
  * `llm_providers.models_json` jsonb column. Populated by the
  * `POST /api/llm-providers/:id/models/refresh` endpoint and read by every

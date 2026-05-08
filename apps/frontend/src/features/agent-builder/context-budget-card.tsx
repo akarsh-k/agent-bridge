@@ -37,9 +37,16 @@ type LoadState =
   | { kind: 'err'; message: string }
 
 export function ContextBudgetCard({ agentId }: { agentId: string }) {
-  const { agents, agentResources } = useWorkspace()
+  const { agents, agentResources, llmProviders } = useWorkspace()
   const agent = agents.find((a) => a.id === agentId)
   const resources = agentResources[agentId]
+  const providerModel = useMemo(() => {
+    if (!agent?.llmProviderId) return null
+    return (
+      llmProviders.find((p) => p.id === agent.llmProviderId)?.defaultModel ??
+      null
+    )
+  }, [agent?.llmProviderId, llmProviders])
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [refreshKey, setRefreshKey] = useState(0)
   const [toolsOpen, setToolsOpen] = useState(false)
@@ -56,7 +63,7 @@ export function ContextBudgetCard({ agentId }: { agentId: string }) {
   const dependencyKey = useMemo(
     () =>
       JSON.stringify({
-        model: agent?.model ?? null,
+        model: providerModel,
         provider: agent?.llmProviderId ?? null,
         prompt: agent?.systemPrompt ?? '',
         skills: (resources?.skills ?? []).map(
@@ -68,7 +75,7 @@ export function ContextBudgetCard({ agentId }: { agentId: string }) {
         edges: (resources?.repoEdges ?? []).map((e) => e.id),
         mcp: (resources?.mcpAllowlist ?? []).length,
       }),
-    [agent, resources],
+    [agent, resources, providerModel],
   )
 
   useEffect(() => {

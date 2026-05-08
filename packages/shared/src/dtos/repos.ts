@@ -185,26 +185,18 @@ export type RepoIdParam = z.infer<typeof repoIdParamSchema>
 /**
  * POST /api/repos/:id/wiki body. The caller picks which LLM provider
  * pays for the run via `llmProviderId`; the backend resolves the row,
- * checks it has an `apiKey` envelope (or is local-only), and forwards
- * the decrypted credentials to the worker via the queue. `force` maps
- * to `gitnexus wiki --force` and skips the up-to-date short-circuit.
+ * checks it has an `apiKey` envelope (or is local-only) and a
+ * `default_model` set, and forwards the decrypted credentials to the
+ * worker via the queue. `force` maps to `gitnexus wiki --force` and
+ * skips the up-to-date short-circuit.
  *
- * `model` is optional on the wire: when omitted, the backend falls
- * back to `llm_providers.default_model`, and 400s if that's also null.
- * Letting the caller override per-request matters because a chat-tuned
- * agent model (e.g. `gpt-4o`) may be wrong for wiki gen (cheaper
- * `gpt-4o-mini` is usually fine); this lets the operator dial cost
- * without editing the provider row.
+ * Provider owns the model identity: there is no per-request model
+ * override. If the operator wants a different model for wiki gen,
+ * they configure it on the provider row.
  */
 export const repoWikiInputSchema = z
   .object({
     llmProviderId: z.uuid(),
-    /**
-     * Optional model id forwarded to `gitnexus wiki --model`. The string
-     * is validated as non-empty + bounded but otherwise opaque — gitnexus
-     * (and the upstream provider) own the semantics.
-     */
-    model: z.string().trim().min(1).max(200).optional(),
     force: z.boolean().optional(),
   })
   .strict()

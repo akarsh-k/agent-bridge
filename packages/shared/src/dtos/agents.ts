@@ -30,7 +30,6 @@ const baseFields = {
   description: z.string().trim().max(1_000).nullable().optional(),
   systemPrompt: z.string().max(50_000),
   llmProviderId: z.uuid().nullable().optional(),
-  model: z.string().trim().min(1).max(200).nullable().optional(),
   memoryEnabled: z.boolean(),
   memoryConfig: agentMemoryConfigSchema.nullable().optional(),
 } as const
@@ -47,7 +46,6 @@ export const agentCreateInputSchema = z
     /** Defaults to `''` on the server. */
     systemPrompt: baseFields.systemPrompt.optional(),
     llmProviderId: baseFields.llmProviderId,
-    model: baseFields.model,
     /** Defaults to `false` on the server. */
     memoryEnabled: baseFields.memoryEnabled.optional(),
     memoryConfig: baseFields.memoryConfig,
@@ -67,18 +65,8 @@ export const agentUpdateInputSchema = z
     description: baseFields.description,
     systemPrompt: baseFields.systemPrompt.optional(),
     llmProviderId: baseFields.llmProviderId,
-    model: baseFields.model,
     memoryEnabled: baseFields.memoryEnabled.optional(),
     memoryConfig: baseFields.memoryConfig,
-    /**
-     * Confirmation flag from the provider-change dialog. When true
-     * AND `llmProviderId` actually changed in this PATCH AND the
-     * old provider's embedding model differs from the new one's,
-     * the backend wipes this agent's semantic vectors. Old vectors
-     * live in the previous embedding model's vector space and would
-     * produce garbage retrieval otherwise.
-     */
-    wipeSemanticVectors: z.boolean().optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, {
@@ -98,7 +86,6 @@ export const agentResponseSchema = z.object({
   description: z.string().nullable(),
   systemPrompt: z.string(),
   llmProviderId: z.uuid().nullable(),
-  model: z.string().nullable(),
   memoryEnabled: z.boolean(),
   memoryConfig: agentMemoryConfigSchema.nullable(),
   createdAt: z.iso.datetime(),

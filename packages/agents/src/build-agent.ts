@@ -325,12 +325,12 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     skillRows,
   )
 
-  // Agent model overrides provider default. If neither is set we fail
-  // loud: picking a model on behalf of the user would mask missing config.
-  const modelId = agentRow.model ?? providerRow.defaultModel
+  // The provider owns the model identity. If it's missing we fail
+  // loud rather than picking on the user's behalf.
+  const modelId = providerRow.defaultModel
   if (!modelId) {
     throw new Error(
-      `[buildAgent] Agent ${agentId}: no model configured and provider "${providerRow.label}" has no default_model`,
+      `[buildAgent] Agent ${agentId}: provider "${providerRow.label}" has no default_model set`,
     )
   }
 
@@ -354,12 +354,22 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     ...(apiKey ? { apiKey } : {}),
   }
 
+  // Embedding for semantic recall comes from the workspace embedding
+  // provider — the (singleton) row with `role='embedding'`. A
+  // workspace with no embedding provider yields no vector arm
+  // regardless of what the chat provider can do.
+  const [embeddingProviderRow] = agentRow.memoryEnabled
+    ? await db.db
+        .select()
+        .from(schema.llmProviders)
+        .where(eq(schema.llmProviders.role, 'embedding'))
+        .limit(1)
+    : [undefined]
+
   const memoryMount = agentRow.memoryEnabled
     ? buildMemory({
         db,
-        provider: providerRow,
-        baseUrl,
-        apiKey,
+        embeddingProvider: embeddingProviderRow ?? null,
         config: agentRow.memoryConfig,
       })
     : null
@@ -662,12 +672,10 @@ interface BuiltMemory {
  */
 function buildMemory(args: {
   db: AgentBridgeDb
-  provider: LlmProviderRow
-  baseUrl: string
-  apiKey: string | undefined
+  embeddingProvider: LlmProviderRow | null
   config: AgentMemoryConfig | null
 }): BuiltMemory {
-  const { db, provider, baseUrl, apiKey, config } = args
+  const { db, embeddingProvider, config } = args
 
   const storage = new PostgresStore({
     id: MASTRA_STORE_ID,
@@ -678,13 +686,15 @@ function buildMemory(args: {
   type MemoryArg = ConstructorParameters<typeof Memory>[0]
   type MemoryOptions = NonNullable<MemoryArg>['options']
 
-  const embedderModelId = provider.defaultEmbeddingModel?.trim() || null
-  const vectorArm = embedderModelId
+  // Vector arm requires the workspace embedding provider to (a) exist
+  // and (b) carry a `defaultModel`. If neither, working memory and
+  // recent-message replay still work; semantic recall just isn't
+  // available.
+  const embedderModelId = embeddingProvider?.defaultModel?.trim() || null
+  const vectorArm = embeddingProvider && embedderModelId
     ? buildVectorArm({
         db,
-        provider,
-        baseUrl,
-        apiKey,
+        provider: embeddingProvider,
         embedderModelId,
       })
     : null
@@ -694,9 +704,7 @@ function buildMemory(args: {
   // vector store to be configured" on the first turn otherwise — and
   // since Phase 6b auto-seeds `semanticRecall` whenever an operator
   // flips `memoryEnabled` on, every memory-on agent without an embedder
-  // would hit this. Working-memory + recent-history still work; the UI
-  // already flags `vectorReady=false` so the operator knows to set
-  // `default_embedding_model` on the provider when they want recall.
+  // would hit this.
   const runtimeConfig = config && !vectorArm
     ? stripSemanticRecall(config)
     : config
@@ -712,7 +720,7 @@ function buildMemory(args: {
     meta: {
       enabled: true,
       vectorReady: vectorArm !== null,
-      embedderProvider: vectorArm ? provider.kind : null,
+      embedderProvider: vectorArm ? embeddingProvider!.kind : null,
       embedderModel: vectorArm ? embedderModelId : null,
     },
   }
@@ -738,11 +746,9 @@ interface VectorArm {
 function buildVectorArm(args: {
   db: AgentBridgeDb
   provider: LlmProviderRow
-  baseUrl: string
-  apiKey: string | undefined
   embedderModelId: string
 }): VectorArm {
-  const { db, provider, baseUrl, apiKey, embedderModelId } = args
+  const { db, provider, embedderModelId } = args
 
   // Process-level singleton — Mastra's PgVector is namespaced internally
   // by the Memory instance's resource/thread ids, so cross-agent leakage
@@ -750,10 +756,14 @@ function buildVectorArm(args: {
   // constructor per `buildAgent` call (Phase 6 design decision).
   const vector = getProcessPgVector(db.connectionString)
 
-  // Reuse the language-model's `baseUrl` + `apiKey`. Every supported
-  // provider speaks the OpenAI `/embeddings` HTTP shape (this is the
-  // definition of `llmProviderKinds`), so the embedder routes through
-  // the same provider configuration the LLM uses.
+  // Resolve the embedding provider's own credentials. It may be a
+  // different row from the chat provider, so we can't reuse the
+  // language-model's `baseUrl` / `apiKey` here.
+  const baseUrl = resolveBaseUrl(provider.kind, provider.baseUrl)
+  const apiKey = provider.apiKeyEnvelope
+    ? decryptSecret(provider.apiKeyEnvelope)
+    : undefined
+
   const embedder = new ModelRouterEmbeddingModel({
     providerId: provider.kind,
     modelId: embedderModelId,

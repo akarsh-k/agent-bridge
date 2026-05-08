@@ -107,6 +107,14 @@ export function ProvidersPage() {
                     Default
                   </Pill>
                 )}
+                <Pill kind={p.role === 'embedding' ? 'accent' : 'neutral'}>
+                  {p.role === 'embedding' ? 'Embedding · workspace' : 'Chat'}
+                </Pill>
+                {!p.defaultModel && (
+                  <Pill kind="warn" dot>
+                    No model
+                  </Pill>
+                )}
                 <Pill kind={p.apiKey.set ? 'success' : 'warn'} dot>
                   {p.apiKey.set ? 'Key set' : 'No key'}
                 </Pill>

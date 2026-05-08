@@ -39,32 +39,17 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
       ? defaultProviderId
       : null,
   )
-  const [modelChoice, setModelChoice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   const effectiveSlug = slugTouched ? slug : slugify(name)
 
-  const provider = useMemo(
-    () => llmProviders.find((p) => p.id === providerId) ?? null,
-    [llmProviders, providerId],
-  )
-  const cachedModels = useMemo(
-    () => provider?.models?.models ?? [],
-    [provider],
-  )
-  const effectiveModel = useMemo(() => {
-    if (modelChoice && cachedModels.includes(modelChoice)) return modelChoice
-    return provider?.defaultModel ?? cachedModels[0] ?? null
-  }, [modelChoice, cachedModels, provider])
-
+  // Only chat-role providers with a model set are eligible.
   const providerOpts: DropdownOption[] = useMemo(
     () =>
-      llmProviders.map((p) => ({ value: p.id, label: p.label, sub: p.kind })),
+      llmProviders
+        .filter((p) => p.role === 'chat' && !!p.defaultModel)
+        .map((p) => ({ value: p.id, label: p.label, sub: p.kind })),
     [llmProviders],
-  )
-  const modelOpts: DropdownOption[] = useMemo(
-    () => cachedModels.map((m) => ({ value: m, label: m, monoLabel: true })),
-    [cachedModels],
   )
 
   const slugValid = SLUG_RE.test(effectiveSlug)
@@ -73,8 +58,7 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
   const dirty =
     name.length > 0 ||
     description.length > 0 ||
-    providerId !== null ||
-    modelChoice !== null
+    providerId !== null
   const guardedClose = useDirtyClose(dirty && !busy, onClose)
 
   const submit = async () => {
@@ -87,7 +71,6 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
         description: description.trim() || null,
         systemPrompt: '',
         llmProviderId: providerId ?? null,
-        model: effectiveModel ?? null,
         memoryEnabled: false,
       })
       toast.success(`Created ${created.name}`)
@@ -161,41 +144,30 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
           placeholder="One sentence. Helps you tell agents apart later."
         />
       </div>
-      <div className="ab-field-grid">
-        <div className="ab-field">
-          <span className="ab-field-label">Provider</span>
-          {providerOpts.length === 0 ? (
-            <div
-              className="ab-input"
-              style={{
-                color: 'var(--text-muted)',
-                display: 'flex',
-                alignItems: 'center',
-              }}
-            >
-              No providers yet — add one in Library
-            </div>
-          ) : (
-            <Dropdown
-              value={providerId}
-              onChange={setProviderId}
-              options={providerOpts}
-              placeholder="Pick a provider"
-            />
-          )}
-        </div>
-        <div className="ab-field">
-          <span className="ab-field-label">Model</span>
+      <div className="ab-field">
+        <span className="ab-field-label">Provider</span>
+        {providerOpts.length === 0 ? (
+          <div
+            className="ab-input"
+            style={{
+              color: 'var(--text-muted)',
+              display: 'flex',
+              alignItems: 'center',
+            }}
+          >
+            No chat-capable providers yet — add one in Library
+          </div>
+        ) : (
           <Dropdown
-            value={effectiveModel}
-            onChange={setModelChoice}
-            options={modelOpts}
-            placeholder={
-              providerId ? 'Pick a model' : 'Pick a provider first'
-            }
-            disabled={!providerId || modelOpts.length === 0}
+            value={providerId}
+            onChange={setProviderId}
+            options={providerOpts}
+            placeholder="Pick a provider"
           />
-        </div>
+        )}
+        <span className="ab-field-help">
+          The provider's default model is what the agent uses.
+        </span>
       </div>
     </Sheet>
   )

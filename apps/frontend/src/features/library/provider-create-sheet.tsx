@@ -9,7 +9,9 @@ import { useMemo, useState } from 'react'
 import {
   llmProviderCreateInputSchema,
   llmProviderKinds,
+  llmProviderRoles,
   type LlmProviderKind,
+  type LlmProviderRole,
 } from '@agent-bridge/shared'
 import { Sheet } from '../../ui/sheet'
 import { Dropdown, type DropdownOption } from '../../ui/dropdown'
@@ -32,12 +34,29 @@ const KIND_LABEL: Record<LlmProviderKind, string> = {
   openai_compatible: 'OpenAI-compatible (custom)',
 }
 
-function ProviderCreateForm({ onClose }: { onClose: () => void }) {
-  const { createLlmProvider, patchLlmProviderModels } = useWorkspace()
+const ROLE_LABEL: Record<LlmProviderRole, string> = {
+  chat: 'Chat',
+  embedding: 'Embedding (workspace-wide)',
+}
+const ROLE_SUB: Record<LlmProviderRole, string> = {
+  chat: 'Answers chat completions for any agent that picks it.',
+  embedding:
+    'Powers semantic recall and (later) repo indexing. One per workspace.',
+}
+
+function ProviderCreateForm({
+  defaultRole,
+  onClose,
+}: {
+  defaultRole: LlmProviderRole
+  onClose: () => void
+}) {
+  const { createLlmProvider, patchLlmProviderModels, llmProviders } =
+    useWorkspace()
   const [label, setLabel] = useState('')
+  const [role, setRole] = useState<LlmProviderRole>(defaultRole)
   const [kind, setKind] = useState<LlmProviderKind>('openai')
   const [baseUrl, setBaseUrl] = useState('')
-  const [defaultModel, setDefaultModel] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -51,22 +70,37 @@ function ProviderCreateForm({ onClose }: { onClose: () => void }) {
       })),
     [],
   )
+  const embeddingExists = useMemo(
+    () => llmProviders.some((p) => p.role === 'embedding'),
+    [llmProviders],
+  )
+  const roleOpts: DropdownOption<LlmProviderRole>[] = useMemo(
+    () =>
+      llmProviderRoles.map((r) => ({
+        value: r,
+        label: ROLE_LABEL[r],
+        sub: ROLE_SUB[r],
+        disabled: r === 'embedding' && embeddingExists,
+        disabledReason:
+          r === 'embedding' && embeddingExists
+            ? 'An embedding provider already exists. Delete it first.'
+            : undefined,
+      })),
+    [embeddingExists],
+  )
   const local = isLocal(kind)
 
   const dirty =
-    label.length > 0 ||
-    baseUrl.length > 0 ||
-    defaultModel.length > 0 ||
-    apiKey.length > 0
+    label.length > 0 || baseUrl.length > 0 || apiKey.length > 0
   const guardedClose = useDirtyClose(dirty && !busy, onClose)
 
   const submit = async () => {
     setErr(null)
     const parsed = llmProviderCreateInputSchema.safeParse({
       kind,
+      role,
       label: label.trim(),
       baseUrl: local ? baseUrl.trim() || undefined : undefined,
-      defaultModel: defaultModel.trim() || undefined,
       apiKey: apiKey.trim()
         ? ({ action: 'set', plaintext: apiKey.trim() } as const)
         : undefined,
@@ -128,6 +162,19 @@ function ProviderCreateForm({ onClose }: { onClose: () => void }) {
       primaryDisabled={!label.trim()}
     >
       <div className="ab-field">
+        <span className="ab-field-label">Role</span>
+        <Dropdown<LlmProviderRole>
+          value={role}
+          onChange={setRole}
+          options={roleOpts}
+        />
+        <span className="ab-field-help">
+          Chat providers serve <code className="ab-mono">/v1/chat/completions</code>.
+          The embedding provider is a workspace singleton — its model
+          embeds every vector consumer.
+        </span>
+      </div>
+      <div className="ab-field">
         <label className="ab-field-label" htmlFor="np-label">
           Label
         </label>
@@ -178,22 +225,6 @@ function ProviderCreateForm({ onClose }: { onClose: () => void }) {
           Encrypted at rest with your master key.
         </span>
       </div>
-      <div className="ab-field">
-        <label className="ab-field-label" htmlFor="np-default-model">
-          Default model (optional)
-        </label>
-        <input
-          id="np-default-model"
-          className="ab-input ab-mono"
-          value={defaultModel}
-          onChange={(e) => setDefaultModel(e.target.value)}
-          placeholder="claude-opus-4-7"
-        />
-        <span className="ab-field-help">
-          Optional. The full model list refreshes automatically after
-          creation; this just pre-fills the agent-builder dropdown.
-        </span>
-      </div>
       {err && (
         <div
           className="ab-field-help"
@@ -209,9 +240,12 @@ function ProviderCreateForm({ onClose }: { onClose: () => void }) {
 
 export function ProviderCreateSheet({
   open,
+  defaultRole = 'chat',
   onClose,
 }: {
   open: boolean
+  /** Pre-selects the role dropdown. Useful for "Add embedder" CTAs. */
+  defaultRole?: LlmProviderRole
   onClose: () => void
 }) {
   const [openCount, setOpenCount] = useState(0)
@@ -227,5 +261,11 @@ export function ProviderCreateSheet({
       </Sheet>
     )
   }
-  return <ProviderCreateForm key={openCount} onClose={onClose} />
+  return (
+    <ProviderCreateForm
+      key={openCount}
+      defaultRole={defaultRole}
+      onClose={onClose}
+    />
+  )
 }

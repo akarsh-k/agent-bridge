@@ -19,12 +19,14 @@
 import { z } from 'zod'
 import {
   llmProviderKinds,
+  llmProviderRoles,
   type LlmProviderKind,
   type LlmProviderModelsCache,
 } from '../domain.js'
 import { secretInputSchema, secretSentinelSchema } from './secrets.js'
 
 const kindSchema = z.enum(llmProviderKinds)
+const roleSchema = z.enum(llmProviderRoles)
 
 const LOCAL_KINDS: readonly LlmProviderKind[] = [
   'llama_cpp',
@@ -42,24 +44,10 @@ function isLocalKind(kind: LlmProviderKind): boolean {
 
 const baseFields = {
   kind: kindSchema,
+  role: roleSchema,
   label: z.string().trim().min(1).max(120),
   baseUrl: z.url({ message: 'baseUrl must be a valid URL' }).nullable().optional(),
   defaultModel: z.string().trim().min(1).max(200).nullable().optional(),
-  /**
-   * Embedding-model id used by Mastra's semantic-recall vector store
-   * (Phase 6a). Reuses the same provider's `baseUrl` + `apiKey`. Optional:
-   * `null`/absent means "this provider has no embedding endpoint", which
-   * disables `semanticRecall` for any agent using it. We deliberately
-   * do NOT auto-fill a vendor default — silently swapping vector spaces
-   * across runs of the same agent corrupts recall quality.
-   */
-  defaultEmbeddingModel: z
-    .string()
-    .trim()
-    .min(1)
-    .max(200)
-    .nullable()
-    .optional(),
   apiKey: secretInputSchema.optional(),
 } as const
 
@@ -68,10 +56,10 @@ const baseFields = {
 export const llmProviderCreateInputSchema = z
   .object({
     kind: baseFields.kind,
+    role: baseFields.role,
     label: baseFields.label,
     baseUrl: baseFields.baseUrl,
     defaultModel: baseFields.defaultModel,
-    defaultEmbeddingModel: baseFields.defaultEmbeddingModel,
     apiKey: baseFields.apiKey,
   })
   .strict()
@@ -98,25 +86,25 @@ export type LlmProviderCreateInput = z.infer<typeof llmProviderCreateInputSchema
 // ─── Update ──────────────────────────────────────────────────────────────
 
 /**
- * PATCH body. All fields optional; at least one must be present. Kind is
- * intentionally NOT updatable — an `openai` row turning into an `ollama` row
- * silently flips the auth/URL policy. If the user wants a different kind,
- * they create a new provider.
+ * PATCH body. All fields optional; at least one must be present. Kind
+ * and role are intentionally NOT updatable — flipping `kind` silently
+ * flips the auth/URL policy, and flipping `role` reinterprets every
+ * stored vector or every chat call against the same `default_model`
+ * string. If the operator wants a different kind or role, they create
+ * a new provider row.
  */
 export const llmProviderUpdateInputSchema = z
   .object({
     label: baseFields.label.optional(),
     baseUrl: baseFields.baseUrl,
     defaultModel: baseFields.defaultModel,
-    defaultEmbeddingModel: baseFields.defaultEmbeddingModel,
     apiKey: baseFields.apiKey,
     /**
-     * Confirmation flag from the embedding-model-change dialog. When
-     * true AND `defaultEmbeddingModel` actually changed in this PATCH,
-     * the backend wipes stored semantic vectors for every agent using
-     * this provider — old vectors live in the previous model's
-     * vector space and would produce garbage retrieval results
-     * otherwise.
+     * Confirmation flag from the embedding-model-change dialog. Set
+     * by the UI when the operator confirms changing the embedding
+     * provider's `defaultModel` — old vectors live in the previous
+     * model's geometry and produce garbage retrieval otherwise. The
+     * backend wipes every stored vector when this is `true`.
      */
     wipeSemanticVectors: z.boolean().optional(),
   })
@@ -143,14 +131,16 @@ export const llmProviderModelsCacheSchema = z.object({
 export const llmProviderResponseSchema = z.object({
   id: z.uuid(),
   kind: kindSchema,
+  /** What this provider serves: `'chat'` or `'embedding'`. */
+  role: roleSchema,
   label: z.string(),
   baseUrl: z.string().nullable(),
-  defaultModel: z.string().nullable(),
   /**
-   * Embedding model id used for Mastra semantic-recall (Phase 6a).
-   * `null` means the provider doesn't expose an embeddings endpoint.
+   * The model id this provider serves. Interpretation depends on
+   * `role` — chat-role rows feed `/v1/chat/completions`,
+   * embedding-role rows feed `/v1/embeddings`.
    */
-  defaultEmbeddingModel: z.string().nullable(),
+  defaultModel: z.string().nullable(),
   /** Presence-only sentinel. Never contains plaintext. */
   apiKey: secretSentinelSchema,
   /** Cached `/v1/models` response or `null` if never refreshed. */

@@ -191,7 +191,6 @@ export const agentExportRouter = new Hono()
           name: agent.name,
           description: agent.description,
           systemPrompt: agent.systemPrompt,
-          model: agent.model,
           memoryEnabled: agent.memoryEnabled,
           memoryConfig: agent.memoryConfig,
         },
@@ -261,7 +260,6 @@ export const agentExportRouter = new Hono()
               description: bundle.agent.description ?? null,
               systemPrompt: bundle.agent.systemPrompt,
               llmProviderId: null, // intentional — see DTO docstring
-              model: bundle.agent.model ?? null,
               memoryEnabled: bundle.agent.memoryEnabled,
               memoryConfig: bundle.agent.memoryConfig ?? null,
             })

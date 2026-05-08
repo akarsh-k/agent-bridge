@@ -171,14 +171,6 @@ const exportedAgentCoreSchema = z
     name: z.string().trim().min(1).max(120),
     description: z.string().trim().max(1_000).nullable().optional(),
     systemPrompt: z.string().max(50_000),
-    /**
-     * Stored model id at export time, if any. Importer attaches an LLM
-     * provider after the fact and may pick a different model — this is
-     * informational, written to the new agent's `model` column verbatim.
-     * If the operator wants a clean reset, they clear the field after
-     * import.
-     */
-    model: z.string().min(1).max(200).nullable().optional(),
     memoryEnabled: z.boolean(),
     memoryConfig: agentMemoryConfigSchema.nullable().optional(),
   })

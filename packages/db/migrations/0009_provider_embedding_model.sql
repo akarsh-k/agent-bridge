@@ -1,1 +1,0 @@
-ALTER TABLE "llm_providers" ADD COLUMN "default_embedding_model" text;

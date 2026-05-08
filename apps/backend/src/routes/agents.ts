@@ -22,7 +22,6 @@ import {
   type AgentResponse,
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
-import { wipeSemanticVectorsForAgents } from '@agent-bridge/agents'
 import { getDb } from '../db.js'
 import { publishAgentConfig } from '../lib/agent-events.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
@@ -42,7 +41,6 @@ function toAgentResponse(row: AgentRow): AgentResponse {
     description: row.description,
     systemPrompt: row.systemPrompt,
     llmProviderId: row.llmProviderId,
-    model: row.model,
     memoryEnabled: row.memoryEnabled,
     memoryConfig: row.memoryConfig,
     createdAt: row.createdAt.toISOString(),
@@ -71,7 +69,6 @@ export const agentsRouter = new Hono()
             description: body.description ?? null,
             systemPrompt: body.systemPrompt ?? '',
             llmProviderId: body.llmProviderId ?? null,
-            model: body.model ?? null,
             memoryEnabled: body.memoryEnabled ?? false,
             memoryConfig: body.memoryConfig ?? null,
           })
@@ -150,23 +147,7 @@ export const agentsRouter = new Hono()
     async (c) => {
       const { id } = c.req.valid('param')
       const body = c.req.valid('json')
-      const handle = getDb()
-      const { db } = handle
-
-      // Snapshot the current row up front so the vector-wipe cascade
-      // below can compare old vs new embedding model. Also doubles as
-      // an existence check before we run the UPDATE.
-      const [before] = await db
-        .select()
-        .from(schema.agents)
-        .where(eq(schema.agents.id, id))
-        .limit(1)
-      if (!before) {
-        return httpError(c, {
-          code: 'not_found',
-          message: `agent ${id} not found`,
-        })
-      }
+      const { db } = getDb()
 
       // Build the update object from *only* keys the client sent. Zod's
       // `.strict()` guarantees no extra keys slipped in; missing keys become
@@ -177,7 +158,6 @@ export const agentsRouter = new Hono()
       if ('description' in body) patch.description = body.description ?? null
       if ('systemPrompt' in body) patch.systemPrompt = body.systemPrompt
       if ('llmProviderId' in body) patch.llmProviderId = body.llmProviderId ?? null
-      if ('model' in body) patch.model = body.model ?? null
       if ('memoryEnabled' in body) patch.memoryEnabled = body.memoryEnabled
       if ('memoryConfig' in body) patch.memoryConfig = body.memoryConfig ?? null
 
@@ -213,41 +193,6 @@ export const agentsRouter = new Hono()
             code: 'not_found',
             message: `agent ${id} not found`,
           })
-        }
-
-        // Vector wipe cascade. The provider switch can land this
-        // agent on a different embedding model (or none at all),
-        // putting any previously-stored vectors into the wrong vector
-        // space. The client only sets `wipeSemanticVectors=true`
-        // after the user confirms the dialog showing the model
-        // change — we double-check here that the providers actually
-        // differ in their embedding model before doing the wipe.
-        if (
-          body.wipeSemanticVectors === true &&
-          'llmProviderId' in body &&
-          (before.llmProviderId ?? null) !== (body.llmProviderId ?? null)
-        ) {
-          const oldEmbed = before.llmProviderId
-            ? (
-                await db
-                  .select({ m: schema.llmProviders.defaultEmbeddingModel })
-                  .from(schema.llmProviders)
-                  .where(eq(schema.llmProviders.id, before.llmProviderId))
-                  .limit(1)
-              )[0]?.m ?? null
-            : null
-          const newEmbed = body.llmProviderId
-            ? (
-                await db
-                  .select({ m: schema.llmProviders.defaultEmbeddingModel })
-                  .from(schema.llmProviders)
-                  .where(eq(schema.llmProviders.id, body.llmProviderId))
-                  .limit(1)
-              )[0]?.m ?? null
-            : null
-          if ((oldEmbed ?? null) !== (newEmbed ?? null)) {
-            await wipeSemanticVectorsForAgents(handle, [id])
-          }
         }
 
         // Activity feed: which fields changed? List the keys the

@@ -319,12 +319,12 @@ function ExposedAgentRow({
               {provider.label} · {provider.kind}
             </Pill>
           )}
-          {agent.model && (
+          {provider?.defaultModel && (
             <span
               className="ab-mono"
               style={{ color: 'var(--text-muted)' }}
             >
-              {agent.model}
+              {provider.defaultModel}
             </span>
           )}
           <span

@@ -276,19 +276,17 @@ export const repoJobsRouter = new Hono().post(
           message: `llm_provider ${body.llmProviderId} not found`,
         })
       }
-      // Body override wins over the provider's default. We resolve here
-      // (not in the worker) so a missing-model failure is a synchronous
-      // 400 the user sees on the click — not a wiki_status='error' row
-      // they discover minutes later. The Zod schema already trims +
-      // length-checks any override, so by this point a non-null value
-      // is guaranteed non-empty.
-      const effectiveModel = body.model ?? provider.defaultModel ?? null
+      // Provider owns the model identity: we resolve via the saved
+      // `default_model` (no per-request override). Missing model is a
+      // synchronous 400 here so the user sees it on click, not a
+      // wiki_status='error' row they discover minutes later.
+      const effectiveModel = provider.defaultModel ?? null
       if (!effectiveModel) {
         return httpError(c, {
           code: 'validation_failed',
           message:
-            `No model resolved for wiki generation: provide one in the ` +
-            `request body or set defaultModel on provider "${provider.label}"`,
+            `Provider "${provider.label}" has no defaultModel set; ` +
+            `configure one on the provider before generating a wiki.`,
         })
       }
       if (provider.kind !== 'openai' && !provider.baseUrl) {

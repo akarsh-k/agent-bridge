@@ -197,6 +197,18 @@ export async function estimateAgentTokens(
     throw new Error(`[token-estimate] agent ${agentId} not found`)
   }
 
+  // Resolve chat model via the agent's configured provider. Provider
+  // owns the model identity now; estimating without one yields a
+  // null model id, which `loadEncoding` falls back on.
+  const [providerRow] = agentRow.llmProviderId
+    ? await db
+        .select({ defaultModel: schema.llmProviders.defaultModel })
+        .from(schema.llmProviders)
+        .where(eq(schema.llmProviders.id, agentRow.llmProviderId))
+        .limit(1)
+    : [undefined]
+  const modelId = providerRow?.defaultModel ?? null
+
   const skillRows = await db
     .select()
     .from(schema.skills)
@@ -225,7 +237,7 @@ export async function estimateAgentTokens(
     .from(schema.repoEdges)
     .where(eq(schema.repoEdges.agentId, agentId))
 
-  const enc = loadEncoding(agentRow.model)
+  const enc = loadEncoding(modelId)
 
   // System prompt + composed skills body. We re-implement the same
   // composition `composeInstructions` does in build-agent so the count
@@ -408,9 +420,9 @@ export async function estimateAgentTokens(
     toolsTotal
 
   return {
-    model: agentRow.model,
-    encoding: pickEncoding(agentRow.model),
-    modelContextLimit: lookupContextLimit(agentRow.model),
+    model: modelId,
+    encoding: pickEncoding(modelId),
+    modelContextLimit: lookupContextLimit(modelId),
     parts: {
       systemPrompt: systemPromptTokens,
       skills,

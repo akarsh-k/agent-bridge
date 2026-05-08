@@ -70,7 +70,6 @@ export function ProviderDetailPage({ id }: { id: string }) {
   const [label, setLabel] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [defaultModel, setDefaultModel] = useState('')
-  const [defaultEmbeddingModel, setDefaultEmbeddingModel] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -83,7 +82,6 @@ export function ProviderDetailPage({ id }: { id: string }) {
     setLabel(provider.label)
     setBaseUrl(provider.baseUrl ?? '')
     setDefaultModel(provider.defaultModel ?? '')
-    setDefaultEmbeddingModel(provider.defaultEmbeddingModel ?? '')
     setApiKey('')
   }
 
@@ -91,23 +89,29 @@ export function ProviderDetailPage({ id }: { id: string }) {
     () => (provider ? LOCAL_KINDS.has(provider.kind) : false),
     [provider],
   )
+  const isEmbedding = provider?.role === 'embedding'
 
-  // Build dropdown options for the two model fields, filtered by
-  // capability so the user can't accidentally pick (say) an embedding
-  // model as the chat default. Always include the currently-selected
-  // value as an option even if it's no longer in the cached list, so
-  // legacy values don't silently disappear from the form.
-  const chatModelOpts: DropdownOption[] = useMemo(() => {
+  // Build the model dropdown filtered by the row's role — chat-role
+  // shows chat-capable models, embedding-role shows embedding-capable
+  // models. Always include the currently-selected value even if it's
+  // no longer in the cached list so a legacy value doesn't disappear.
+  const modelOpts: DropdownOption[] = useMemo(() => {
     if (!provider) return []
     const cached = provider.models?.models ?? []
-    const filtered = cached.filter((m) => isChatCapable(m, provider.kind))
+    const filtered = cached.filter((m) =>
+      provider.role === 'embedding'
+        ? isEmbeddingCapable(m, provider.kind)
+        : isChatCapable(m, provider.kind),
+    )
     const opts: DropdownOption[] = filtered.map((m) => ({
       value: m,
       label: m,
       monoLabel: true,
       sub:
         provider.kind === 'openai'
-          ? categorizeOpenAIModel(m).toLowerCase()
+          ? provider.role === 'embedding'
+            ? 'embedding'
+            : categorizeOpenAIModel(m).toLowerCase()
           : undefined,
     }))
     if (defaultModel && !filtered.includes(defaultModel)) {
@@ -118,74 +122,24 @@ export function ProviderDetailPage({ id }: { id: string }) {
         sub: 'stale — not in current catalog',
       })
     }
-    // Sentinel that maps to empty/null so the operator can clear the
-    // chat default without picking a different model. Mirrors the
-    // embedding-side sentinel a few blocks below.
     opts.unshift({
       value: '',
-      label: '(none — no provider-level default)',
+      label: '(none — no model selected)',
     })
     return opts
   }, [provider, defaultModel])
 
-  const embeddingModelOpts: DropdownOption[] = useMemo(() => {
-    if (!provider) return []
-    const cached = provider.models?.models ?? []
-    const filtered = cached.filter((m) => isEmbeddingCapable(m, provider.kind))
-    const opts: DropdownOption[] = filtered.map((m) => ({
-      value: m,
-      label: m,
-      monoLabel: true,
-      sub: provider.kind === 'openai' ? 'embedding' : undefined,
-    }))
-    if (
-      defaultEmbeddingModel &&
-      !filtered.includes(defaultEmbeddingModel)
-    ) {
-      opts.unshift({
-        value: defaultEmbeddingModel,
-        label: defaultEmbeddingModel,
-        monoLabel: true,
-        sub: 'stale — not in current catalog',
-      })
-    }
-    // Sentinel that maps to empty/null so the user can disable
-    // semantic recall via the same dropdown — empty string saves as
-    // null in the patch step.
-    opts.unshift({
-      value: '',
-      label: '(none — disable semantic recall)',
-    })
-    return opts
-  }, [provider, defaultEmbeddingModel])
-
-  // Stale-default detection. The saved default lives in the form
-  // state (`defaultModel` / `defaultEmbeddingModel`); we cross-check
-  // it against the current chat-/embedding-capable cached lists. A
-  // stale default — set to a model the provider no longer advertises
-  // (gemma user with `llama-3.1` still saved) — is silently selectable
-  // in the dropdown, which has bitten us. Surfacing it as a warning
-  // banner above the dropdown lets the operator one-click clear or
-  // re-pick. Whitespace-only values count as "no default", not stale.
-  const chatModelStale = useMemo(() => {
+  const modelStale = useMemo(() => {
     if (!provider) return false
     const v = defaultModel.trim()
     if (!v) return false
-    const cachedChat = (provider.models?.models ?? []).filter((m) =>
-      isChatCapable(m, provider.kind),
+    const cached = (provider.models?.models ?? []).filter((m) =>
+      provider.role === 'embedding'
+        ? isEmbeddingCapable(m, provider.kind)
+        : isChatCapable(m, provider.kind),
     )
-    return !cachedChat.includes(v)
+    return !cached.includes(v)
   }, [provider, defaultModel])
-
-  const embeddingModelStale = useMemo(() => {
-    if (!provider) return false
-    const v = defaultEmbeddingModel.trim()
-    if (!v) return false
-    const cachedEmbedding = (provider.models?.models ?? []).filter((m) =>
-      isEmbeddingCapable(m, provider.kind),
-    )
-    return !cachedEmbedding.includes(v)
-  }, [provider, defaultEmbeddingModel])
 
   // Group + filter the cached model list. For openai we bucket by family
   // heuristic (so the user can scan a 50+ model catalog without
@@ -247,23 +201,9 @@ export function ProviderDetailPage({ id }: { id: string }) {
     if ((defaultModel.trim() || null) !== (provider.defaultModel ?? null)) {
       return true
     }
-    if (
-      (defaultEmbeddingModel.trim() || null) !==
-      (provider.defaultEmbeddingModel ?? null)
-    ) {
-      return true
-    }
     if (apiKey.trim() !== '') return true
     return false
-  }, [
-    provider,
-    label,
-    baseUrl,
-    isLocal,
-    defaultModel,
-    defaultEmbeddingModel,
-    apiKey,
-  ])
+  }, [provider, label, baseUrl, isLocal, defaultModel, apiKey])
 
   if (!provider) return <NotFound />
 
@@ -271,45 +211,44 @@ export function ProviderDetailPage({ id }: { id: string }) {
     setLabel(provider.label)
     setBaseUrl(provider.baseUrl ?? '')
     setDefaultModel(provider.defaultModel ?? '')
-    setDefaultEmbeddingModel(provider.defaultEmbeddingModel ?? '')
     setApiKey('')
   }
 
   const save = async () => {
-    // Detect whether the embedding model is actually flipping. If yes
-    // AND there are agents using this provider with semantic recall
-    // already enabled, those agents have stored vectors in the
-    // CURRENT model's vector space — switching the model invalidates
-    // them. Confirm with the user, then send wipeSemanticVectors: true
-    // so the backend cascades the wipe.
-    const oldEmbed = (provider.defaultEmbeddingModel ?? '').trim()
-    const newEmbed = defaultEmbeddingModel.trim()
-    const embeddingChanged = oldEmbed !== newEmbed
-    const recallAgents = dependentAgents.filter(
-      (a) =>
-        a.memoryEnabled &&
-        a.memoryConfig &&
-        (a.memoryConfig as { semanticRecall?: unknown }).semanticRecall,
-    )
+    // Wipe trigger: this row is the embedding provider AND its model
+    // is moving to a different value. Old vectors live in the previous
+    // model's geometry — they're orphaned the moment the model
+    // changes. Confirm with the user before wiping.
+    const oldModel = (provider.defaultModel ?? '').trim()
+    const newModel = defaultModel.trim()
+    const embeddingModelChanging =
+      provider.role === 'embedding' && oldModel !== newModel
+
     let wipeSemanticVectors = false
-    if (embeddingChanged && oldEmbed && recallAgents.length > 0) {
-      const ok = await confirmDialog({
-        title: 'Switch embedding model?',
-        body:
-          `${recallAgents.length} agent${recallAgents.length === 1 ? '' : 's'} ` +
-          `(${recallAgents.map((a) => a.name).join(', ')}) ` +
-          `use this provider for semantic recall. ` +
-          `Switching from ${oldEmbed} to ${newEmbed || '(none)'} ` +
-          `invalidates their stored vectors — old vectors live in the ` +
-          `previous model's vector space and would produce irrelevant ` +
-          `recall results.\n\n` +
-          `Confirm to wipe stored vectors for those agents. They'll ` +
-          `re-embed naturally on subsequent conversations. ` +
-          `Working memory and recent-message replay are unaffected.`,
-        confirmLabel: 'Switch and wipe vectors',
-        destructive: true,
-      })
-      if (!ok) return
+    if (embeddingModelChanging) {
+      const recallAgents = agents.filter(
+        (a) =>
+          a.memoryEnabled &&
+          a.memoryConfig &&
+          (a.memoryConfig as { semanticRecall?: unknown }).semanticRecall,
+      )
+      if (recallAgents.length > 0) {
+        const ok = await confirmDialog({
+          title: 'Change embedding model?',
+          body:
+            `${recallAgents.length} agent${recallAgents.length === 1 ? '' : 's'} ` +
+            `(${recallAgents.map((a) => a.name).join(', ')}) ` +
+            `have semantic recall enabled. Switching from ${oldModel || '(none)'} ` +
+            `to ${newModel || '(none)'} puts every existing vector in the ` +
+            `wrong model's geometry and would produce garbage recall results.\n\n` +
+            `Confirm to apply the change and wipe every stored vector. ` +
+            `Agents re-embed naturally on subsequent conversations. ` +
+            `Working memory and recent-message replay are unaffected.`,
+          confirmLabel: 'Change and wipe vectors',
+          destructive: true,
+        })
+        if (!ok) return
+      }
       wipeSemanticVectors = true
     }
 
@@ -319,7 +258,6 @@ export function ProviderDetailPage({ id }: { id: string }) {
         label: label.trim(),
         baseUrl: isLocal ? baseUrl.trim() || null : null,
         defaultModel: defaultModel.trim() || null,
-        defaultEmbeddingModel: defaultEmbeddingModel.trim() || null,
         ...(apiKey.trim()
           ? { apiKey: { action: 'set', plaintext: apiKey.trim() } as const }
           : {}),
@@ -329,7 +267,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
       setApiKey('')
       toast.success(
         wipeSemanticVectors
-          ? 'Provider saved · semantic vectors wiped'
+          ? 'Provider saved · stored vectors wiped'
           : 'Provider saved',
       )
     } catch (e) {
@@ -394,20 +332,21 @@ export function ProviderDetailPage({ id }: { id: string }) {
         //    `embeddingModelStale` warnings render automatically based
         //    on the freshly-patched models list.
         const newCatalog = res.models.models
-        const chatStillThere =
+        const stillThere =
           defaultModel.trim() &&
           newCatalog
-            .filter((m) => isChatCapable(m, provider.kind))
+            .filter((m) =>
+              provider.role === 'embedding'
+                ? isEmbeddingCapable(m, provider.kind)
+                : isChatCapable(m, provider.kind),
+            )
             .includes(defaultModel.trim())
-        if (chatStillThere) void testModel(defaultModel.trim(), 'chat')
-
-        const embedStillThere =
-          defaultEmbeddingModel.trim() &&
-          newCatalog
-            .filter((m) => isEmbeddingCapable(m, provider.kind))
-            .includes(defaultEmbeddingModel.trim())
-        if (embedStillThere)
-          void testModel(defaultEmbeddingModel.trim(), 'embedding')
+        if (stillThere) {
+          void testModel(
+            defaultModel.trim(),
+            provider.role === 'embedding' ? 'embedding' : 'chat',
+          )
+        }
       } else {
         toast.error(res.message ?? `Refresh failed (${res.code})`)
       }
@@ -437,23 +376,35 @@ export function ProviderDetailPage({ id }: { id: string }) {
   const testCurrentDefault = () => {
     const m = defaultModel.trim()
     if (!m) return
-    void testModel(m, 'chat')
+    void testModel(m, isEmbedding ? 'embedding' : 'chat')
   }
-  const headerTestState = tester.stateOf(defaultModel, 'chat')
+  const headerTestState = tester.stateOf(
+    defaultModel,
+    isEmbedding ? 'embedding' : 'chat',
+  )
 
   const remove = async () => {
-    const usingNames = dependentAgents
-      .slice(0, 3)
-      .map((a) => `“${a.name}”`)
-      .join(', ')
-    const body =
-      dependentAgents.length === 0
-        ? 'No agents are using this provider. Safe to delete.'
-        : `${dependentAgents.length} agent${
-            dependentAgents.length === 1 ? '' : 's'
-          } use this provider${
-            dependentAgents.length <= 3 ? ` (${usingNames})` : ` (${usingNames}, …)`
-          }. They'll lose their model assignment. This cannot be undone.`
+    let body: string
+    if (isEmbedding) {
+      body =
+        'This is the workspace embedding provider. Deleting it wipes ' +
+        'every stored vector across the workspace; agents re-embed ' +
+        'naturally on subsequent conversations once a new embedding ' +
+        'provider is configured. This cannot be undone.'
+    } else {
+      const usingNames = dependentAgents
+        .slice(0, 3)
+        .map((a) => `“${a.name}”`)
+        .join(', ')
+      body =
+        dependentAgents.length === 0
+          ? 'No agents are using this provider. Safe to delete.'
+          : `${dependentAgents.length} agent${
+              dependentAgents.length === 1 ? '' : 's'
+            } use this provider${
+              dependentAgents.length <= 3 ? ` (${usingNames})` : ` (${usingNames}, …)`
+            }. They'll lose their model assignment. This cannot be undone.`
+    }
     if (
       !(await confirmDialog({
         title: `Delete provider “${provider.label}”?`,
@@ -521,6 +472,9 @@ export function ProviderDetailPage({ id }: { id: string }) {
           <div className="ab-detail-meta">
             <span className="ab-mono">{provider.kind}</span>
             <span>·</span>
+            <Pill kind={isEmbedding ? 'accent' : 'neutral'}>
+              {isEmbedding ? 'Embedding · workspace' : 'Chat'}
+            </Pill>
             <Pill kind={provider.apiKey.set ? 'success' : 'warn'} dot>
               {provider.apiKey.set ? 'Key set' : 'No key'}
             </Pill>
@@ -659,128 +613,80 @@ export function ProviderDetailPage({ id }: { id: string }) {
 
       <div className="ab-card ab-card-pad ab-form-section">
         <div className="ab-section-head">
-          <div className="ab-section-title">Provider fallbacks</div>
+          <div className="ab-section-title">Model</div>
           <div className="ab-section-sub">
-            Per-provider defaults. Each agent picks its own chat model in
-            the agent builder; these only apply when an agent attaches
-            this provider without overriding. The embedding choice is
-            always provider-level — agents inherit it.
+            {isEmbedding
+              ? 'The embedding model this provider serves. Used by every workspace consumer of vectors (semantic recall today, repo indexing later).'
+              : 'The chat model this provider serves. Agents that pick this provider use this model.'}
           </div>
         </div>
-        <div className="ab-field-grid">
-          <div className="ab-field">
-            <div className="ab-field-label-row">
-              <span className="ab-field-label">Default model</span>
-              <button
-                type="button"
-                className="ab-inline-action"
-                onClick={refresh}
-                disabled={refreshing}
-                title="Re-fetch /v1/models from this provider's endpoint."
+        <div className="ab-field">
+          <div className="ab-field-label-row">
+            <span className="ab-field-label">
+              {isEmbedding ? 'Embedding model' : 'Chat model'}
+            </span>
+            <button
+              type="button"
+              className="ab-inline-action"
+              onClick={refresh}
+              disabled={refreshing}
+              title="Re-fetch /v1/models from this provider's endpoint."
+            >
+              {refreshing ? 'Refreshing…' : '↻ Refresh models'}
+            </button>
+          </div>
+          {modelStale && (
+            <div className="ab-stale-warning" role="alert">
+              <span>
+                ⚠ Saved model <code className="ab-mono">{defaultModel}</code>{' '}
+                isn't in the current catalog. The endpoint may be running a
+                different model than when this was set.
+              </span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setDefaultModel('')}
+                disabled={busy}
               >
-                {refreshing ? 'Refreshing…' : '↻ Refresh models'}
-              </button>
+                Clear
+              </Button>
             </div>
-            {chatModelStale && (
-              <div className="ab-stale-warning" role="alert">
-                <span>
-                  ⚠ Saved default <code className="ab-mono">{defaultModel}</code>{' '}
-                  isn't in the current catalog. The endpoint may be running a
-                  different model than when this default was set.
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setDefaultModel('')}
-                  disabled={busy}
-                >
-                  Clear
-                </Button>
-              </div>
-            )}
-            <Dropdown
-              value={defaultModel || ''}
-              onChange={(v) => {
-                setDefaultModel(v ?? '')
-                if (v) void testModel(v, 'chat')
-              }}
-              options={chatModelOpts}
-              placeholder={
-                chatModelOpts.length <= 1
-                  ? 'No models cached — click Refresh ↻'
+          )}
+          <Dropdown
+            value={defaultModel || ''}
+            onChange={(v) => {
+              setDefaultModel(v ?? '')
+              if (v) void testModel(v, isEmbedding ? 'embedding' : 'chat')
+            }}
+            options={modelOpts}
+            placeholder={
+              modelOpts.length <= 1
+                ? 'No models cached — click Refresh ↻'
+                : isEmbedding
+                  ? 'Pick an embedding model'
                   : 'Pick a chat model'
-              }
-              disabled={chatModelOpts.length === 0}
-            />
-            <ModelTestStatus
-              model={defaultModel}
-              state={tester.stateOf(defaultModel, 'chat')}
-              message={tester.messageOf(defaultModel, 'chat')}
-            />
-            <span className="ab-field-help">
-              Used as the chat model for any agent on this provider that
-              doesn't override it.
-              {provider.models?.fetchedAt && (
-                <>
-                  {' '}
-                  <span
-                    title={new Date(provider.models.fetchedAt).toLocaleString()}
-                  >
-                    Catalog refreshed {timeAgo(provider.models.fetchedAt)}.
-                  </span>
-                </>
-              )}
-            </span>
-          </div>
-          <div className="ab-field">
-            <div className="ab-field-label-row">
-              <span className="ab-field-label">Default embedding model</span>
-              <button
-                type="button"
-                className="ab-inline-action"
-                onClick={refresh}
-                disabled={refreshing}
-              >
-                {refreshing ? 'Refreshing…' : '↻ Refresh models'}
-              </button>
-            </div>
-            {embeddingModelStale && (
-              <div className="ab-stale-warning" role="alert">
-                <span>
-                  ⚠ Saved embedding default{' '}
-                  <code className="ab-mono">{defaultEmbeddingModel}</code> isn't
-                  in the current catalog. Stored vectors using this model are
-                  still readable, but new embeddings will fail.
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setDefaultEmbeddingModel('')}
-                  disabled={busy}
-                >
-                  Clear
-                </Button>
-              </div>
+            }
+            disabled={modelOpts.length === 0}
+          />
+          <ModelTestStatus
+            model={defaultModel}
+            state={tester.stateOf(
+              defaultModel,
+              isEmbedding ? 'embedding' : 'chat',
             )}
-            <Dropdown
-              value={defaultEmbeddingModel || ''}
-              onChange={(v) => {
-                setDefaultEmbeddingModel(v ?? '')
-                if (v) void testModel(v, 'embedding')
-              }}
-              options={embeddingModelOpts}
-              placeholder="Pick an embedding model (optional)"
-            />
-            <ModelTestStatus
-              model={defaultEmbeddingModel}
-              state={tester.stateOf(defaultEmbeddingModel, 'embedding')}
-              message={tester.messageOf(defaultEmbeddingModel, 'embedding')}
-            />
-            <span className="ab-field-help">
-              Powers semantic-recall memory. Pick (none) to disable
-              recall on every agent using this provider.
+            message={tester.messageOf(
+              defaultModel,
+              isEmbedding ? 'embedding' : 'chat',
+            )}
+          />
+          {provider.models?.fetchedAt && (
+            <span
+              className="ab-field-help"
+              title={new Date(provider.models.fetchedAt).toLocaleString()}
+            >
+              Catalog refreshed {timeAgo(provider.models.fetchedAt)}.
             </span>
-          </div>
+          )}
         </div>
       </div>
 
@@ -859,10 +765,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
                       >
                         {models.map((m) => {
                           const isDefault = provider.defaultModel === m
-                          const isEmbedDefault =
-                            provider.defaultEmbeddingModel === m
-                          const isFlagged = isDefault || isEmbedDefault
-                          const flagClass = isFlagged ? ' is-default' : ''
+                          const flagClass = isDefault ? ' is-default' : ''
 
                           // Read-only chip for embedding/image/audio
                           // categories: provider lists them, but our test
@@ -885,17 +788,15 @@ export function ProviderDetailPage({ id }: { id: string }) {
                                     default
                                   </span>
                                 )}
-                                {isEmbedDefault && (
-                                  <span className="ab-model-chip-default-badge">
-                                    embed default
-                                  </span>
-                                )}
                               </div>
                             )
                           }
 
+                          // Capability is determined by the row's role —
+                          // chat-role rows test against chat-completions,
+                          // embedding-role rows against /v1/embeddings.
                           const capability: 'chat' | 'embedding' =
-                            groupName === 'Embeddings' ? 'embedding' : 'chat'
+                            provider.role === 'embedding' ? 'embedding' : 'chat'
                           const state = tester.stateOf(m, capability)
                           const msg = tester.messageOf(m, capability)
                           const stateClass =
@@ -904,29 +805,15 @@ export function ProviderDetailPage({ id }: { id: string }) {
                               : state === 'error'
                                 ? ' is-failed'
                                 : ''
-                          // Per-chip "Set as default" affordance. Skipped
-                          // for chips that already match the relevant
-                          // default; otherwise renders a span-role-button
-                          // that promotes the chip to the appropriate
-                          // default with stopPropagation so the outer
-                          // chip's test-on-click doesn't also fire.
-                          const promoteEmbed =
-                            capability === 'embedding' && !isEmbedDefault
-                          const promoteChat =
-                            capability === 'chat' && !isDefault
-                          const promote = promoteChat
+                          // Per-chip "Set as default" affordance —
+                          // promotes the chip to this row's `default_model`.
+                          const promote = !isDefault
                             ? {
                                 glyph: '★',
-                                title: `Make ${m} the default chat model`,
+                                title: `Use ${m} as this provider's model`,
                                 handler: () => setDefaultModel(m),
                               }
-                            : promoteEmbed
-                              ? {
-                                  glyph: '✶',
-                                  title: `Make ${m} the default embedding model`,
-                                  handler: () => setDefaultEmbeddingModel(m),
-                                }
-                              : null
+                            : null
                           return (
                             <button
                               key={m}
@@ -967,11 +854,6 @@ export function ProviderDetailPage({ id }: { id: string }) {
                               {isDefault && (
                                 <span className="ab-model-chip-default-badge">
                                   default
-                                </span>
-                              )}
-                              {isEmbedDefault && (
-                                <span className="ab-model-chip-default-badge">
-                                  embed default
                                 </span>
                               )}
                               {promote && (
