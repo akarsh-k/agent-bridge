@@ -19,6 +19,8 @@
     "db:migrate": "pnpm --filter @agent-bridge/db run db:migrate",
     "db:push": "pnpm --filter @agent-bridge/db run db:push",
     "db:studio": "pnpm --filter @agent-bridge/db run db:studio",
+    "test:fixture:setup": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx fixture-setup.ts",
+    "test:fixture": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-fixture.ts",
     "secret:generate": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\""
   },
   "keywords": [],

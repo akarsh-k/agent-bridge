@@ -14,7 +14,7 @@ export const runEventKinds = [
    * `run.token` is a SSE-only frame — high-frequency, not persisted. The
    * audit log receives `run.token.batch` rows instead (one per ~200ms
    * flush window) so `run_events` stays O(5-50 rows/run) instead of
-   * O(1k+/run). See `docs/PLAN.md` §3d for the trade-off.
+   * O(1k+/run). See `docs/ARCHITECTURE.md` §3d for the trade-off.
    */
   'run.token',
   'run.token.batch',
@@ -83,6 +83,70 @@ export const runEventKinds = [
   'coding-agent.repo.resolved',
   'coding-agent.repo.clarification_requested',
   'coding-agent.tool.completed',
+  /**
+   * Repo-embedding lifecycle (`docs/ARCHITECTURE.md §10` Phase D). Emitted by the
+   * worker around the `gitnexus analyze --embeddings` segment so the
+   * Logs UI can show embedding progress alongside clone/index/wiki on
+   * the same `repo:<id>` stream. Kept separate from `repo.index.*` even
+   * though gitnexus runs them in one process — operators want to see
+   * "indexed but not embedded" as a distinct state.
+   */
+  'repo.embed.started',
+  'repo.embed.ok',
+  'repo.embed.fail',
+  /**
+   * Wrapper-tool path telemetry (`docs/ARCHITECTURE.md §10` A4). Emitted from
+   * `packages/agents/src/inspector/*` around every wrapper invocation,
+   * every internal LLM call (term-expansion), every gitnexus client
+   * call, and the mini-repo finalisation. Routed through the same
+   * `RunRedactor` as everything else so payloads are scrubbed before
+   * audit/SSE. Logs UI's `wrapper` filter chip subscribes to these.
+   *
+   * Per-event payload shapes are defined further down (`Inspector*Payload`).
+   * All payloads carry `wrapper_name` so the UI can group events into
+   * a per-call timeline.
+   *
+   *  - `inspector.tool.called`      wrapper invocation begins
+   *  - `inspector.tool.result`      wrapper invocation finishes
+   *  - `inspector.llm.called`       internal LLM call starts (e.g.
+   *                                 term expansion). Carries a
+   *                                 truncated prompt preview (≤ 2KB).
+   *  - `inspector.llm.result`       internal LLM call finishes with a
+   *                                 truncated response preview.
+   *  - `inspector.gitnexus.called`  one gitnexus client call from
+   *                                 inside a wrapper (query / impact
+   *                                 / context / cypher / detect_changes).
+   *                                 Args truncated to 2KB.
+   *  - `inspector.gitnexus.result`  matching result event with
+   *                                 truncated payload preview.
+   *  - `inspector.minirepo.built`   mini-repo finalised. Carries file
+   *                                 count, total tokens, truncation
+   *                                 stats. NOT the mini-repo body
+   *                                 itself — that lands on
+   *                                 `runs.minirepo_json` per D17.
+   *  - `inspector.fallback`         the LLM term-expansion failed or
+   *                                 was unparsable. Wrapper continues
+   *                                 with raw query as the only
+   *                                 expansion.
+   */
+  'inspector.tool.called',
+  'inspector.tool.result',
+  'inspector.llm.called',
+  'inspector.llm.result',
+  'inspector.gitnexus.called',
+  'inspector.gitnexus.result',
+  /**
+   * Local keyword retrieval (`docs/ARCHITECTURE.md §10` Phase I). Emitted around
+   * each `keywordSearch` invocation alongside the gitnexus calls — one
+   * pair per wrapper invocation, per repo. Stand-in for gitnexus's
+   * broken BM25 arm (gitnexus#1287); deletable when upstream lands a
+   * fix. Same redaction + 2KB preview cap as the other inspector
+   * events.
+   */
+  'inspector.keyword.called',
+  'inspector.keyword.result',
+  'inspector.minirepo.built',
+  'inspector.fallback',
   'ping',
 ] as const
 
@@ -648,4 +712,186 @@ export interface CodingAgentToolCompletedPayload {
   }
   readonly duration_ms: number
   readonly schema_unmatched?: boolean
+}
+
+// ─── `repo.embed.*` payload shapes (Phase D) ─────────────────────────────
+//
+// Lifecycle around the embedding leg of `gitnexus analyze --embeddings`.
+// The worker emits these on the same `repo:<id>` stream as clone / index
+// / wiki so the inspector log renders one continuous timeline. Embedding
+// happens inside gitnexus's process; we forward the discrete state
+// transitions, not per-batch progress.
+
+export interface RepoEmbedStartedPayload {
+  readonly repoId: string
+  /**
+   * Provider kind of the embedding provider gitnexus was configured with
+   * (mirrors `llm_providers.kind`). Lets the UI banner say "Embedding via
+   * openai…" without re-querying the DB. Derived once per job at enqueue.
+   */
+  readonly providerKind: string
+  readonly model: string
+}
+
+export interface RepoEmbedOkPayload {
+  readonly repoId: string
+  readonly durationMs: number
+  /**
+   * File count gitnexus reported as embedded. Optional. older gitnexus
+   * versions don't surface this; we leave it `null` rather than fabricate.
+   */
+  readonly files: number | null
+}
+
+export interface RepoEmbedFailPayload {
+  readonly repoId: string
+  readonly message: string
+  readonly exitCode?: number
+}
+
+// ─── `inspector.*` payload shapes (Phase D Phase A4) ─────────────────────
+//
+// Wrapper-tool path telemetry. Every payload carries `runId` + `wrapperName`
+// so the UI can group events under a single wrapper invocation. Previews
+// of prompts / args / results are truncated at the producer (cap below) and
+// pass through the existing `RunRedactor` so secrets stay scrubbed.
+
+/**
+ * Hard cap on every redacted preview field before publish. 2KB matches
+ * what was promised in `docs/ARCHITECTURE.md §10` A4. Producers must enforce this;
+ * the schema doesn't (string lengths aren't validated on `data: unknown`).
+ */
+export const INSPECTOR_PREVIEW_BYTES_CAP = 2048
+
+/**
+ * Canonical wrapper-tool names. Mirrors `docs/ARCHITECTURE.md §10` §4. Kept here
+ * (not in dtos) because event payloads are consumed by the frontend via
+ * the shared package's browser-safe entry.
+ */
+export const inspectorWrapperNames = [
+  'find_in_codebase',
+  'trace_flow',
+  'assess_change_impact',
+  'debug_help',
+  'understand_module',
+  'list_repos',
+] as const
+export type InspectorWrapperName = (typeof inspectorWrapperNames)[number]
+
+export interface InspectorToolCalledPayload {
+  readonly runId: string
+  readonly wrapperName: InspectorWrapperName
+  /** Redacted JSON-stringified args, truncated to `INSPECTOR_PREVIEW_BYTES_CAP`. */
+  readonly argsPreview: string
+  /** Whether `argsPreview` was truncated (length > cap). */
+  readonly truncated: boolean
+}
+
+export interface InspectorToolResultPayload {
+  readonly runId: string
+  readonly wrapperName: InspectorWrapperName
+  readonly durationMs: number
+  /** `'ok' | 'fallback' | 'error'`. mirrors the wrapper's terminal state. */
+  readonly status: 'ok' | 'fallback' | 'error'
+  /** Optional message — populated on `error`/`fallback`. */
+  readonly message?: string
+}
+
+export interface InspectorLlmCalledPayload {
+  readonly runId: string
+  readonly wrapperName: InspectorWrapperName
+  /** Why the LLM was hit. today only `'expand'` (term expansion). */
+  readonly purpose: 'expand'
+  readonly model: string
+  /** Redacted prompt preview, capped. */
+  readonly promptPreview: string
+  readonly truncated: boolean
+}
+
+export interface InspectorLlmResultPayload {
+  readonly runId: string
+  readonly wrapperName: InspectorWrapperName
+  readonly purpose: 'expand'
+  readonly durationMs: number
+  /** Redacted response preview, capped. */
+  readonly responsePreview: string
+  readonly truncated: boolean
+  /**
+   * Approximate token usage. Optional because not every provider returns
+   * usage and we don't want to fabricate.
+   */
+  readonly tokens?: {
+    readonly input: number
+    readonly output: number
+  }
+}
+
+export interface InspectorGitnexusCalledPayload {
+  readonly runId: string
+  readonly wrapperName: InspectorWrapperName
+  /** Gitnexus tool name (e.g. `gitnexus_query`). */
+  readonly tool: string
+  /** Redacted JSON-stringified args, capped. */
+  readonly argsPreview: string
+  readonly truncated: boolean
+}
+
+export interface InspectorGitnexusResultPayload {
+  readonly runId: string
+  readonly wrapperName: InspectorWrapperName
+  readonly tool: string
+  readonly durationMs: number
+  /** Redacted result preview, capped. */
+  readonly resultPreview: string
+  readonly truncated: boolean
+  /** `false` when the gitnexus call surfaced an error. */
+  readonly ok: boolean
+}
+
+/**
+ * Local keyword retrieval (Phase I). Stand-in for gitnexus's broken
+ * BM25 arm. The wrapper-tool emits a `.called` frame before each
+ * `keywordSearch` spawn and a `.result` frame after, with a redacted
+ * preview of the queries + hit count. Deletable when gitnexus#1287
+ * is fixed upstream.
+ */
+export interface InspectorKeywordCalledPayload {
+  readonly runId: string
+  readonly wrapperName: InspectorWrapperName
+  /** Friendly repo label (mirrors what's on the gitnexus calls). */
+  readonly repoLabel: string
+  /** Comma-joined preview of the query terms, capped. */
+  readonly queriesPreview: string
+  readonly truncated: boolean
+}
+
+export interface InspectorKeywordResultPayload {
+  readonly runId: string
+  readonly wrapperName: InspectorWrapperName
+  readonly repoLabel: string
+  readonly durationMs: number
+  /** Number of hits returned (post-rank, post-limit). `null` on error. */
+  readonly hitCount: number | null
+  /** `false` when ripgrep errored or timed out. */
+  readonly ok: boolean
+  /** Optional error/warning message, capped. */
+  readonly message?: string
+}
+
+export interface InspectorMinirepoBuiltPayload {
+  readonly runId: string
+  readonly wrapperName: InspectorWrapperName
+  readonly fileCount: number
+  readonly chunkCount: number
+  readonly tokensUsed: number
+  readonly tokensCap: number
+  /** `true` when truncation rules in §5 fired. */
+  readonly truncated: boolean
+}
+
+export interface InspectorFallbackPayload {
+  readonly runId: string
+  readonly wrapperName: InspectorWrapperName
+  /** Why we fell back: LLM error, parse error, empty output, etc. */
+  readonly reason: string
 }

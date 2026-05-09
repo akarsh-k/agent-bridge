@@ -14,6 +14,17 @@ export type {
   BuiltAgentMeta,
   MemoryMountMeta,
 } from './build-agent.js'
+export {
+  emptyInspectorMountMeta,
+  mountInspectorTools,
+} from './inspector/index.js'
+export type {
+  InspectorMountMeta,
+  MountedInspector,
+  MountInspectorToolsInput,
+} from './inspector/index.js'
+export type { MiniRepo, MiniRepoFile, MiniRepoChunk, MiniRepoGraphEdge, MiniRepoGraphNode, MiniRepoCrossRepoEdge, InspectorIntent } from './inspector/types.js'
+export { MINI_REPO_TOKEN_CAP } from './inspector/types.js'
 export { builtAgentCache } from './built-agent-cache.js'
 export type { GitnexusMountMeta } from './mcp/gitnexus-mcp.js'
 export type {
@@ -69,47 +80,25 @@ export type {
   TokenEstimateSystemSkill,
   TokenEstimateTool,
 } from './token-estimate.js'
-export {
-  loadGitnexusLibrarySkills,
-} from './coding-agent/gitnexus-library-skills.js'
-export type {
-  GitnexusLibrarySkill,
-  GitnexusLibrarySkillsLoaded,
-} from './coding-agent/gitnexus-library-skills.js'
 export { getCurrentWorkingMemory } from './working-memory.js'
 export type { CurrentWorkingMemory } from './working-memory.js'
 export { loadAttachedRepos } from './coding-agent/repo-loader.js'
 export type { LoadAttachedReposInput } from './coding-agent/repo-loader.js'
 export {
-  resolveRepoHint,
-  resolveRelatedRepos,
-  repoResolverErrorToEnvelope,
-  isResolvedSingle,
-  isResolvedAll,
-  isClarification,
-  isResolverError,
-} from './coding-agent/repo-resolver.js'
-export type { ResolveRepoHintInput } from './coding-agent/repo-resolver.js'
-export {
   normalizeRemoteUrl,
   urlTail,
 } from './coding-agent/url-normalize.js'
 export {
-  CODING_AGENT_SYSTEM_SKILL_HEADING,
-  CODING_AGENT_SYSTEM_SKILL_VERSION,
-  loadCodingAgentSystemSkill,
-} from './coding-agent/system-skill.js'
-export {
-  CODING_AGENT_VIRTUAL_BRIDGE_TOOLS,
-} from './coding-agent/bridge-tool-defs.js'
-export type { VirtualBridgeToolDefinition } from './coding-agent/bridge-tool-defs.js'
-export {
-  emptyWikiMountMeta,
-  mountWikiTools,
-} from './coding-agent/wiki-tool.js'
-export type {
-  MountedWikiTools,
-  MountWikiToolsInput,
-  WikiMountMeta,
-  WikiRepoLabel,
-} from './coding-agent/wiki-tool.js'
+  INSPECTOR_SYSTEM_PROMPT_HEADING,
+  INSPECTOR_SYSTEM_PROMPT_VERSION,
+  loadInspectorSystemPrompt,
+} from './inspector/system-prompt.js'
+// Removed in Phase H cleanup:
+//   - `CODING_AGENT_SYSTEM_SKILL_*` + `loadCodingAgentSystemSkill` (replaced by inspector prompt above).
+//   - `CODING_AGENT_VIRTUAL_BRIDGE_TOOLS` + `VirtualBridgeToolDefinition` (replaced by inspector wrappers).
+//   - `loadGitnexusLibrarySkills` + `GitnexusLibrarySkill*` (no longer auto-attached).
+//   - `mountWikiTools` + `MountedWikiTools` + `MountWikiToolsInput` + `WikiRepoLabel` (wiki tools no longer in agent dict).
+//   - `resolveRepoHint` + helpers (the IDE bridge no longer needs the multi-signal resolver; `inspector/repo-resolve.ts` covers wrapper-internal use).
+// Removed in Phase H+1 (this commit):
+//   - `emptyWikiMountMeta` + `WikiMountMeta` (the always-empty stub left over from
+//     B6's backwards-compat). `BuiltAgentMeta.wiki` was removed at the same time.

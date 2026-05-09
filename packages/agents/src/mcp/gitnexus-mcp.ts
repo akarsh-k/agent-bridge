@@ -43,6 +43,7 @@
 
 import type { AgentBridgeDb } from '@agent-bridge/db'
 import { schema } from '@agent-bridge/db'
+import { decryptSecret } from '@agent-bridge/shared/crypto'
 import {
   assertExpectedGitnexusVersion,
   EXPECTED_GITNEXUS_VERSION,
@@ -53,6 +54,8 @@ import { normalizeRemoteUrl } from '../coding-agent/url-normalize.js'
 import { MCPClient } from '@mastra/mcp'
 import type { Tool } from '@mastra/core/tools'
 import { and, eq } from 'drizzle-orm'
+
+import type { LlmProviderRow } from '@agent-bridge/db/schema'
 
 // ─── Public surface ──────────────────────────────────────────────────────
 
@@ -170,6 +173,25 @@ export async function mountGitnexusMcp(
     }),
   )
 
+  // Forward the workspace embedding provider's `GITNEXUS_EMBEDDING_*`
+  // env vars to the long-lived `gitnexus mcp` subprocess so query-time
+  // embedding matches index-time embedding (the worker's `analyze`
+  // path forwards the same vars). Without this, `gitnexus_query`'s
+  // semantic arm uses gitnexus's default 384-dim local embedder, which
+  // produces vectors that don't match the (e.g. 1024-dim) store the
+  // analyze pass populated → semantic search returns 0 hits regardless
+  // of how relevant the query actually is.
+  //
+  // Best-effort: missing/misconfigured embedding provider is non-fatal
+  // (D1 boot-fail in `buildAgent` already gates that; here we just
+  // omit the env vars and gitnexus falls back to its default). Decrypt
+  // failure throws and bubbles up (caller treats as misconfiguration).
+  const embeddingProvider = await loadWorkspaceEmbeddingProvider(db)
+  if (embeddingProvider) {
+    const embeddingEnv = buildEmbeddingEnv(embeddingProvider)
+    for (const [k, v] of Object.entries(embeddingEnv)) env[k] = v
+  }
+
   // Per-agent ID so multiple agents running in the same process don't
   // collide in MCPClient's internal instance cache (it hashes on config).
   // Without this, two agents with identical server configs would share
@@ -232,10 +254,10 @@ export async function mountGitnexusMcp(
 
   // Translate friendly labels / aliases the LLM passes into the canonical
   // gitnexus registry name before forwarding to the subprocess. Without
-  // this, an operator's role label like "payment repo" reaches gitnexus,
-  // which knows the same repo as `react-stripe-js` (or
-  // `stripe__react-stripe-js__master__<shortId>`, depending on how it
-  // was registered) and rejects with "Repository not found". See
+  // this, an operator's role label (e.g. "payment repo") reaches
+  // gitnexus, which knows the same repo only as either its URL-tail
+  // form or `<owner>__<name>__<branch>__<shortId>` (depending on how
+  // it was registered) and rejects with "Repository not found". See
   // `wrapToolsWithRepoArgRewriter` below.
   const wrappedTools = wrapToolsWithRepoArgRewriter(tools, enriched)
 
@@ -654,4 +676,67 @@ async function safeDisconnect(
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+// ─── Embedding env forwarding (gitnexus mcp parity with worker analyze) ──
+
+/**
+ * Vendor base URL fallbacks for `role='embedding'` providers. Mirrors the
+ * worker's `EMBEDDING_VENDOR_BASE_URL` map in `apps/worker/src/jobs/index-repo.ts`.
+ * Drift between the two is a bug — keep them in sync.
+ */
+const EMBEDDING_VENDOR_BASE_URL: Partial<
+  Record<NonNullable<LlmProviderRow['kind']>, string>
+> = {
+  openai: 'https://api.openai.com',
+}
+
+/**
+ * Read the singleton `role='embedding'` provider row. Returns `null`
+ * when none is configured. The `D1` boot-fail check in `buildAgent`
+ * already enforces "must exist" when the agent has any attached repo,
+ * so a `null` here means we're inside the LLM-only path (which we'd
+ * already have short-circuited above) or a misconfigured edge case.
+ */
+async function loadWorkspaceEmbeddingProvider(
+  db: AgentBridgeDb,
+): Promise<LlmProviderRow | null> {
+  const [row] = await db.db
+    .select()
+    .from(schema.llmProviders)
+    .where(eq(schema.llmProviders.role, 'embedding'))
+    .limit(1)
+  return row ?? null
+}
+
+/**
+ * Build the `GITNEXUS_EMBEDDING_*` env tuple gitnexus reads (per the
+ * gitnexus 1.6.3 README "Remote Embeddings"). Mirrors
+ * `apps/worker/src/jobs/index-repo.ts:buildEmbeddingEnv` so query-time
+ * matches index-time. Drift = silent semantic-search failure.
+ *
+ * Empty when the provider lacks a `defaultModel` (gitnexus would 400
+ * on the first request anyway). Decrypted apiKey lives in the env
+ * dict; the parent process never logs it (the only consumer is
+ * gitnexus's child process via `StdioServerDefinition.env`).
+ */
+function buildEmbeddingEnv(provider: LlmProviderRow): Record<string, string> {
+  if (!provider.defaultModel) return {}
+  const raw =
+    provider.baseUrl ?? EMBEDDING_VENDOR_BASE_URL[provider.kind] ?? null
+  if (!raw) return {}
+  const trimmed = raw.replace(/\/+$/, '')
+  const url = trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`
+
+  const env: Record<string, string> = {
+    GITNEXUS_EMBEDDING_URL: url,
+    GITNEXUS_EMBEDDING_MODEL: provider.defaultModel,
+  }
+  if (provider.embeddingDims != null) {
+    env['GITNEXUS_EMBEDDING_DIMS'] = String(provider.embeddingDims)
+  }
+  if (provider.apiKeyEnvelope) {
+    env['GITNEXUS_EMBEDDING_API_KEY'] = decryptSecret(provider.apiKeyEnvelope)
+  }
+  return env
 }

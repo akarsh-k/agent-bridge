@@ -1,39 +1,50 @@
 /**
  * `GET /api/system/skill/coding-agent`
- *   → return the auto-attached coding-agent system-skill body, version,
+ *   → return the auto-attached inspector toolkit prompt body, version,
  *     and heading marker so the operator can read what gets appended
  *     to every agent's instructions.
  *
- * Read-only. Does not vary by agent. the skill body is a build-time
- * artifact (`packages/agents/src/coding-agent/system-skill.md`) and
+ * Read-only. Does not vary by agent. the body is a build-time
+ * artifact (`packages/agents/src/inspector/system-prompt.md`) and
  * is identical across every agent in the install. The version string
- * (`CODING_AGENT_SYSTEM_SKILL_VERSION`) drives BuiltAgent cache
+ * (`INSPECTOR_SYSTEM_PROMPT_VERSION`) drives BuiltAgent cache
  * invalidation; bumping it forces every cached agent to rebuild on
  * next access.
  *
+ * URL kept as `/coding-agent` for frontend backwards compatibility —
+ * the v1 coding-agent toolkit was replaced by the wrapper-tool
+ * architecture (`docs/ARCHITECTURE.md §10` Phase B6/F1) but the route name
+ * still describes what the panel shows: "the auto-attached chunk".
+ *
  * On read failure (e.g. dev mode where the .md hasn't been copied
  * into `dist/` yet) the route returns `{ ok: false, message }`
- * instead of throwing. same shape as the gitnexus tools route, so
- * the UI renders a graceful "couldn't load system skill" notice
- * instead of blowing up the resources panel.
+ * instead of throwing. UI renders a graceful "couldn't load"
+ * notice.
+ *
+ * `GET /api/system/skill/gitnexus-library` → returns an empty list.
+ *   The wrapper-tool architecture no longer auto-attaches the
+ *   gitnexus library skills (the LLM doesn't see `gitnexus_*` tools
+ *   directly anymore — wrappers wrap them). Endpoint kept so the
+ *   frontend's library-skills card renders as "no skills attached"
+ *   instead of erroring. Phase H+1 can drop the endpoint and the
+ *   card together.
  */
 
 import { Hono } from 'hono'
 import {
-  CODING_AGENT_SYSTEM_SKILL_HEADING,
-  CODING_AGENT_SYSTEM_SKILL_VERSION,
-  loadCodingAgentSystemSkill,
-  loadGitnexusLibrarySkills,
+  INSPECTOR_SYSTEM_PROMPT_HEADING,
+  INSPECTOR_SYSTEM_PROMPT_VERSION,
+  loadInspectorSystemPrompt,
 } from '@agent-bridge/agents'
 
 export const systemSkillRouter = new Hono()
   .get('/coding-agent', async (c) => {
     try {
-      const body = await loadCodingAgentSystemSkill()
+      const body = await loadInspectorSystemPrompt()
       return c.json({
         ok: true as const,
-        version: CODING_AGENT_SYSTEM_SKILL_VERSION,
-        heading: CODING_AGENT_SYSTEM_SKILL_HEADING,
+        version: INSPECTOR_SYSTEM_PROMPT_VERSION,
+        heading: INSPECTOR_SYSTEM_PROMPT_HEADING,
         body,
       })
     } catch (err) {
@@ -42,33 +53,24 @@ export const systemSkillRouter = new Hono()
         message:
           err instanceof Error
             ? err.message
-            : 'Failed to load coding-agent system skill',
+            : 'Failed to load inspector system prompt',
       })
     }
   })
-  .get('/gitnexus-library', async (c) => {
-    try {
-      const lib = await loadGitnexusLibrarySkills()
-      return c.json({
-        ok: true as const,
-        version: lib.version,
-        skills: lib.skills.map((s) => ({
-          slug: s.slug,
-          name: s.name,
-          description: s.description,
-          body: s.body,
-          bytes: s.bytes,
-        })),
-      })
-    } catch (err) {
-      return c.json({
-        ok: false as const,
-        message:
-          err instanceof Error
-            ? err.message
-            : 'Failed to load gitnexus library skills',
-      })
-    }
+  .get('/gitnexus-library', (c) => {
+    // Wrapper-tool architecture removed the auto-attached library skills.
+    // Empty list keeps the existing frontend card from breaking.
+    return c.json({
+      ok: true as const,
+      version: 'n/a',
+      skills: [] as Array<{
+        slug: string
+        name: string
+        description: string
+        body: string
+        bytes: number
+      }>,
+    })
   })
 
 export type SystemSkillRouter = typeof systemSkillRouter

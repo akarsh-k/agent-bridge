@@ -3252,6 +3252,419 @@ button.ab-list-row {
   font-size: 0.92em;
 }
 
+/* ---- Repo Activity panel (RepoLogTail) ----------------------------------- */
+/*
+ * Three nested concerns:
+ *   1. .ab-repo-activity        — the host card override (gutters/spacing)
+ *   2. .ab-phase-track          — the four phase chips with connectors
+ *   3. .ab-repo-activity-feed   — the scrollable log body, with rows that
+ *                                  carry inline progress bars and ×N counts
+ *
+ * All colours/spacing route through tokens.css. No hex literals here.
+ */
+
+.ab-repo-activity {
+  padding: 18px 20px 14px;
+}
+.ab-repo-activity-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.ab-repo-activity-titles {
+  flex: 1;
+  min-width: 0;
+}
+.ab-repo-activity-chip-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.ab-repo-activity-runts {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Idle / reconnecting variants of the live chip share the chip frame
+ * but swap the dot pulse for a static muted dot. Keeps the slot in the
+ * header from collapsing as the badge changes state. */
+.ab-live-chip-idle,
+.ab-live-chip-warn {
+  background: var(--surface-hi);
+  color: var(--text-dim);
+  border-color: var(--border);
+}
+.ab-live-chip-warn {
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-color: rgba(251, 191, 36, 0.24);
+}
+.ab-live-chip-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.75;
+}
+.ab-live-chip-warn .ab-live-chip-dot {
+  animation: ab-pulse 1.6s var(--ease-out) infinite;
+}
+
+/* ---- Phase track --------------------------------------------------------- */
+
+.ab-phase-track {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px 12px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin: 0 -4px 12px;
+}
+.ab-phase-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0;
+  flex: 1;
+  min-width: 0;
+}
+.ab-phase-item {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.ab-phase-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px;
+  border-radius: var(--radius);
+  transition: background var(--dur-2) var(--ease-out);
+}
+.ab-phase-chip.is-running {
+  background: var(--accent-bg);
+}
+.ab-phase-chip.is-fail {
+  background: var(--danger-bg);
+}
+.ab-phase-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+.ab-phase-chip.is-running .ab-phase-meta {
+  color: var(--accent-300);
+}
+[data-theme='light'] .ab-phase-chip.is-running .ab-phase-meta {
+  color: var(--accent-500);
+}
+.ab-phase-chip.is-ok .ab-phase-meta {
+  color: var(--success);
+}
+.ab-phase-chip.is-fail .ab-phase-meta {
+  color: var(--danger);
+}
+.ab-phase-timer {
+  font-feature-settings: 'tnum';
+}
+.ab-phase-fail-reason {
+  max-width: 14ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The connector hairline between two phase chips. Three states:
+ *   default       — muted line, "future"
+ *   .is-active    — accent line, "we got past this"
+ *   .is-flowing   — accent line + a subtle moving sheen, "we're in
+ *                   the next phase right now"
+ */
+.ab-phase-connector {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 28px;
+  height: 2px;
+  margin: 0 2px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  position: relative;
+  overflow: hidden;
+}
+.ab-phase-connector.is-active {
+  background: var(--accent-400);
+  opacity: 0.7;
+}
+.ab-phase-connector.is-flowing::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--accent-300) 50%,
+    transparent 100%
+  );
+  opacity: 0.85;
+  animation: ab-phase-flow 1.4s linear infinite;
+}
+@keyframes ab-phase-flow {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(100%);
+  }
+}
+
+.ab-phase-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  padding: 4px 10px;
+  border-radius: var(--radius);
+  font-size: 11.5px;
+  cursor: pointer;
+  transition:
+    color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.ab-phase-toggle:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: var(--surface-hover);
+}
+
+/* ---- Log feed ------------------------------------------------------------ */
+
+.ab-repo-activity-feed {
+  max-height: 360px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-canvas);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.ab-phase-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 4px;
+  position: sticky;
+  top: 0;
+  background: linear-gradient(
+    180deg,
+    var(--bg-canvas) 0%,
+    var(--bg-canvas) 70%,
+    transparent 100%
+  );
+  z-index: 1;
+}
+.ab-phase-divider-label {
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+.ab-phase-divider-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+}
+.ab-phase-divider.is-clone .ab-phase-divider-label,
+.ab-phase-divider.is-index .ab-phase-divider-label,
+.ab-phase-divider.is-embed .ab-phase-divider-label,
+.ab-phase-divider.is-wiki .ab-phase-divider-label {
+  color: var(--text-dim);
+}
+
+/* Each log row sits in a tight grid: time · type-pill · message · count.
+ * The message column flexes; the optional progress bar paints itself
+ * across the whole row's background as a positioned sibling. */
+.ab-repo-log-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: 64px 70px 1fr auto;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 14px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  isolation: isolate;
+}
+.ab-repo-log-row:last-child {
+  border-bottom: none;
+}
+.ab-repo-log-row:hover {
+  background: var(--surface-hover);
+}
+
+.ab-repo-log-progress {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(
+    90deg,
+    var(--accent-bg) 0%,
+    var(--accent-bg-hi) 80%,
+    var(--accent-bg-hi) 100%
+  );
+  border-right: 1px solid var(--accent-border);
+  z-index: -1;
+  transition: width var(--dur-3) var(--ease-out);
+}
+.ab-repo-log-row.is-running .ab-repo-log-progress {
+  /* Subtle moving sheen across the filled portion to communicate
+   * "this isn't a static row, work is happening". Kept low-key so it
+   * doesn't fight the page-wide atmosphere. */
+  background: linear-gradient(
+    90deg,
+    var(--accent-bg) 0%,
+    var(--accent-bg-hi) 50%,
+    var(--accent-bg) 100%
+  );
+  background-size: 200% 100%;
+  animation: ab-repo-log-shimmer 2.4s linear infinite;
+}
+@keyframes ab-repo-log-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.ab-repo-log-time {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ab-repo-log-msg {
+  color: var(--text);
+  word-break: break-word;
+  min-width: 0;
+}
+.ab-repo-log-progress-meta {
+  color: var(--text-dim);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ab-repo-log-progress-pct {
+  color: var(--accent-300);
+  font-weight: 500;
+}
+[data-theme='light'] .ab-repo-log-progress-pct {
+  color: var(--accent-500);
+}
+
+.ab-repo-log-row.is-error .ab-repo-log-msg {
+  color: var(--danger);
+}
+.ab-repo-log-row.is-error .ab-repo-log-progress {
+  background: linear-gradient(
+    90deg,
+    var(--danger-bg) 0%,
+    var(--danger-bg) 100%
+  );
+  border-right-color: rgba(251, 113, 133, 0.4);
+}
+
+/* `×N` counter — small mono pill on the right of a batched row. The
+ * adjacent `is-batched` class adds a subtle pulse so the row reads as
+ * "still happening" rather than "frozen". */
+.ab-repo-log-count {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-dim);
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  padding: 1px 7px;
+  border-radius: var(--radius-pill);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ab-repo-log-row.is-batched .ab-repo-log-count {
+  color: var(--accent-300);
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+  animation: ab-repo-log-batch-pulse 1.4s var(--ease-out) infinite;
+}
+[data-theme='light'] .ab-repo-log-row.is-batched .ab-repo-log-count {
+  color: var(--accent-500);
+}
+@keyframes ab-repo-log-batch-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(139, 92, 246, 0);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.12);
+  }
+}
+
+/* Skeleton rows for the brief moment between mount and history-fetch
+ * resolving. Three rows of fading bars so the panel never reads "No
+ * events" while we're actually still loading. */
+.ab-repo-activity-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 4px;
+}
+.ab-skel-row {
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background: linear-gradient(
+    90deg,
+    var(--surface-hi) 0%,
+    var(--surface-raised) 50%,
+    var(--surface-hi) 100%
+  );
+  background-size: 200% 100%;
+  animation: ab-skel-shine 1.6s linear infinite;
+}
+.ab-skel-row:nth-child(1) {
+  width: 64%;
+}
+.ab-skel-row:nth-child(2) {
+  width: 48%;
+}
+.ab-skel-row:nth-child(3) {
+  width: 78%;
+}
+@keyframes ab-skel-shine {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
 /* ---- Reduced motion ------------------------------------------------------- */
 
 @media (prefers-reduced-motion: reduce) {

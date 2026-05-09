@@ -16,18 +16,15 @@ settings.local.json
 # Runtime-only data root. Contains cloned repos, GitNexus knowledge graphs,
 # generated wikis, the secrets master key (secret.key). Never commit.
 .agent-bridge-data/
+# Sibling root used by the fixture harness (`pnpm test:fixture:setup`).
+.agent-bridge-data-test/
 
 # Vite + ESLint caches
 .vite/
 .eslintcache
 
-# Builder-only working docs. These are personal planning/scratch notes the
-# builder keeps locally; they are NOT part of the repo contract and must not
-# be committed. Shared design docs (e.g. docs/ARCHITECTURE.md) stay tracked.
-docs/PLAN.md
-docs/**/*.local.md
-docs/private/
-docs/scratch/
+docs/*
+!docs/ARCHITECTURE.md
 
 # Local IDE / editor state (personal, not repo-wide).
 # .cursor/rules/ is intentionally NOT ignored — those are the repo's shared

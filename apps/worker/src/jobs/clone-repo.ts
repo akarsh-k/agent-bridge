@@ -463,7 +463,10 @@ async function chainIntoIndex(args: {
       )
       return
     }
-    await enqueueIndexRepo({ repoId, mode: 'initial' })
+    // Auto-chain after a fresh clone always uses incremental analyze on a
+    // brand-new tree. there's no prior index to invalidate. `force: false`
+    // (D16/A5) keeps the path identical to a manual "Update index".
+    await enqueueIndexRepo({ repoId, mode: 'initial', force: false })
   } catch (err) {
     console.error(
       `[clone-repo] failed to auto-chain index for repo ${repoId}: ${errMsg(err)}`,

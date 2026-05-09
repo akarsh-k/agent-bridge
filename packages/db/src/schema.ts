@@ -1,7 +1,7 @@
 /**
  * Drizzle schema for Agent Bridge.
  *
- * Design decisions (see `docs/PLAN.md` § Phase 1):
+ * Design decisions (see `docs/ARCHITECTURE.md` § Phase 1):
  *   - UUIDs via `gen_random_uuid()` on user-facing tables; `bigserial` on the
  *     append-only audit log (`run_events`).
  *   - `text`-backed "enums" (status columns) validated by Zod at the edges,
@@ -27,6 +27,7 @@ import {
   jsonb,
   pgTable,
   primaryKey,
+  smallint,
   text,
   timestamp,
   uniqueIndex,
@@ -101,6 +102,18 @@ export const llmProviders = pgTable(
      * `@agent-bridge/shared`.
      */
     modelsJson: jsonb('models_json').$type<LlmProviderModelsCache>(),
+    /**
+     * Embedding vector dimension count (`docs/ARCHITECTURE.md §10` Phase D D3).
+     * Only meaningful for `role='embedding'` rows; chat-role rows
+     * leave this NULL. The worker forwards it to gitnexus via the
+     * `GITNEXUS_EMBEDDING_DIMS` env var so gitnexus's local embedder
+     * sizing matches the remote model. Common values: 384 (gitnexus
+     * default + many small models), 768 (all-mpnet-base), 1024
+     * (BGE-large), 1536 (text-embedding-3-small / text-embedding-ada-002),
+     * 3072 (text-embedding-3-large). Stored as smallint (max 32767)
+     * since no production embedder exceeds 4096.
+     */
+    embeddingDims: smallint('embedding_dims'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -529,6 +542,19 @@ export const runs = pgTable(
      */
     promptTokens: integer('prompt_tokens'),
     completionTokens: integer('completion_tokens'),
+    /**
+     * Mini-repos accumulated across this run's wrapper invocations
+     * (`docs/ARCHITECTURE.md §10` Phase G G2/G3). Each inspector wrapper appends
+     * its `MiniRepo` payload as one element of this array. The IDE
+     * bridge ships this verbatim under D17's `mini_repos[]` field;
+     * chat-only runs that never invoke a wrapper leave it NULL.
+     *
+     * Capped at ~14 KiB total serialised size by the application
+     * layer (`runsRepo.appendMinirepo`). When append would overflow,
+     * the OLDEST entries drop first — D17's "newest evidence wins"
+     * semantics for IDE consumers.
+     */
+    minirepoJson: jsonb('minirepo_json'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

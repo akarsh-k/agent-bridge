@@ -1,0 +1,1 @@
+ALTER TABLE "runs" ADD COLUMN "minirepo_json" jsonb;

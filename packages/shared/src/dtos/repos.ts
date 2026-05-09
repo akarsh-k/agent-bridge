@@ -183,6 +183,20 @@ export const repoIdParamSchema = z.object({ id: z.uuid() })
 export type RepoIdParam = z.infer<typeof repoIdParamSchema>
 
 /**
+ * POST /api/repos/:id/index body. Optional `force` flag (default `false`).
+ * `false` → "Update index": gitnexus's incremental analyze re-parses only
+ * changed files. `true` → "Rebuild from scratch": passes `-f` to gitnexus,
+ * which blows away the graph + embeddings store before re-walking the tree.
+ * See `docs/ARCHITECTURE.md §10` D16/A5 for why incremental is the default.
+ */
+export const indexRepoBodySchema = z
+  .object({
+    force: z.boolean().optional(),
+  })
+  .strict()
+export type IndexRepoBody = z.infer<typeof indexRepoBodySchema>
+
+/**
  * POST /api/repos/:id/wiki body. The caller picks which LLM provider
  * pays for the run via `llmProviderId`; the backend resolves the row,
  * checks it has an `apiKey` envelope (or is local-only) and a

@@ -41,6 +41,15 @@ export type ConnectorResult =
       readonly model: string | null
       readonly message: string
       readonly sample: string | null
+      /**
+       * Vector dimension count for embedding-role probes — read directly
+       * from `data[0].embedding.length` of the upstream response. NULL for
+       * chat probes and for embedding probes whose response shape we
+       * couldn't recognise. Used by the UI to auto-fill the provider's
+       * `embeddingDims` field after a successful test, so operators
+       * never have to guess.
+       */
+      readonly embeddingDim?: number | null
     }
   | {
       readonly ok: false

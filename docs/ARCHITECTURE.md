@@ -113,13 +113,16 @@ Jobs are stateless and idempotent (use `attempts: 3, backoff: exponential`).
 Every long-running child process is spawned via `spawnSandboxed()` so
 nothing escapes the data root.
 
-### 2.4 `apps/mcp-bridge` (Phase 5)
+### 2.4 `apps/mcp-bridge`
 
-MCP server (stdio + optional HTTP) that exposes **bridge tools** (see §8) to
-Cursor / Claude Code. Phase 5 ships a 1:1 mapping — one bridge tool per
-agent (`query_<agent_slug>`), derived from the `agents` row at runtime. A
-later phase replaces this with the multi-tool `bridge_tools` table (see §8.3
-and `docs/PLAN.md` Phase 7).
+MCP server (stdio) that exposes one tool per agent — `<slug>__inspect_codebase`
+— to Cursor / Claude Code / Codex / any MCP-compatible IDE. The IDE LLM
+calls it with a free-form `query` plus optional repo hints; under the
+hood the agent's wrapper toolkit (find / trace / impact / debug /
+understand / list) gathers structured evidence and the bridge wraps the
+result in the D17′ envelope (see §10.7). Operator-authored
+`bridge_tools` rows continue to register alongside with their authored
+names (§8.2). The handler lives in `inspect-codebase-handler.ts`.
 
 #### 2.4.1 Bridge session = one Mastra thread
 
@@ -192,7 +195,7 @@ Lives in Postgres schema `public.*`. Mastra's auto-created tables live in a
 separate `mastra.*` schema — see §7 for the ownership split and why the two
 schemas never mix.
 
-### 2.7 `packages/agents` (Phase 1+)
+### 2.7 `packages/agents`
 
 Mastra agent builder: takes DB rows (agent, skills, tools, repos, MCP
 connections, memory config) and returns a runnable `Agent` instance. The only
@@ -200,11 +203,12 @@ place in the repo that imports `mastra`, `@mastra/memory`, `@mastra/pg`, etc.
 — every other workspace sees a pure `Agent` / `RunResult` interface. This
 keeps the Mastra boundary explicit and swappable.
 
-The package also exposes the **coding-agent toolkit** primitives
-(`loadAttachedRepos`, `resolveRepoHint`, `resolveRelatedRepos`,
-`loadCodingAgentSystemSkill`, the URL normaliser, the wiki-tool
-mount, and the virtual bridge-tool definitions). Full design lives
-in §10 below.
+The package also owns the **inspector toolkit** that wraps gitnexus
+behind six deterministic wrappers (`find_in_codebase`, `trace_flow`,
+`assess_change_impact`, `debug_help`, `understand_module`,
+`list_repos`), the gitnexus MCP subprocess mount, the keyword-search
+fallback (ripgrep, see §10.12), and the auto-attached system prompt.
+Full design lives in §10 below.
 
 ## 3. Isolation guarantees (must not regress)
 
@@ -234,7 +238,7 @@ seeing files appear in `~/.gitconfig`, `~/.gitnexus/`, or worse.
 | No ambient `process.env` usage — everything goes through Zod schemas | `@agent-bridge/shared/env`                                                 |
 | Engine mismatch (Node version) fails loudly                          | `.npmrc` `engine-strict=true` + root `engines.node` + `.nvmrc`             |
 
-**HOME clamp patterns for user-configured MCPs (Phase 4).** `spawnSandboxed`
+**HOME clamp patterns for user-configured MCPs.** `spawnSandboxed`
 supports three postures. Only the first two are exposed in the UI:
 
 | Posture                        | When                                                       | What the child sees                                                                                                     |
@@ -388,8 +392,8 @@ of responsibility:
 
 ### 7.1 Bucket 1 — Mastra owns the storage
 
-When `@mastra/pg`'s `PostgresStore` is constructed with `schemaName: 'mastra'`
-(Phase 3 wiring), Mastra auto-creates and migrates these tables. We **never**
+When `@mastra/pg`'s `PostgresStore` is constructed with `schemaName: 'mastra'`,
+Mastra auto-creates and migrates these tables. We **never**
 design our own versions:
 
 | Mastra table               | What it stores                                          |
@@ -429,15 +433,31 @@ Everything else. Mastra has no opinion or schema here, so we design freely:
 | `agents` (row), `skills`, `tools`    | Mastra agents + tools are code, not data      |
 | `repos`, `agent_repos`, `repo_edges` | Mastra has no notion of attached codebases    |
 | `mcp_connections`, `agent_mcp_tools` | Mastra consumes MCP tools at runtime, not DB  |
-| `llm_providers`                      | Mastra providers are instantiated, not stored |
-| `runs`, `run_events`                 | UI-facing audit log; `mastra.traces` is OTel  |
+| `llm_providers` (incl. `embedding_dims`) | Mastra providers are instantiated, not stored |
+| `bridge_tools`                       | Operator-authored IDE-facing tools (§8.2)     |
+| `runs` (incl. `minirepo_json` jsonb) | UI-facing audit log + D17′ envelope cache     |
+| `run_events`                         | UI-facing audit log; `mastra.traces` is OTel  |
+
+A few of these columns have non-obvious shapes worth calling out
+inline; the inspector toolkit (§10) reads them on every wrapper call:
+
+- **`llm_providers.embedding_dims`** — smallint, populated when an
+  operator adds an embedding-role provider. The provider editor's
+  *Test connection* button auto-detects it from the model's first
+  embedding response and writes it back in the same form. The worker
+  asserts on it before kicking off `gitnexus analyze --embeddings`
+  so a 384↔1024 mismatch fails fast instead of corrupting the index.
+- **`runs.minirepo_json`** — jsonb array, the D17′ envelope cache.
+  Each wrapper invocation appends a `MiniRepo` via `appendMinirepo`
+  inside one transaction with a 14 KiB oldest-eviction policy
+  (see §10.4). Used by both the chat-tab tool-call cards and the
+  IDE bridge envelope so they cannot drift.
 
 **`runs` vs `mastra.traces`.** Both exist and that's deliberate. Our `runs`
 carries UI semantics (`stream_id` for SSE, `input_prompt`, user-facing
 status). `mastra.traces` carries low-level OTel spans. They coexist linked by
-soft-FK columns on `runs` (`mastra_thread_id`, `mastra_resource_id`, added in
-Phase 3g via `0003_runs_mastra_link.sql`). If Mastra's tracing is ever
-disabled, our audit log still works.
+soft-FK columns on `runs` (`mastra_thread_id`, `mastra_resource_id`).
+If Mastra's tracing is ever disabled, our audit log still works.
 
 The link is **soft** on purpose. Real Postgres FKs across schemas are legal
 but would couple `drizzle-kit migrate` (public) to Mastra's auto-init at
@@ -460,7 +480,7 @@ dominate one-shot runs.
 
 This rule is enforced socially (this doc + `packages/agents` being the only
 Mastra-importing module) rather than mechanically. A lint rule banning
-`mastra*` imports outside `packages/agents` is worth adding in Phase 3.
+`mastra*` imports outside `packages/agents` is worth adding.
 
 ## 8. Tools — two directions
 
@@ -506,7 +526,7 @@ them with Mastra built-ins and hands the combined set to `new Agent({ tools,
 see "Tools", "MCP Connections", etc. separately, because the authoring UX
 differs per kind.
 
-**Tool-name namespacing (Phase 4).** Two MCPs in the same agent can easily
+**Tool-name namespacing.** Two MCPs in the same agent can easily
 both expose `search` or `query`. To keep the keys of `new Agent({ tools })`
 unique — and give the LLM an unambiguous name to call — `mountExternalMcps`
 auto-prefixes every external tool with the sanitised connection slug at
@@ -530,15 +550,15 @@ but the runtime routes http and sse through the same `HttpServerDefinition`.
 `apps/backend/src/lib/mcp-connections/discover.ts` (the test endpoint)
 and `packages/agents/src/mcp/external-mcps.ts` (runtime mount). Every
 decrypted value (≥4 chars) is appended to `BuiltAgent.secrets` so the
-Phase 3f run-redactor scrubs it from every SSE frame + `run_events` row.
+run-redactor scrubs it from every SSE frame + `run_events` row.
 
-**Authentication kinds (Phase 4H).** `mcp_connections.auth_kind`
+**Authentication kinds.** `mcp_connections.auth_kind`
 discriminates three wire-level behaviors:
 
 | `auth_kind` | Transport | Meaning                                                                                                                                                                                             |
 | ----------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `none`      | any       | No upstream credential; the probe connects anonymously. stdio rows always land here.                                                                                                                |
-| `headers`   | http/sse  | Static `Authorization: Bearer …` / API-key headers, encrypted in `headers_envelope`. Same code path as pre-Phase-4H HTTP MCPs.                                                                      |
+| `headers`   | http/sse  | Static `Authorization: Bearer …` / API-key headers, encrypted in `headers_envelope`.                                                                                                                |
 | `oauth`     | http/sse  | OAuth 2.1 authorization-code + PKCE via Mastra's `MCPOAuthClientProvider`. Tokens persist in `mcp_oauth_state` (one row per scope key, encrypted via the same envelope format as the other fields). |
 
 OAuth is first-class — there is no `mcp-remote` subprocess, no
@@ -571,28 +591,42 @@ spec.
 
 ### 8.2 Bridge tools (outbound — what the IDE sees)
 
-What `apps/mcp-bridge` exposes to Cursor / Claude Code over MCP. When a
-developer types `@query_frontend_helper "why does login fail?"` in the IDE,
-this is the tool that handles the request by kicking off a run against one
-of our agents and streaming the answer back.
+What `apps/mcp-bridge` exposes to Cursor / Claude Code / Codex over MCP.
+When a developer types `@<agent>__inspect_codebase "why does login fail?"`
+in the IDE, this is the tool that handles the request by running the
+agent's wrapper toolkit (§10) and returning a bounded D17′ envelope.
 
-**Phase 5 model — 1:1 agent → bridge tool.** Ships the IDE integration end
-to end with zero new schema: each `agents` row derives one bridge tool at
-runtime (name = `query_<agent.slug>`, description = `agents.description`).
-Per-call audit lands in `runs` + `run_events` with `stream_id` prefixed
-`bridge:` so the UI can distinguish IDE-originated runs from UI chat runs.
-The `query_` prefix is **reserved** for these auto-derived defaults —
-Phase 7 explicit tools cannot use it.
+**Default surface — one `inspect_codebase` per agent.** Every `agents`
+row contributes exactly one auto-derived MCP tool with the name
+`<agent.slug>__inspect_codebase`, description sourced from
+`agents.description`, and the input schema `{ query: string,
+repo_hint?: string }`. The handler in
+`apps/mcp-bridge/src/inspect-codebase-handler.ts` kicks off a run
+against the agent's BuiltAgent, lets the inspector wrappers gather
+evidence into `runs.minirepo_json`, then returns the envelope:
 
-**Phase 7 upgrade — 1:N agent → bridge tools.** Introduces a
-`bridge_tools` table so an operator can author several curated tools per
-agent (`ask_architecture`, `explain_module`, `find_tests_for`, …) each with
-its own input schema + prompt template. Non-breaking migration: when the
-table is empty for an agent, fall back to the Phase 5 default tool. Phase 7
-also adds `runs.bridge_tool_name text` (nullable) so the UI can say which
-explicit tool a run was invoked from — Phase 5 rows stay `NULL`. A DB CHECK
-constraint enforces the reserved-prefix rule (`name NOT LIKE 'query\_%'`).
-See `docs/PLAN.md` Phase 7 for the full migration.
+```jsonc
+{ "ok": true,
+  "mini_repos": [ /* per-wrapper MiniRepos, oldest dropped to fit 14 KiB */ ],
+  "prose_summary": "≤ 1 KiB",  // populated only when mini_repos is empty
+  "warnings": [] }
+```
+
+`stream_id` is prefixed `bridge:` so the UI can distinguish IDE-originated
+runs from chat-tab runs. The `inspect_codebase` suffix is **reserved** —
+operator-authored tools cannot collide with it.
+
+**Operator-authored extras — `bridge_tools` rows.** An operator can
+author additional curated tools per agent (`ask_architecture`,
+`explain_module`, `find_tests_for`, …) by inserting `bridge_tools`
+rows with their own input schema + prompt template. These mount
+alongside the default `inspect_codebase` tool with the operator's
+chosen names. They wrap into the same envelope but with an 8 KiB
+prose cap (operators authored their template on purpose, so the
+prose channel is theirs to use). `runs.bridge_tool_name text`
+(nullable) records which explicit tool a run was invoked from —
+the default `inspect_codebase` rows stay `NULL`. A DB CHECK
+constraint enforces the reserved-suffix rule.
 
 ### 8.3 Rule of thumb
 
@@ -603,7 +637,7 @@ See `docs/PLAN.md` Phase 7 for the full migration.
 
 Type naming convention enforced by code review: agent-side types live under
 `@agent-bridge/shared/domain` prefixed `Tool*` / `Mcp*`; bridge-side types
-(added in Phase 5) live under the same module prefixed `BridgeTool*`.
+live under the same module prefixed `BridgeTool*`.
 
 ## 9. Frontend architecture (`apps/frontend`)
 
@@ -880,227 +914,260 @@ fresh array reference on resolve (NOT splice) so React's `Object.is`
 check fires and the host re-renders. Mutating in place is a footgun
 that previously left dialogs hanging.
 
-## 10. Coding-agent toolkit
+## 10. Wrapper-tool architecture (inspector toolkit)
 
-A purpose-built MCP surface that turns every Agent Bridge agent into
-a multi-repo aware "code-context oracle" for IDE coding agents
-(Cursor, Claude Code, Codex, …). The IDE's coding agent only sees
-one repo (the one open in the editor); Agent Bridge sees every repo
-the operator attached plus the relationships between them. The
-toolkit closes that gap with six standard tools the IDE LLM can call.
+The IDE coding agent only sees the file the developer has open. Agent
+Bridge sees every repo the operator attached plus the operator-curated
+edges between them. The wrapper-tool architecture closes that gap with
+**one** MCP tool per agent (`inspect_codebase`) and a set of
+deterministic wrapper tools the agent's own LLM picks between
+internally. The IDE LLM never sees `gitnexus_*` tools by name; the
+agent's wrappers wrap them.
 
-### 10.1 Six virtual bridge tools
+The reasoning is straightforward: a generic IDE coding agent staring
+at a 50k-line repo through grep + a single open file will rabbit-hole
+on the wrong thread. We have already-indexed graph + embeddings, plus
+operator-curated repo edges, so we can answer in one tool call with
+structured evidence (call graph, related files across repos, ranked
+hits) instead of begging the IDE LLM to explore the codebase line by
+line. V1 tried to expose every gitnexus tool to the IDE LLM directly
+and failed for reasons captured in the local `notes.md` — short
+version: too many low-level tools, no enforced bound on prose, and
+nothing to stop the IDE LLM from looping.
 
-Defined in `packages/agents/src/coding-agent/bridge-tool-defs.ts`,
-registered automatically by `apps/mcp-bridge` for every exposable
-agent:
+### 10.1 Flow
 
-| Tool                   | Scope         | What it answers                                                      |
-| ---------------------- | ------------- | -------------------------------------------------------------------- |
-| `plan_feature`         | single repo   | Affected files, reusable hooks/components, cross-repo touch points, naming patterns, risks, follow-ups. |
-| `plan_bugfix`          | single repo   | Suspect call sites with line numbers, recent related changes, risks. |
-| `ask_general`          | single / all  | Free-form Q&A grounded in cited file paths.                           |
-| `investigate_codebase` | single / all  | Ordered trace of hops from a starting anchor toward a goal, optional Mermaid graph. |
-| `assess_impact`        | single / all  | Cross-repo blast radius (direct + transitive consumers) of a proposed change. |
-| `list_repos`           | n/a (sync)    | Lists the agent's attached repos. Deterministic, no LLM call.        |
-
-"Virtual" because they're code-defined, not rows in `bridge_tools`.
-Operators can shadow any of them by inserting an explicit row whose
-`name` matches the slug-prefixed wire name. The Phase-5
-`query_<slug>` default is no longer auto-emitted -
-`<slug>__ask_general` subsumes it. The `query_` prefix stays
-reserved on the `bridge_tools.name` CHECK constraint in case a
-future flag re-introduces the default.
-
-### 10.2 Slug-prefixed wire names
-
-`apps/mcp-bridge`'s tool registry is one global namespace per server
-process. Multi-agent installs would collide on bare names like
-`plan_feature`, so every virtual tool registers as
-`<agent.slug>__<def.name>` (mirrors the `<connection-slug>__<rawTool>`
-convention in `mcp/external-mcps.ts`). The bare canonical name
-travels on the JSON envelope's `tool` field for IDE-side
-identification.
-
-### 10.3 Multi-signal repo resolver
-
-`packages/agents/src/coding-agent/repo-resolver.ts` runs **before**
-any LLM call. The IDE supplies a hint object with up to four
-optional fields:
-
-```jsonc
-{ "repo_hint": "frontend",                      // friendly label
-  "remote_url": "https://github.com/co/web",    // highest-signal
-  "local_folder": "web-app",                    // IDE workspace dir
-  "branch": "main" }                             // tiebreaker
+```
+IDE / Chat
+   │ user question + (optional) repo hint
+   ▼
+apps/mcp-bridge      ──► Mastra agent (BuiltAgent cache)
+   inspect_codebase       tools: {                              ──► gitnexus MCP
+                            find_in_codebase                          (subprocess,
+                            trace_flow                                 sandboxed)
+                            assess_change_impact
+                            debug_help
+                            understand_module
+                            list_repos
+                            …operator MCPs
+                          }
+                          ↓ run-context AsyncLocalStorage
+                          wrapper telemetry → run_events + minirepo_json
 ```
 
-The resolver scores against the agent's attached repos
-(`agent_repos.role`, `agent_repos.aliases`, `repos.remote_url`) and
-returns one of four outcomes:
+The chat tab and the IDE bridge converge on the same
+`packages/agents/src/run-dispatcher.ts` path. The only difference is
+the streamId prefix (`run:` vs `bridge:`) and what the bridge does
+with the run's accumulated mini-repos at the end.
 
-- `single`. one confident match, run the LLM
-- `all`. `repo_hint: '__all__'` reserved sentinel (rejected by
-  `plan_feature` / `plan_bugfix`, accepted by everything else)
-- `clarification`. multi-repo agent + no hint, OR `__all__` on a
-  single-repo-only tool. Bridge returns `needs_clarification` with
-  candidate list + pre-baked `suggested_replies` so the IDE can
-  render a one-click picker. **No LLM call**, no `runs` row.
-- `error`. `repo_not_found` / `repo_ambiguous` / `repo_not_ready` /
-  `no_repos_attached`. **No LLM call.**
+### 10.2 Inspector wrapper toolkit
 
-Decision rule has TWO thresholds (score and margin) so near-tied
-matches return `repo_ambiguous` instead of silently picking. URL
-normalisation folds `https://`, `git@host:owner/repo`, `ssh://`,
-and bare `host/path` forms into a canonical form for exact-match
-short-circuit.
+Six wrappers under `packages/agents/src/inspector/workflows/`. Each
+returns a `MiniRepo` (`inspector/types.ts` + `inspector/mini-repo.ts`)
+capped at 12k tokens internally; the IDE-facing envelope further caps
+the array at 14 KiB total.
 
-### 10.4 `agent_repos.aliases jsonb`
+| Wrapper                | Backed by                                           |
+| ---------------------- | --------------------------------------------------- |
+| `find_in_codebase`     | `gitnexus_query` × LLM term expansion (per repo×variant) |
+| `trace_flow`           | `gitnexus_impact downstream` + `gitnexus_context`        |
+| `assess_change_impact` | `gitnexus_impact` (both directions) + `repo_edges` cross-repo expansion |
+| `debug_help`           | regex extract from `error_text` + `gitnexus_query` + `gitnexus_context` |
+| `understand_module`    | `gitnexus_context` + `gitnexus_impact downstream depth=2`             |
+| `list_repos`           | direct DB read; no gitnexus, no LLM                |
 
-Operator-curated extra fuzzy-match handles per attached repo. The
-DTO (`packages/shared/src/dtos/repos.ts`) trims, lower-cases, and
-dedupes on save, so the column stores a canonical form the resolver
-can compare without re-normalising. Surfaced as a chip-input on the
-edit-attached-repo sheet plus a compact pill row on the agent's
-Resources tab.
+### 10.3 The one LLM call per wrapper
 
-### 10.5 Auto-attached system skill
+`find_in_codebase` runs `inspector/expand.ts` once per invocation: a
+small Mastra Agent (no tools, no memory, sibling of the main agent)
+classifies intent and produces 2–8 codebase-specific term variants
+("translation" → `i18n`, `locale`, `intl`, `t()`, `accessibility`).
+Output is prose with three flat keys, parsed leniently. Hard fallback
+on any failure → raw query as the only expansion. The other wrappers
+do zero LLM calls.
 
-`packages/agents/src/coding-agent/system-skill.md` is appended to
-every agent's `instructions` by `composeInstructions` in
-`build-agent.ts`, after the operator's authored skills and before
-the gitnexus repo inventory. This is the same auto-attach pattern
-as the existing repo inventory + edges blocks. code, not data.
+### 10.4 Mini-repo + accumulator
 
-The skill teaches the LLM:
+Each wrapper invocation appends its `MiniRepo` to `runs.minirepo_json`
+(jsonb array) via `runsRepo.appendMinirepo`. Append is read-modify-
+write inside one transaction with an oldest-eviction policy: when the
+array would exceed 14 KiB serialized, oldest entries drop until it
+fits. Every wrapper writes unconditionally — chat-tab tool-call cards
+and the IDE bridge envelope share one source of truth.
 
-- The output contract (valid JSON, match the active tool's shape
-  exactly, never bleed `investigate_codebase`'s trace shape into
-  `assess_impact`'s blast_radius shape).
-- The hallucination floor (every concrete claim cites a live
-  `gitnexus_*` result; empty results mean "no matches", not "doesn't
-  exist"; verify-before-declaring-missing).
-- Verified density (within what gitnexus has shown, be exhaustive;
-  return all 30 affected files with citations, not 3 plus
-  speculation).
-- Source-of-truth ordering: gitnexus tools are always the primary
-  source, the wiki is supporting context only (snapshot, may have
-  drifted).
-- Always-explain-bounds: e.g. `assess_impact`'s summary must say
-  whether cross-repo expansion happened, why, and against which
-  repos.
+### 10.5 Inspector run-context
 
-`CODING_AGENT_SYSTEM_SKILL_VERSION` (currently `0.8.0`) keys the
-BuiltAgent cache hash in `built-agent-cache.ts`. bumping it
-invalidates every cached agent on next access. The body is read
-asynchronously from disk (`new URL('./system-skill.md',
-import.meta.url)`); the build script copies the .md into
-`dist/src/coding-agent/` so production resolution works the same
-as dev.
+`packages/agents/src/inspector/run-context.ts` exposes a
+`node:async_hooks` AsyncLocalStorage holding `{db, eventBus,
+redactor, runId, streamId, agentStreamId, agentId}` for the duration
+of `agent.stream(...)`. The dispatcher wraps the for-await loop in
+`runWithInspectorContext({...}, ...)`; wrappers read the context to
+emit redacted telemetry events and to call `appendMinirepo`. Mastra's
+tool-execute context exposes `agent.toolCallId` but not our
+app-level `runId`, hence the ALS.
 
-### 10.6 Wiki tool. system tool, sibling to gitnexus
+### 10.6 Telemetry events
 
-`packages/agents/src/coding-agent/wiki-tool.ts` is the second auto-
-mounted system tool surface (the first being gitnexus). Mounts
-when at least one attached repo has `wikiStatus='ready'`. Two
-Mastra tools:
+Eight `runEventKinds` in `packages/shared/src/events.ts`, all routed
+through `RunRedactor` so secret previews stay scrubbed:
 
-- `gitnexus_wiki_list_pages(repo)`. reads `module_tree.json` (or
-  falls back to a directory scan) for the resolved repo's wiki
-  output at `<source>/.gitnexus/wiki/`.
-- `gitnexus_wiki_get_page(repo, slug)`. reads
-  `<wikiDir>/<slug>.md`. Path-traversal guarded:
-  `slug` must match `^[a-zA-Z0-9][a-zA-Z0-9._-]*$` AND the resolved
-  path must stay under wikiDir.
+- `inspector.tool.called` / `inspector.tool.result`
+- `inspector.llm.called` / `inspector.llm.result` (term expansion)
+- `inspector.gitnexus.called` / `inspector.gitnexus.result` (per call)
+- `inspector.minirepo.built`
+- `inspector.fallback`
 
-Available to **every** entry point. Chat tab, IDE bridge, future
-surfaces. The skill positions the wiki as supporting context only;
-the LLM uses it for orientation and architectural framing, then
-verifies any concrete claim against gitnexus before quoting.
+Each preview field is capped at `INSPECTOR_PREVIEW_BYTES_CAP = 2048`.
+Audit row written to `run_events` keyed by `runId`; per-run channel
++ per-agent fan-out channel get the same scrubbed payload.
 
-The `/api/system/tools/gitnexus` route returns the wiki tools
-alongside gitnexus's own catalog so the operator-facing Resources
-→ Tools "System defaults" card lists everything the agent has
-auto-mounted.
+### 10.7 Wire envelope (D17′)
 
-### 10.7 Wire envelope
-
-The bridge handler (`apps/mcp-bridge/src/coding-agent-handler.ts`)
-returns one of two envelope shapes:
+`apps/mcp-bridge` returns this for every `inspect_codebase` call:
 
 ```jsonc
-// Success
-{ "ok": true, "tool": "plan_feature",
-  "agent": { "id": "...", "slug": "..." },
-  "resolved_repo": { "id": "...", "label": "frontend", ... } | null,
-  "related_repos": [{ "id": "...", "label": "backend", "via": "..." }],
-  "scope": "single" | "all",
-  "confidence": "high" | "medium" | "low",
-  "groundedness": { "claims": N, "grounded": N, "ungrounded": N },
-  "answer": { /* tool-specific shape */ },
-  "uncertainty_notes": [...],
-  "warnings": [...],
-  "schema_unmatched"?: true }
-
-// Error / clarification
-{ "ok": false,
-  "code": "needs_clarification" | "repo_not_found" | ... ,
-  "message": "...",
-  "candidates"?: [...],
-  "clarification"?: { "kind": ..., "candidates": ..., "suggested_replies": ... } }
+{ "ok": true,
+  "mini_repos": [ /* one MiniRepo per wrapper invocation, oldest dropped to fit 14 KiB */ ],
+  "prose_summary": "≤ 1 KiB",  // only when mini_repos is empty (chit-chat)
+  "warnings": [] }
 ```
 
-The bridge fills in the bridge-managed fields (`ok`, `tool`,
-`agent`, `resolved_repo`, `related_repos`, `scope`); the LLM emits
-the rest. The handler builds an XML-ish `<coding_agent_call>` block
-from the resolver's output and prepends it to the operator's
-prompt template, so the LLM cannot retroactively claim a different
-repo.
+`ok: true` always — chit-chat is a valid response and the IDE LLM
+decides what to do with it. Operator-authored `bridge_tools` rows
+wrap into the same envelope with an 8 KiB prose cap (operators
+authored their template on purpose).
 
-JSON-parse failure on the LLM output downgrades to
-`{ schema_unmatched: true, confidence: 'low' }` with the raw text
-under `answer.text` so the IDE always gets structured output.
+### 10.8 Auto-attached system prompt
 
-### 10.8 Telemetry
+`packages/agents/src/inspector/system-prompt.md` (≤ 80 lines)
+auto-appends to every agent's instructions in `composeInstructions`.
+Replaces the v1 860-line skill. Operator override: a skill body
+containing `# Inspector toolkit` skips the auto-attach. Cache-busted
+by `INSPECTOR_SYSTEM_PROMPT_VERSION` baked into the BuiltAgent cache
+hash. Build script copies the `.md` into `dist/` so production
+resolves the same way as dev.
 
-Three new `runEventKinds` in `packages/shared/src/events.ts`:
+The v1 auto-attached blocks (gitnexus library skills, repo inventory,
+repo edges) are GONE from the prompt. Repo inventory now travels
+inside `list_repos` mini-repo responses; cross-repo edges return
+inside `assess_change_impact`.
 
-- `coding-agent.repo.resolved`. emitted after `createRun`,
-  before `dispatchRun`. Payload carries the IDE hint, scope,
-  picked repo + matched signal + confidence, top-3 score table,
-  alias count, unresolved related-hint count.
-- `coding-agent.repo.clarification_requested`. fan-out only (no
-  `runs` row exists when the resolver short-circuits). Logged as
-  a normal event so it doesn't bias failure-rate dashboards.
-- `coding-agent.tool.completed`. after `dispatchRun` returns.
-  Carries `confidence`, `groundedness`, `duration_ms`,
-  `schema_unmatched?`.
+### 10.9 Operator skill caps
 
-`runs.bridge_tool_name` is populated with the slug-prefixed wire
-name for every virtual-tool call so the runs/logs UI can filter
-IDE traffic distinctly. The Logs tab buckets coding-agent events
-under the `tool` filter with `bridge` as the source label.
+`packages/shared/src/dtos/skills.ts` enforces:
 
-### 10.9 Token budget
+- Per-skill body ≤ `SKILL_BODY_MAX_BYTES = 4 KiB`
+- Per-skill ≤ `SKILL_BODY_MAX_LINES = 200` lines
+- Per-agent total ≤ `PER_AGENT_SKILL_BUDGET_BYTES = 12 KiB`
 
-`estimateAgentTokens` (`packages/agents/src/token-estimate.ts`)
-includes the system skill body and the wiki tool descriptions in
-the breakdown so the Configure-tab budget card shows their real
-cost. The system skill is typically ~2-3k tokens of every prompt;
-worth surfacing because operators planning a small-context model
-need to see what's already baked into baseline.
+The first two enforce via Zod on POST/PATCH. The total cap runs in
+`apps/backend/src/routes/skills.ts:wouldExceedAgentSkillBudget` —
+sums existing rows (excluding the row being PATCHed), returns
+`400 validation_failed` with explicit byte counts when the operator
+would push past the cap.
 
-### 10.10 Direction summary
+### 10.10 Embeddings
 
-Crucial to keep straight when reading this code:
+`buildAgent` boot-fails when an agent has any attached repo (any
+status) and no `llm_providers` row with `role='embedding'` exists.
+The worker's `index-repo` job resolves the embedding provider on
+every `gitnexus analyze` invocation, decrypts the apiKey, and
+forwards `GITNEXUS_EMBEDDING_*` env vars (URL, model, **dims**, key)
+so gitnexus's `--embeddings` pipeline routes to the workspace's
+chosen embedder. The same env is forwarded into the gitnexus MCP
+subprocess by `mountGitnexusMcp` so query-time embedding matches
+index-time — a 384↔1024 mismatch otherwise silently returns zero
+hits. `gitnexus_query` inside the inspector wrappers is hybrid
+BM25 + semantic + RRF as a result.
+
+Per-repo embeddings + graph stay inside `<source>/.gitnexus/` (i.e.
+`<data-root>/workspace/<agent>/<repo>/.gitnexus/`) — same isolation
+boundary as the rest of the data root (§3).
+
+### 10.11 Incremental re-index + force flag
+
+`POST /api/repos/:id/index` accepts `{ force?: boolean }` (default
+`false`). The worker's `index-repo` job preserves the existing
+`<source>/.gitnexus/` directory by default and lets gitnexus
+incrementally re-walk only changed files; on `force: true` it wipes
+the directory first so a clean re-index runs end-to-end. The repo
+detail page exposes both buttons (Reindex + Force reindex). Fatal
+gitnexus stderr lines (`looksLikeFatalLine`) are captured into
+`worker_jobs.last_error` so the activity feed surfaces failures
+instead of leaving the user staring at "in progress".
+
+### 10.12 Keyword search (gitnexus #1287 workaround)
+
+Gitnexus 1.6.3 has a bug — opening the FTS5 index in read-only mode
+during query attempts a CREATE TABLE statement and aborts. As a
+result `gitnexus_query` returns the semantic arm only and silently
+drops the BM25 half of its hybrid retrieval. Until upstream lands a
+fix, `find_in_codebase` (and any wrapper that calls it) supplements
+gitnexus hits with a local ripgrep-backed scan implemented in
+`packages/agents/src/inspector/keyword-search.ts`. It uses
+`@vscode/ripgrep`'s pre-bundled binary (no system dep), runs one
+spawn per call with all expanded query variants OR'd together,
+returns up to N matches ranked by simple frequency, and reuses the
+same `KeywordHit` shape as gitnexus hits so the wrapper merges them
+without branching downstream. Memory-bounded by ripgrep's stream
+parser, so it stays stable on the 50k-file repos this design was
+built for.
+
+### 10.13 Parked features (infrastructure present, UI hidden)
+
+Two surfaces have full backend + DB infrastructure but no operator-facing
+UI right now. They were built end-to-end at one point, then hidden when
+the wrapper-tool architecture made them either unused (custom tools) or
+unconsumed (wiki). Re-enabling either is a focused, contained change.
+
+**Custom tools (the `tools` table — HTTP / shell / mastra_builtin / custom).**
+
+- Schema: `public.tools` (`id`, `agent_id`, `kind`, `name`, `description`,
+  `config_json`, `position`).
+- Backend: full CRUD under `apps/backend/src/routes/tools.ts`.
+- Frontend RPC: `addTool`, `patchTool`, `removeTool` in `lib/rpc`,
+  consumed by `workspace-context`.
+- What's missing: `packages/agents/buildAgent` does NOT read
+  `schema.tools`. The LLM never sees these rows. The frontend Add /
+  Edit / Delete affordances were removed from the Resources Tools tab
+  to stop operators authoring rows that nothing consumes; the tab
+  still lists existing rows read-only with an *Inactive* pill so prior
+  data isn't lost from view.
+- To re-enable: implement Mastra `createTool` paths for each `kind`
+  inside `buildAgent` (sandbox the `shell` kind!), then restore the
+  CRUD UI in `apps/frontend/src/features/agent-tools/tools-tab.tsx`.
+
+**Wiki generation (`gitnexus wiki`).**
+
+- Schema: `repos.wiki_status` / `wiki_generated_at` / `wiki_pages` /
+  `wiki_last_error`.
+- Backend: `POST /api/repos/:id/wiki` enqueues, the worker's
+  `generate-wiki` BullMQ job runs `gitnexus wiki` against the source,
+  markdown lands under `<source>/.gitnexus/wiki/`. Static-serve at
+  `GET /api/repos/:id/wiki(/*)` is intact.
+- What's missing: no inspector wrapper consumes the wiki. The
+  `understand_module` docstring already names this as deferred work
+  (slice the wiki page when `wikiStatus === 'ready'` AND `wikiGeneratedAt`
+  is recent). The frontend Generate / Open wiki buttons + status pill
+  were removed from the repo detail page to stop operators paying LLM
+  cost for output the agent can't read.
+- To re-enable: add a freshness gate + wiki read inside
+  `understand_module.ts` (and optionally `find_in_codebase.ts` as a
+  pre-filter), then restore the buttons in
+  `apps/frontend/src/app/library/repos/[id]/page.tsx`.
+
+Same pattern in both: keep the data and the routes, hide the trigger
+until the runtime that consumes them is wired.
+
+### 10.14 Direction summary
 
 | Concept | Direction | Where defined | Visible to IDE? |
 | --- | --- | --- | --- |
-| **Agent tools** (gitnexus, external MCPs, custom HTTP/shell) | inbound. agent calls them | `tools` table, `mcp_connections` + `agent_mcp_tools`, `mcp/gitnexus-mcp.ts`, `mcp/external-mcps.ts` | NO |
-| **Wiki tool** | inbound. agent calls it | `coding-agent/wiki-tool.ts` | NO |
-| **System skill** | not a tool. prompt content only | `coding-agent/system-skill.md` | NO |
-| **Bridge tools** (operator-authored) | outbound. IDE calls them | `bridge_tools` table | YES |
-| **Coding-agent toolkit** (six virtuals) | outbound. IDE calls them | `coding-agent/bridge-tool-defs.ts` | YES |
+| **Agent tools** (inspector wrappers, external MCPs, custom HTTP/shell) | inbound — agent calls them | `inspector/index.ts`, `mcp_connections` + `agent_mcp_tools`, `tools` table | NO |
+| **Gitnexus client** | inbound — wrappers call it | `mcp/gitnexus-mcp.ts` (subprocess), `inspector/gitnexus-callers.ts` (typed wrappers) | NO |
+| **System prompt** | not a tool — prompt content only | `inspector/system-prompt.md` | NO |
+| **Operator-authored bridge tools** | outbound — IDE calls them | `bridge_tools` table | YES |
+| **`inspect_codebase`** (one per agent) | outbound — IDE calls it | `apps/mcp-bridge/src/inspect-codebase-handler.ts` | YES |
 
 Both directions exist on the same `apps/mcp-bridge` process: the
 bridge IS the IDE-facing MCP server (outbound surface) AND it

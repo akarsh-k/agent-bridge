@@ -311,6 +311,69 @@ export async function appendEvent(
   return row
 }
 
+/**
+ * Append one mini-repo to `runs.minirepo_json` (`docs/ARCHITECTURE.md §10` Phase
+ * G G3). The column stores a JSON array. each inspector wrapper
+ * invocation contributes one element. The IDE bridge reads the array
+ * verbatim under D17's `mini_repos[]` field; the chat tab renders each
+ * element as an inline tool-call card.
+ *
+ * Hard 14 KiB total cap — when adding the new entry would push past
+ * `MINIREPO_MAX_TOTAL_BYTES`, we drop entries from the FRONT (oldest
+ * first) until we fit. "Newest evidence wins" matches D17's intent
+ * for IDE consumers; multi-turn conversations keep the freshest
+ * wrapper output even when earlier turns produced larger payloads.
+ *
+ * Read-modify-write inside one transaction so two concurrent wrapper
+ * appends in the same run can't lose updates. `BuiltAgent` cache
+ * dedupes parallel calls per agent at the dispatcher level, so
+ * concurrent appends are rare in practice — but `Promise.all` over
+ * tools in a single LLM round can fire several at once.
+ *
+ * Failures are returned as warnings on the next read, never thrown
+ * here. telemetry must not take down a wrapper's main result path.
+ */
+export const MINIREPO_MAX_TOTAL_BYTES = 14 * 1024
+
+export async function appendMinirepo(
+  handle: AgentBridgeDb,
+  runId: string,
+  miniRepo: unknown,
+): Promise<{ stored: number; dropped: number } | null> {
+  return handle.db.transaction(async (tx) => {
+    const [row] = await tx
+      .select({ minirepoJson: runs.minirepoJson })
+      .from(runs)
+      .where(eq(runs.id, runId))
+      .limit(1)
+    if (!row) return null
+
+    const current = Array.isArray(row.minirepoJson)
+      ? ([...row.minirepoJson] as unknown[])
+      : []
+    current.push(miniRepo)
+
+    // Trim from the front until total fits. Stops if even the newest
+    // single entry blows the cap (we keep it anyway — better the IDE
+    // sees one over-cap mini-repo than nothing).
+    let dropped = 0
+    while (
+      current.length > 1 &&
+      JSON.stringify(current).length > MINIREPO_MAX_TOTAL_BYTES
+    ) {
+      current.shift()
+      dropped += 1
+    }
+
+    await tx
+      .update(runs)
+      .set({ minirepoJson: current })
+      .where(eq(runs.id, runId))
+
+    return { stored: current.length, dropped }
+  })
+}
+
 // ─── reads (used by the HTTP POST pre-flight) ───────────────────────────
 
 /**

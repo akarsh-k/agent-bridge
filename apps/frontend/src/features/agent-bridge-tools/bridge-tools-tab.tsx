@@ -17,7 +17,7 @@
 
 import { useEffect, useState } from 'react'
 import {
-  CODING_AGENT_TOOL_METADATA,
+  INSPECT_CODEBASE_METADATA,
   type BridgeToolResponse,
 } from '@agent-bridge/shared'
 import {
@@ -266,93 +266,94 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
 }
 
 /**
- * Read-only card listing the six virtual coding-agent toolkit tools
- * the bridge auto-exposes for every agent. Always-on; the operator
- * can shadow any of them by authoring a `bridge_tools` row with the
- * matching slug-prefixed name.
+ * Read-only card showing the single built-in MCP tool the bridge
+ * auto-exposes for every agent: `<slug>__inspect_codebase`. Always-on;
+ * the operator can shadow it by authoring a `bridge_tools` row with
+ * the same name (the DB CHECK reserves the suffix).
  *
- * Data is static. `CODING_AGENT_TOOL_METADATA` ships with shared
+ * Data is static. `INSPECT_CODEBASE_METADATA` ships with shared
  * (no network call). The slug-prefixed name displayed here is what
  * the IDE actually sees on `tools/list`.
  */
 function CodingAgentToolkitCard({ slug }: { slug: string }) {
-  const [expanded, setExpanded] = useState<string | null>(null)
+  const [expanded, setExpanded] = useState(false)
+  const fullName = `${slug}__${INSPECT_CODEBASE_METADATA.nameSuffix}`
   return (
     <div className="ab-card ab-card-pad ab-form-section">
       <div className="ab-section-head" style={{ marginBottom: 6 }}>
-        <div className="ab-section-title">Coding-agent toolkit</div>
+        <div className="ab-section-title">Inspector</div>
         <div className="ab-section-sub">
-          Always-on bridge tools shipped by Agent Bridge for IDE coding
-          agents (Cursor / Claude Code / Codex). Read-only. author a
-          bridge tool below with the matching slug-prefixed name to
-          shadow any of these.
+          Always-on bridge tool shipped by Agent Bridge for IDE coding
+          agents (Cursor / Claude Code / Codex). Read-only. The IDE LLM
+          calls it with a free-form query; the agent picks the right
+          inspector wrapper internally and returns a bounded mini-repo
+          envelope.
         </div>
       </div>
       <div className="ab-card ab-list-card">
-        {CODING_AGENT_TOOL_METADATA.map((t) => {
-          const fullName = `${slug}__${t.name}`
-          const isExpanded = expanded === t.name
-          return (
-            <div key={t.name}>
-              <button
-                type="button"
-                className="ab-list-row"
-                onClick={() =>
-                  setExpanded((cur) => (cur === t.name ? null : t.name))
-                }
-                aria-expanded={isExpanded}
+        <div>
+          <button
+            type="button"
+            className="ab-list-row"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            style={{
+              width: '100%',
+              background: 'transparent',
+              border: 'none',
+              font: 'inherit',
+              textAlign: 'left',
+              cursor: 'pointer',
+            }}
+          >
+            <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+              <BridgeIcon />
+            </div>
+            <div className="ab-list-row-head">
+              <div className="ab-list-row-title ab-mono">{fullName}</div>
+              <div className="ab-list-row-sub">
+                {INSPECT_CODEBASE_METADATA.summary}
+              </div>
+            </div>
+            <div className="ab-list-row-meta">
+              <Pill kind="accent">Built-in</Pill>
+              <span
+                className="ab-row-affordance"
+                aria-hidden="true"
                 style={{
-                  width: '100%',
-                  background: 'transparent',
-                  border: 'none',
-                  font: 'inherit',
-                  textAlign: 'left',
-                  cursor: 'pointer',
+                  transform: expanded ? 'rotate(180deg)' : undefined,
+                  transition: 'transform 160ms var(--ease-out)',
+                  display: 'inline-flex',
                 }}
               >
-                <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-                  <BridgeIcon />
-                </div>
-                <div className="ab-list-row-head">
-                  <div className="ab-list-row-title ab-mono">{fullName}</div>
-                  <div className="ab-list-row-sub">{t.summary}</div>
-                </div>
-                <div className="ab-list-row-meta">
-                  {t.synchronous ? (
-                    <Pill kind="neutral">Sync</Pill>
-                  ) : (
-                    <Pill kind="accent">{t.allowAllRepos ? 'Any repo' : 'Single repo'}</Pill>
-                  )}
-                  <span
-                    className="ab-row-affordance"
-                    aria-hidden="true"
-                    style={{
-                      transform: isExpanded ? 'rotate(180deg)' : undefined,
-                      transition: 'transform 160ms var(--ease-out)',
-                      display: 'inline-flex',
-                    }}
-                  >
-                    <ChevronDownIcon />
-                  </span>
-                </div>
-              </button>
-              {isExpanded && (
-                <div
-                  style={{
-                    padding: '14px 18px 14px 62px',
-                    fontSize: 13,
-                    lineHeight: 1.55,
-                    background: 'var(--surface-hi)',
-                    borderTop: '1px solid var(--border)',
-                    whiteSpace: 'pre-wrap',
-                  }}
-                >
-                  {t.description}
-                </div>
-              )}
+                <ChevronDownIcon />
+              </span>
             </div>
-          )
-        })}
+          </button>
+          {expanded && (
+            <div
+              style={{
+                padding: '14px 18px 14px 62px',
+                fontSize: 13,
+                lineHeight: 1.55,
+                background: 'var(--surface-hi)',
+                borderTop: '1px solid var(--border)',
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {INSPECT_CODEBASE_METADATA.description}
+              {'\n\nInputs:'}
+              {INSPECT_CODEBASE_METADATA.inputKeys.map((k) => (
+                <div key={k.name} style={{ marginTop: 6 }}>
+                  <span className="ab-mono" style={{ color: 'var(--text)' }}>
+                    {k.name}
+                  </span>{' '}
+                  {k.required ? '(required)' : '(optional)'} — {k.description}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

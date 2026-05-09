@@ -1,38 +1,39 @@
 /**
- * Tools tab content (rendered inside `Resources`). the agent's
- * INBOUND tool surface: native `tools` rows (HTTP / shell / Mastra
- * built-ins) the LLM can call while answering, plus the read-only
- * gitnexus "System defaults" catalog auto-mounted when the agent
- * has at least one indexed repo.
+ * Tools tab content (rendered inside `Resources`). Shows the agent's
+ * INBOUND tool surface — the inspector wrappers (find_in_codebase,
+ * trace_flow, assess_change_impact, debug_help, understand_module,
+ * list_repos) auto-mounted when the agent has at least one indexed
+ * repo.
  *
- * NOTE: this file ONLY deals with inbound tools. The OUTBOUND
- * surface. what the IDE sees on `tools/list` (operator-authored
- * `bridge_tools` rows + the always-on coding-agent toolkit
- * virtuals). lives in `features/agent-bridge-tools/bridge-tools-tab.tsx`.
- * Don't conflate them: same word, opposite directions, two
- * different DB tables. See `docs/ARCHITECTURE.md` §8.
+ * Native-tool authoring (HTTP / shell / mastra_builtin / custom from
+ * the `tools` table) is parked: buildAgent doesn't currently read
+ * `schema.tools`, so anything authored here would be persisted but
+ * never wired into the runtime Agent. The DB table + backend routes
+ * stay intact for a future native-tool initiative; the CRUD UI is
+ * hidden so operators don't spend effort on rows nothing consumes.
+ * Existing rows (if any) render read-only with an Inactive pill.
+ *
+ * NOTE: this file ONLY deals with inbound tools. The OUTBOUND surface
+ * — what the IDE sees on `tools/list` — lives in
+ * `features/agent-bridge-tools/bridge-tools-tab.tsx`. Don't conflate
+ * them: same word, opposite directions, two different DB tables.
+ * See `docs/ARCHITECTURE.md` §8.
  */
 
 import { useEffect, useState } from 'react'
 import type { SystemToolDefinition } from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
-import { Button } from '../../ui/button'
 import { Pill } from '../../ui/pill'
 import { EmptyState } from '../../ui/empty'
-import { ChevronDownIcon, PlusIcon, ToolIcon } from '../../ui/icons'
-import { RowMenu } from '../../ui/row-menu'
-import { confirmDialog } from '../../ui/dialog-store'
-import { toast } from '../../ui/toast-store'
+import { ChevronDownIcon, ToolIcon } from '../../ui/icons'
 import { ApiError, getGitnexusSystemTools } from '../../lib/rpc'
-import { useDragReorder } from '../../lib/use-drag-reorder'
-import { ToolSheet } from './tool-sheet'
 
 type SystemToolsState =
   | { status: 'loading' }
   | { status: 'ready'; tools: ReadonlyArray<SystemToolDefinition> }
   | { status: 'error'; message: string }
 
-// Small uppercase caption that separates the operator's custom rows
+// Small uppercase caption that separates the operator-authored rows
 // from the always-attached built-in rows inside a Tools / Skills card.
 function BuiltInSubhead() {
   return (
@@ -72,12 +73,10 @@ function firstSentence(text: string): string {
 }
 
 export function ToolsTab({ agentId }: { agentId: string }) {
-  const { agentResources, removeTool, patchTool } = useWorkspace()
+  const { agentResources } = useWorkspace()
   const tools = agentResources[agentId]?.tools ?? []
   const attachedRepos = agentResources[agentId]?.attachedRepos ?? []
   const readyRepos = attachedRepos.filter((r) => r.repo.status === 'ready')
-  const [sheetOpen, setSheetOpen] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
   const [systemTools, setSystemTools] = useState<SystemToolsState>({
     status: 'loading',
   })
@@ -116,66 +115,11 @@ export function ToolsTab({ agentId }: { agentId: string }) {
     }
   }, [])
 
-  const reorder = async (nextIds: ReadonlyArray<string>) => {
-    const byId = new Map(tools.map((t) => [t.id, t]))
-    try {
-      for (let i = 0; i < nextIds.length; i++) {
-        const id = nextIds[i]!
-        const cur = byId.get(id)
-        if (!cur || cur.position === i) continue
-        await patchTool(agentId, id, { position: i })
-      }
-    } catch (e) {
-      toast.error(
-        e instanceof ApiError
-          ? e.message
-          : e instanceof Error
-            ? e.message
-            : 'Reorder failed',
-      )
-    }
-  }
-  const drag = useDragReorder(tools, (t) => t.id, (next) => void reorder(next))
-
-  const remove = async (id: string, name: string) => {
-    if (
-      !(await confirmDialog({
-        title: `Delete tool “${name}”?`,
-        body: 'The agent loses access to this tool on its next run.',
-        confirmLabel: 'Delete tool',
-        destructive: true,
-      }))
-    ) {
-      return
-    }
-    try {
-      await removeTool(agentId, id)
-      toast.success('Tool deleted')
-    } catch (e) {
-      toast.error(
-        e instanceof ApiError
-          ? e.message
-          : e instanceof Error
-            ? e.message
-            : 'Delete failed',
-      )
-    }
-  }
-
-  const openCreate = () => {
-    setEditingId(null)
-    setSheetOpen(true)
-  }
-  const openEdit = (id: string) => {
-    setEditingId(id)
-    setSheetOpen(true)
-  }
-
-  // Built-in (system) tool rows. read-only list of the gitnexus
-  // tools auto-mounted when this agent has a ready repo. Rendered as
-  // a fragment so the unified Tools card can drop them under the
-  // operator-authored rows in the same `ab-list-card`, mirroring
-  // the Skills card pattern in `resources-panel.tsx`.
+  // Built-in (system) tool rows. Read-only list of the inspector
+  // wrappers auto-mounted when this agent has a ready repo. The raw
+  // `gitnexus_*` MCP tools are NOT shown here — under the wrapper-
+  // tool architecture the LLM only sees the wrappers; gitnexus is an
+  // implementation detail the wrappers call internally.
   const renderSystemRows = () => {
     if (systemTools.status === 'loading') {
       return (
@@ -275,38 +219,48 @@ export function ToolsTab({ agentId }: { agentId: string }) {
     )
   }
 
+  // Existing operator-authored rows (rare; the CRUD UI is hidden but
+  // older agents may still have rows). Render read-only with an
+  // "Inactive" pill so operators can see what's parked.
+  const renderInactiveRows = () => (
+    <div className="ab-card ab-list-card" style={{ opacity: 0.85 }}>
+      {tools.map((t) => (
+        <div className="ab-list-row" key={t.id} style={{ cursor: 'default' }}>
+          <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+            <ToolIcon />
+          </div>
+          <div className="ab-list-row-head">
+            <div className="ab-list-row-title ab-mono">{t.name}</div>
+            <div className="ab-list-row-sub">
+              {t.description ?? 'No description'}
+            </div>
+          </div>
+          <div className="ab-list-row-meta">
+            <Pill kind="neutral">{t.kind}</Pill>
+            <Pill kind="warn">Inactive</Pill>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+
   const systemToolCount =
     systemTools.status === 'ready' ? systemTools.tools.length : 0
 
   return (
     <div>
       <div className="ab-card ab-card-pad ab-form-section">
-        <div
-          className="ab-section-head"
-          style={{
-            display: 'flex',
-            alignItems: 'flex-start',
-            justifyContent: 'space-between',
-            gap: 12,
-          }}
-        >
-          <div style={{ minWidth: 0 }}>
-            <div className="ab-section-title">Tools</div>
-            <div className="ab-section-sub">
-              {tools.length} attached · {systemToolCount} built-in ·
-              tools the agent calls while answering (HTTP, shell, Mastra
-              built-ins, gitnexus). For tools the IDE calls into the
-              agent, see the <strong>Bridge tools</strong> tab.
-            </div>
+        <div className="ab-section-head">
+          <div className="ab-section-title">Tools</div>
+          <div className="ab-section-sub">
+            {systemToolCount} built-in · the inspector wrappers
+            (find_in_codebase, trace_flow, assess_change_impact,
+            debug_help, understand_module, list_repos) — the LLM picks
+            among these to query the attached repos. Auto-attached to
+            every agent with at least one indexed repo. For tools the
+            IDE calls into the agent, see the{' '}
+            <strong>Bridge tools</strong> tab.
           </div>
-          <Button
-            variant="secondary"
-            size="sm"
-            leading={<PlusIcon strokeWidth={2.4} />}
-            onClick={openCreate}
-          >
-            Add tool
-          </Button>
         </div>
 
         {readyRepos.length === 0 && systemTools.status === 'ready' && (
@@ -314,7 +268,7 @@ export function ToolsTab({ agentId }: { agentId: string }) {
             className="ab-field-help"
             style={{ marginBottom: 10, color: 'var(--warn)' }}
           >
-            No indexed repositories attached. the built-in tools below
+            No indexed repositories attached. The built-in tools below
             are listed for reference but won't have data to query until
             at least one repo finishes indexing.
           </div>
@@ -324,114 +278,29 @@ export function ToolsTab({ agentId }: { agentId: string }) {
           <>
             <EmptyState
               glyph={<ToolIcon />}
-              title="No custom tools yet"
-              body="Tools extend the agent at run time. The LLM decides when to call them based on your system prompt and the user's question. The built-in tools below are always attached."
-              action={
-                <Button
-                  variant="primary"
-                  leading={<PlusIcon strokeWidth={2.4} />}
-                  onClick={openCreate}
-                >
-                  Add tool
-                </Button>
-              }
+              title="Inspector toolkit auto-attached"
+              body="Every agent with an indexed repo gets the six inspector wrappers. They're shown below for reference; nothing to configure here."
             />
             <BuiltInSubhead />
             <div className="ab-card ab-list-card">{renderSystemRows()}</div>
           </>
         ) : (
           <>
-            <div className="ab-card ab-list-card">
-              {tools.map((t) => {
-                const dp = drag.rowProps(t.id)
-                return (
-                <div
-                  className="ab-list-row is-edit"
-                  key={t.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => openEdit(t.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
-                      openEdit(t.id)
-                    }
-                  }}
-                  draggable={dp.draggable}
-                  onDragStart={dp.onDragStart}
-                  onDragEnter={dp.onDragEnter}
-                  onDragOver={dp.onDragOver}
-                  onDragEnd={dp.onDragEnd}
-                  onDrop={dp.onDrop}
-                  style={{
-                    opacity: dp.isDragging ? 0.4 : 1,
-                    ...(dp.isDropTarget
-                      ? {
-                          background: 'var(--accent-bg)',
-                          boxShadow: 'inset 0 2px 0 var(--accent-400)',
-                        }
-                      : null),
-                  }}
-                >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      color: 'var(--text-muted)',
-                      fontSize: 14,
-                      marginRight: -4,
-                      cursor: 'grab',
-                      userSelect: 'none',
-                    }}
-                    title="Drag to reorder"
-                  >
-                    ⋮⋮
-                  </span>
-                  <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-                    <ToolIcon />
-                  </div>
-                  <div className="ab-list-row-head">
-                    <div className="ab-list-row-title ab-mono">{t.name}</div>
-                    <div className="ab-list-row-sub">
-                      {t.description ?? 'No description'}
-                    </div>
-                  </div>
-                  <div className="ab-list-row-meta">
-                    <Pill kind="neutral">{t.kind}</Pill>
-                    <Pill kind="success" dot>
-                      Active
-                    </Pill>
-                    <RowMenu
-                      items={[
-                        {
-                          label: 'Edit tool',
-                          onClick: () => openEdit(t.id),
-                        },
-                        {
-                          label: 'Delete tool',
-                          destructive: true,
-                          onClick: () => void remove(t.id, t.name),
-                        },
-                      ]}
-                    />
-                  </div>
-                </div>
-                )
-              })}
+            <div
+              className="ab-field-help"
+              style={{ marginBottom: 8, fontStyle: 'italic' }}
+            >
+              The {tools.length} tool{tools.length === 1 ? '' : 's'} below
+              {tools.length === 1 ? ' was' : ' were'} authored before
+              native-tool support was deferred. They're persisted but
+              not currently mounted on the agent.
             </div>
+            {renderInactiveRows()}
             <BuiltInSubhead />
             <div className="ab-card ab-list-card">{renderSystemRows()}</div>
           </>
         )}
       </div>
-      <ToolSheet
-        open={sheetOpen}
-        agentId={agentId}
-        toolId={editingId}
-        onClose={() => {
-          setSheetOpen(false)
-          setEditingId(null)
-        }}
-      />
     </div>
   )
 }

@@ -57,6 +57,7 @@ function toLlmProviderResponse(row: LlmProviderRow): LlmProviderResponse {
     label: row.label,
     baseUrl: row.baseUrl,
     defaultModel: row.defaultModel,
+    embeddingDims: row.embeddingDims,
     apiKey: envelopeToSentinel(row.apiKeyEnvelope),
     models: row.modelsJson ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -87,6 +88,7 @@ export const llmProvidersRouter = new Hono()
             label: body.label,
             baseUrl: body.baseUrl ?? null,
             defaultModel: body.defaultModel ?? null,
+            embeddingDims: body.embeddingDims ?? null,
             apiKeyEnvelope,
           })
           .returning()
@@ -203,6 +205,18 @@ export const llmProvidersRouter = new Hono()
       if ('label' in body) patch.label = body.label
       if ('baseUrl' in body) patch.baseUrl = body.baseUrl ?? null
       if ('defaultModel' in body) patch.defaultModel = body.defaultModel ?? null
+      if ('embeddingDims' in body) {
+        // Reject the field on chat-role rows. The Zod create-input
+        // refines this same rule; PATCH can't see `role` (immutable
+        // post-create) so the check happens against the existing row.
+        if (before.role !== 'embedding' && body.embeddingDims != null) {
+          return httpError(c, {
+            code: 'validation_failed',
+            message: 'embeddingDims is only valid on role="embedding" providers',
+          })
+        }
+        patch.embeddingDims = body.embeddingDims ?? null
+      }
 
       const nextEnvelope = applySecretInput(body.apiKey)
       if (nextEnvelope !== SECRET_UNCHANGED) {

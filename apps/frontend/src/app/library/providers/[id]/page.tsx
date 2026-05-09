@@ -70,6 +70,13 @@ export function ProviderDetailPage({ id }: { id: string }) {
   const [label, setLabel] = useState('')
   const [baseUrl, setBaseUrl] = useState('')
   const [defaultModel, setDefaultModel] = useState('')
+  // Vector dimension. embedding providers only (form field hidden
+  // otherwise). Stored as a string so the user can clear the input
+  // back to "use gitnexus default 384". The save path coerces to
+  // number-or-null at submit time. NULL means gitnexus's 384 default;
+  // any other value forwards as `GITNEXUS_EMBEDDING_DIMS=<n>` to
+  // gitnexus during repo indexing.
+  const [embeddingDims, setEmbeddingDims] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [busy, setBusy] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -82,7 +89,54 @@ export function ProviderDetailPage({ id }: { id: string }) {
     setLabel(provider.label)
     setBaseUrl(provider.baseUrl ?? '')
     setDefaultModel(provider.defaultModel ?? '')
+    setEmbeddingDims(
+      provider.embeddingDims != null ? String(provider.embeddingDims) : '',
+    )
     setApiKey('')
+  }
+
+  // Auto-fill `embeddingDims` after a successful embedding-test. The
+  // probe reads the actual `data[0].embedding.length` from the
+  // upstream response, so the operator never has to look up their
+  // model's dimension.
+  //
+  // We look up the detected dim by the LOCALLY-EDITED `defaultModel`
+  // state (not `provider.defaultModel`), because `testCurrentDefault`
+  // / chip clicks all run against the local value. Looking up by the
+  // saved value misses fills when the operator changes the model
+  // input but hasn't saved yet.
+  //
+  // Behavior:
+  //   - empty input → fills silently (operator hasn't typed anything)
+  //   - input differs from detected → overwrites + toast
+  //     (likely they copy-pasted a wrong number; surfacing the
+  //     auto-correct keeps it from being a silent change).
+  const probedModel = defaultModel.trim()
+  const detectedDim =
+    provider?.role === 'embedding' && probedModel
+      ? tester.embeddingDimOf(probedModel)
+      : undefined
+  const [seededDimFor, setSeededDimFor] = useState<string | null>(null)
+  if (
+    provider &&
+    detectedDim !== undefined &&
+    seededDimFor !== `${provider.id}:${probedModel}:${detectedDim}`
+  ) {
+    setSeededDimFor(`${provider.id}:${probedModel}:${detectedDim}`)
+    const trimmed = embeddingDims.trim()
+    const current = trimmed === '' ? null : Number.parseInt(trimmed, 10)
+    if (current !== detectedDim) {
+      setEmbeddingDims(String(detectedDim))
+      if (current !== null) {
+        toast.success(
+          `Detected ${detectedDim}-dim vectors from ${probedModel} (was ${current}). Save to apply.`,
+        )
+      } else {
+        toast.success(
+          `Detected ${detectedDim}-dim vectors from ${probedModel}. Save to apply.`,
+        )
+      }
+    }
   }
 
   const isLocal = useMemo(
@@ -201,9 +255,17 @@ export function ProviderDetailPage({ id }: { id: string }) {
     if ((defaultModel.trim() || null) !== (provider.defaultModel ?? null)) {
       return true
     }
+    // Embedding dims dirty check. parsed from the trimmed input string
+    // to avoid `'1024' !== 1024` false positives.
+    if (isEmbedding) {
+      const trimmed = embeddingDims.trim()
+      const parsed = trimmed === '' ? null : Number.parseInt(trimmed, 10)
+      const stored = provider.embeddingDims ?? null
+      if (parsed !== stored) return true
+    }
     if (apiKey.trim() !== '') return true
     return false
-  }, [provider, label, baseUrl, isLocal, defaultModel, apiKey])
+  }, [provider, label, baseUrl, isLocal, defaultModel, isEmbedding, embeddingDims, apiKey])
 
   if (!provider) return <NotFound />
 
@@ -211,6 +273,9 @@ export function ProviderDetailPage({ id }: { id: string }) {
     setLabel(provider.label)
     setBaseUrl(provider.baseUrl ?? '')
     setDefaultModel(provider.defaultModel ?? '')
+    setEmbeddingDims(
+      provider.embeddingDims != null ? String(provider.embeddingDims) : '',
+    )
     setApiKey('')
   }
 
@@ -254,10 +319,32 @@ export function ProviderDetailPage({ id }: { id: string }) {
 
     setBusy(true)
     try {
+      // Parse embedding dims at submit time. Empty input → null
+       // (use gitnexus's 384 default). Non-empty + non-numeric or
+       // out-of-range → reject before sending so the operator sees a
+       // local error instead of a backend 400.
+      let embeddingDimsValue: number | null = null
+      if (provider.role === 'embedding') {
+        const trimmed = embeddingDims.trim()
+        if (trimmed.length > 0) {
+          const parsed = Number.parseInt(trimmed, 10)
+          if (!Number.isFinite(parsed) || parsed < 8 || parsed > 8192) {
+            toast.error(
+              'Vector dimension must be a whole number between 8 and 8192. Common values: 384, 768, 1024, 1536, 3072.',
+            )
+            setBusy(false)
+            return
+          }
+          embeddingDimsValue = parsed
+        }
+      }
       const patch: LlmProviderUpdateInput = {
         label: label.trim(),
         baseUrl: isLocal ? baseUrl.trim() || null : null,
         defaultModel: defaultModel.trim() || null,
+        ...(provider.role === 'embedding'
+          ? { embeddingDims: embeddingDimsValue }
+          : {}),
         ...(apiKey.trim()
           ? { apiKey: { action: 'set', plaintext: apiKey.trim() } as const }
           : {}),
@@ -689,6 +776,49 @@ export function ProviderDetailPage({ id }: { id: string }) {
           )}
         </div>
       </div>
+
+      {isEmbedding && (
+        <div className="ab-card ab-card-pad ab-form-section">
+          <div className="ab-section-head">
+            <div className="ab-section-title">Vector dimension</div>
+            <div className="ab-section-sub">
+              How many numbers each embedding vector contains. MUST match
+              what your model actually returns — gitnexus crashes during
+              repo indexing with{' '}
+              <code className="ab-mono">Embedding dimension mismatch</code>{' '}
+              if this is wrong. Leave empty to use gitnexus's 384 default.
+              Common values: <code className="ab-mono">384</code> (default),{' '}
+              <code className="ab-mono">768</code> (all-mpnet-base),{' '}
+              <code className="ab-mono">1024</code> (BGE-large, Qwen3-Embedding-0.6B),{' '}
+              <code className="ab-mono">1536</code> (text-embedding-3-small),{' '}
+              <code className="ab-mono">3072</code> (text-embedding-3-large).
+            </div>
+          </div>
+          <div className="ab-field">
+            <label className="ab-field-label" htmlFor="pd-embedding-dims">
+              Dimension
+            </label>
+            <input
+              id="pd-embedding-dims"
+              className="ab-input ab-mono"
+              type="number"
+              min={8}
+              max={8192}
+              step={1}
+              inputMode="numeric"
+              value={embeddingDims}
+              onChange={(e) => setEmbeddingDims(e.target.value)}
+              placeholder="384 (default)"
+              style={{ maxWidth: 200 }}
+            />
+            <span className="ab-field-help">
+              Saved on this provider; forwarded to gitnexus as{' '}
+              <code className="ab-mono">GITNEXUS_EMBEDDING_DIMS</code> on
+              every <code className="ab-mono">analyze</code> run.
+            </span>
+          </div>
+        </div>
+      )}
 
       <div className="ab-card ab-card-pad ab-form-section">
         <div

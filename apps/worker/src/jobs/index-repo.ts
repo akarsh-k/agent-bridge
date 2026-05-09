@@ -1,9 +1,12 @@
 import { promises as fs } from 'node:fs'
 import type { Job } from 'bullmq'
 
-import { reposRepo, workerJobsRepo } from '@agent-bridge/db'
+import { llmProvidersRepo, reposRepo, workerJobsRepo } from '@agent-bridge/db'
+import type { LlmProviderRow } from '@agent-bridge/db/schema'
+import { decryptSecret } from '@agent-bridge/shared/crypto'
 import {
   indexRepoJobSchema,
+  redactSecrets,
   repoStreamId,
   type RepoIndexFailPayload,
   type RepoIndexMode,
@@ -189,19 +192,60 @@ export async function handleIndexRepoJob(
     } satisfies RepoIndexStartedPayload,
   })
 
+  // Phase D D2: resolve the workspace embedding provider so gitnexus's
+  // `--embeddings` pipeline routes to the configured embedder. Missing
+  // provider is non-fatal here — gitnexus falls back to its own local
+  // embedder. The agent-side build (D1) is what enforces "must have an
+  // embedding provider when repos are attached"; the worker's indexing
+  // is a workspace-level operation that can run before any agent owns
+  // the repo.
+  const embeddingProvider = await llmProvidersRepo.getEmbeddingProvider(db)
+  const embeddingApiKey = embeddingProvider?.apiKeyEnvelope
+    ? decryptSecret(embeddingProvider.apiKeyEnvelope)
+    : null
+  const embeddingEnv = buildEmbeddingEnv(embeddingProvider, embeddingApiKey)
+  const redactList: readonly string[] = embeddingApiKey ? [embeddingApiKey] : []
+
+  if (embeddingProvider) {
+    await publish({
+      kind: 'repo.embed.started',
+      ts: now(),
+      streamId,
+      data: {
+        repoId: input.repoId,
+        providerKind: embeddingProvider.kind,
+        model: embeddingProvider.defaultModel ?? '(unset)',
+      },
+    })
+  }
+
+  // Capture the most recent meaningful error line gitnexus prints. When
+  // `analyze` exits non-zero, the bare `"exited with code N"` message
+  // we surface as `lastError` is useless on the UI; the actionable
+  // diagnosis (e.g. "Embedding dimension mismatch: endpoint returned
+  // 1024d, expected 384d. Set GITNEXUS_EMBEDDING_DIMS=1024") is in
+  // the line buffer that just scrolled past. We pattern-match for
+  // gitnexus's known error markers and keep the latest. The catch
+  // block below uses this when present.
+  let capturedError: string | null = null
   try {
     await runAnalyze({
       descriptor,
       sourceDir,
       mode: input.mode,
+      force: input.force,
+      embeddings: true,
+      env: embeddingEnv,
       onLine: async (line) => {
+        const cleaned = redactSecrets(line, redactList)
+        if (looksLikeFatalLine(cleaned)) capturedError = cleaned
         await publish({
           kind: 'repo.index.progress',
           ts: now(),
           streamId,
           data: {
             repoId: input.repoId,
-            line,
+            line: cleaned,
           } satisfies RepoIndexProgressPayload,
         })
       },
@@ -233,6 +277,21 @@ export async function handleIndexRepoJob(
         summary,
       } satisfies RepoIndexOkPayload,
     })
+    if (embeddingProvider) {
+      // Index + embed run in one process (`gitnexus analyze --embeddings`)
+      // so a clean index exit also implies embeddings completed. We don't
+      // get a separate file count from gitnexus, so leave `files: null`.
+      await publish({
+        kind: 'repo.embed.ok',
+        ts: Date.now(),
+        streamId,
+        data: {
+          repoId: row.id,
+          durationMs,
+          files: null,
+        },
+      })
+    }
 
     if (jobId) {
       try {
@@ -252,17 +311,59 @@ export async function handleIndexRepoJob(
       durationMs,
     }
   } catch (err) {
-    const message = errMsg(err)
+    const rawMessage = errMsg(err)
+    const message = redactSecrets(rawMessage, redactList)
+    // Prefer the captured stderr line — it carries the actionable
+    // diagnosis. Fall back to the bare exit-code message when no
+    // recognisable error line scrolled past (genuine crash, OOM, etc.).
+    const lastError = capturedError
+      ? `${capturedError}\n\n(Exit: ${message})`
+      : message
+    if (embeddingProvider) {
+      await publish({
+        kind: 'repo.embed.fail',
+        ts: Date.now(),
+        streamId,
+        data: {
+          repoId: row.id,
+          message: lastError,
+          ...(err instanceof GitnexusAnalyzeError ? { exitCode: err.exitCode } : {}),
+        },
+      })
+    }
     await failAndPublish({
       publish,
       db,
       streamId,
       repoId: row.id,
-      lastError: message,
+      lastError,
       jobId,
     })
     throw new Error(message)
   }
+}
+
+/**
+ * Heuristic. is this stderr line gitnexus telling us something fatal
+ * we want to surface to the operator? Patterns derived from gitnexus
+ * 1.6.3 stderr conventions:
+ *   - `❌ <category>: ...`   — gitnexus's own error marker
+ *   - `Error: ...`            — generic Node error throw
+ *   - `Embedding pipeline error` / `Embedding dimension mismatch` etc.
+ *   - `failed:` / `unable to` — common failure phrasings
+ *
+ * False positives (a non-fatal line that matches) are mostly harmless —
+ * the captured value is only consumed when the process EXITED non-zero,
+ * so we'd surface a slightly stale-looking line. False negatives leave
+ * the bare "exit code N" — same as before.
+ */
+function looksLikeFatalLine(line: string): boolean {
+  if (line.length === 0) return false
+  if (line.includes('❌')) return true
+  if (/^\s*(Error|TypeError|RangeError|ReferenceError):/i.test(line)) return true
+  if (/Embedding (pipeline error|dimension mismatch)/i.test(line)) return true
+  if (/(failed|unable to|cannot)\b/i.test(line) && line.length < 400) return true
+  return false
 }
 
 export interface IndexRepoJobResult {
@@ -278,6 +379,31 @@ interface RunAnalyzeArgs {
   readonly descriptor: RepoDirDescriptor
   readonly sourceDir: string
   readonly mode: RepoIndexMode
+  /**
+   * `true` → pass `-f / --force` to gitnexus, blowing away the existing
+   * graph + embeddings store and rebuilding from scratch. `false` (default)
+   * → rely on gitnexus's incremental analyze (only re-parses files whose
+   * content/mtime changed). See `docs/ARCHITECTURE.md §10` D16/A5 — incremental is
+   * the right default for "Update index"; force is the explicit "Rebuild
+   * from scratch" gesture.
+   */
+  readonly force: boolean
+  /**
+   * `true` → pass `--embeddings` so gitnexus generates semantic vectors
+   * alongside the graph (`docs/ARCHITECTURE.md §10` Phase D D2). The
+   * `inspector/find_in_codebase` wrapper relies on `gitnexus_query`'s
+   * hybrid BM25 + semantic + RRF retrieval, which only does the semantic
+   * arm when embeddings are populated. Combined with `env` below, this
+   * routes embedding generation through the workspace's chosen provider.
+   */
+  readonly embeddings: boolean
+  /**
+   * Extra env vars layered on top of the sandbox baseline. Used to pass
+   * `GITNEXUS_EMBEDDING_*` so gitnexus's embedder calls the workspace
+   * embedding provider's `/v1/embeddings` endpoint instead of the
+   * default local embedder. Empty when no provider is configured.
+   */
+  readonly env: Record<string, string>
   readonly onLine: (line: string) => Promise<void> | void
 }
 
@@ -292,10 +418,14 @@ interface RunAnalyzeArgs {
  *   - `--name <repoDirName>` anchors the registry entry to our slug-keyed
  *     directory name. Two repos that share a basename (e.g. two agents both
  *     attaching `monorepo/app`) get distinct registry aliases.
- *   - `-f` on reindex so stale KuzuDB migration paths fully rebuild.
+ *   - `-f` ONLY when the caller explicitly passes `force: true`. Gitnexus's
+ *     `analyze` is already incremental ("indexes the codebase, OR updates
+ *     stale index" per gitnexus 1.6.3 README) — every re-index click should
+ *     re-use the existing index unless the operator explicitly asks to
+ *     rebuild from scratch (`docs/ARCHITECTURE.md §10` D16/A5).
  */
 async function runAnalyze(args: RunAnalyzeArgs): Promise<void> {
-  const { descriptor, sourceDir, mode, onLine } = args
+  const { descriptor, sourceDir, force, embeddings, env, onLine } = args
 
   const gitnexusArgs = [
     'analyze',
@@ -305,8 +435,11 @@ async function runAnalyze(args: RunAnalyzeArgs): Promise<void> {
     '--name',
     repoDirName(descriptor),
   ]
-  if (mode === 'reindex') {
+  if (force) {
     gitnexusArgs.push('-f')
+  }
+  if (embeddings) {
+    gitnexusArgs.push('--embeddings')
   }
 
   const child = runGitnexus(gitnexusArgs, {
@@ -314,6 +447,7 @@ async function runAnalyze(args: RunAnalyzeArgs): Promise<void> {
     cwd: sourceDir,
     allowHostHome: false,
     stdio: 'pipe',
+    env,
   })
 
   // Gitnexus writes its cli-progress bar and most log messages to stderr;
@@ -416,4 +550,57 @@ async function failAndPublish(args: {
 
 function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+// ─── Embedding env builder (Phase D D2) ──────────────────────────────────
+
+/**
+ * Vendor base URL fallbacks for `role='embedding'` providers. Same
+ * approach as `generate-wiki.ts`: keep a small map here rather than
+ * import across workspaces. New vendor kinds get added in lockstep
+ * across the worker's index/wiki jobs and `packages/agents/build-agent.ts`.
+ */
+const EMBEDDING_VENDOR_BASE_URL: Partial<
+  Record<NonNullable<LlmProviderRow['kind']>, string>
+> = {
+  openai: 'https://api.openai.com',
+}
+
+/**
+ * Build the env dict to forward to `gitnexus analyze --embeddings`. Maps
+ * the workspace embedding provider's `(baseUrl, defaultModel, apiKey,
+ * embeddingDims)` tuple to the env vars gitnexus reads
+ * (`GITNEXUS_EMBEDDING_*`, see gitnexus 1.6.3 README "Remote Embeddings").
+ *
+ * Empty dict when no provider is configured — gitnexus then uses its
+ * built-in local embedder. Empty dict when the provider lacks a
+ * `defaultModel` — telling gitnexus to use a model id we don't have
+ * would just make the spawn fail with a confusing 400 from the upstream.
+ *
+ * The plaintext `apiKey` is the caller's responsibility to bind into a
+ * redactor before logging anything; this function does not log.
+ */
+function buildEmbeddingEnv(
+  provider: LlmProviderRow | null,
+  apiKey: string | null,
+): Record<string, string> {
+  if (!provider || !provider.defaultModel) return {}
+
+  const raw =
+    provider.baseUrl ?? EMBEDDING_VENDOR_BASE_URL[provider.kind] ?? null
+  if (!raw) return {}
+  const trimmed = raw.replace(/\/+$/, '')
+  const url = trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`
+
+  const env: Record<string, string> = {
+    GITNEXUS_EMBEDDING_URL: url,
+    GITNEXUS_EMBEDDING_MODEL: provider.defaultModel,
+  }
+  if (provider.embeddingDims != null) {
+    env['GITNEXUS_EMBEDDING_DIMS'] = String(provider.embeddingDims)
+  }
+  if (apiKey) {
+    env['GITNEXUS_EMBEDDING_API_KEY'] = apiKey
+  }
+  return env
 }
