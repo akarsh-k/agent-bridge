@@ -21,9 +21,11 @@ import type { AttachedRepo } from '@agent-bridge/shared'
 import {
   callGitnexusContext,
   callGitnexusImpact,
+  type GitnexusContextResult,
   type ToolDict,
 } from '../gitnexus-callers.js'
 import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
+import { readFileChunkFromDisk } from '../read-source.js'
 import { resolveRepoFromHint } from '../repo-resolve.js'
 import type {
   MiniRepo,
@@ -96,46 +98,104 @@ export async function runUnderstandModule(
 
   const warnings: string[] = []
   const files: MiniRepoFile[] = []
+  const looksLikePath = /[\\/]/.test(trimmed) || /\.[a-zA-Z0-9]{1,8}$/.test(trimmed)
 
-  // Anchor file body. The most important payload.
-  try {
-    const ctx = await withGitnexusCall(
-      'understand_module',
-      'gitnexus_context',
-      { repo: target.label, path: trimmed },
-      () =>
-        callGitnexusContext({ tools, repo: target.label, path: trimmed }),
-    )
-    if (ctx) {
+  // Anchor file body. The most important payload. Two paths:
+  //   - Path-anchored: read the file directly from disk; no gitnexus call.
+  //   - Symbol-anchored: ask gitnexus_context for the symbol's record (uid,
+  //     filePath, line range), then slice that range from disk. Note that
+  //     gitnexus_context is graph-only — it returns metadata + edges, not
+  //     file content — so the disk read is mandatory either way.
+  let symbolContext: GitnexusContextResult | null = null
+  let anchorFilePath: string | null = null
+  let anchorStartLine: number | null = null
+  let anchorEndLine: number | null = null
+
+  if (looksLikePath) {
+    anchorFilePath = trimmed
+  } else {
+    try {
+      symbolContext = await withGitnexusCall(
+        'understand_module',
+        'gitnexus_context',
+        { repo: target.label, name: trimmed },
+        () =>
+          callGitnexusContext({ tools, repo: target.label, name: trimmed }),
+      )
+      if (symbolContext) {
+        anchorFilePath = symbolContext.symbol.filePath
+        anchorStartLine = symbolContext.symbol.startLine
+        anchorEndLine = symbolContext.symbol.endLine
+      } else {
+        warnings.push(
+          `gitnexus_context returned no symbol for "${trimmed}" — try a fully-qualified uid or a different name.`,
+        )
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      warnings.push(`gitnexus_context failed: ${message}`)
+    }
+  }
+
+  if (anchorFilePath) {
+    const chunk = await readFileChunkFromDisk({
+      repo: target,
+      filePath: anchorFilePath,
+      startLine: anchorStartLine,
+      endLine: anchorEndLine,
+      padLines: anchorStartLine != null ? 4 : 0,
+    })
+    if (chunk) {
       const chunks: MiniRepoChunk[] = [
         {
-          start_line: ctx.startLine ?? 1,
-          end_line:
-            ctx.endLine ??
-            (ctx.startLine ?? 1) +
-              Math.max(0, ctx.content.split('\n').length - 1),
-          content: ctx.content,
+          start_line: chunk.startLine,
+          end_line: chunk.endLine,
+          content: chunk.content,
         },
       ]
       files.push({
         repo_id: target.repo_id,
         repo_label: target.label,
-        path: ctx.path,
-        language: ctx.language ?? 'unknown',
+        path: anchorFilePath,
+        language: chunk.language,
         chunks,
-        why: 'anchor file body',
+        why: looksLikePath ? 'anchor file body' : `body of ${symbolContext?.symbol.kind ?? 'symbol'} ${trimmed}`,
       })
+      if (chunk.truncated) {
+        warnings.push(`anchor body truncated to ${chunk.content.length} bytes`)
+      }
     } else {
       warnings.push(
-        `gitnexus_context returned no body for "${trimmed}" — file may not exist or path may need adjusting`,
+        `Couldn't read "${anchorFilePath}" from disk in repo ${target.label}.`,
       )
     }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    warnings.push(`gitnexus_context failed: ${message}`)
   }
 
-  // Outgoing dependencies — what this anchor reaches.
+  // Outgoing edges (when we have a symbol context). Surface each callee /
+  // import as a dependency file with a small body slice — gitnexus already
+  // told us where they live.
+  if (symbolContext) {
+    const flatEdges = flattenContextEdges(symbolContext.outgoing)
+    for (const edge of flatEdges.slice(0, MAX_DEPENDENCY_FILES)) {
+      const chunk = await readFileChunkFromDisk({
+        repo: target,
+        filePath: edge.filePath,
+      })
+      files.push({
+        repo_id: target.repo_id,
+        repo_label: target.label,
+        path: edge.filePath,
+        language: chunk?.language ?? 'unknown',
+        chunks: chunk
+          ? [{ start_line: chunk.startLine, end_line: chunk.endLine, content: chunk.content }]
+          : [],
+        why: `outgoing ${edge.relation} → ${edge.name}`,
+      })
+    }
+  }
+
+  // Outgoing dependencies via gitnexus_impact — depth>=2 reach. Adds files
+  // we wouldn't see from one-hop context edges alone.
   let dependencyRows: Awaited<ReturnType<typeof callGitnexusImpact>> = []
   try {
     dependencyRows = await withGitnexusCall(
@@ -161,8 +221,10 @@ export async function runUnderstandModule(
     warnings.push(`gitnexus_impact failed: ${message}`)
   }
 
+  const seenPaths = new Set<string>(files.map((f) => f.path))
   const sortedDeps = [...dependencyRows]
     .sort((a, b) => a.depth - b.depth)
+    .filter((row) => !seenPaths.has(row.path))
     .slice(0, MAX_DEPENDENCY_FILES)
 
   for (const row of sortedDeps) {
@@ -179,7 +241,7 @@ export async function runUnderstandModule(
   const summary =
     files.length === 0
       ? `Couldn't find "${trimmed}" in repo ${target.label}. The path/symbol may not be indexed; try a more specific name.`
-      : `Anchor "${trimmed}" in ${target.label}: 1 main file + ${sortedDeps.length} dependency(ies) (depth ≤ ${DEPENDENCY_DEPTH}).`
+      : `Anchor "${trimmed}" in ${target.label}: ${files.length} file(s) — body + ${Math.max(0, files.length - 1)} dependency(ies) (depth ≤ ${DEPENDENCY_DEPTH}).`
 
   const miniRepo = finalizeMiniRepo({
     wrapper: 'understand_module',
@@ -216,4 +278,21 @@ function emptyDraft(args: {
     cross_repo_edges: [],
     warnings: args.warnings,
   }
+}
+
+interface FlatContextEdge {
+  readonly relation: string
+  readonly name: string
+  readonly filePath: string
+  readonly uid: string
+}
+
+function flattenContextEdges(
+  edgeMap: Record<string, readonly { uid: string; name: string; filePath: string }[]>,
+): FlatContextEdge[] {
+  const out: FlatContextEdge[] = []
+  for (const [relation, edges] of Object.entries(edgeMap)) {
+    for (const e of edges) out.push({ relation, ...e })
+  }
+  return out
 }

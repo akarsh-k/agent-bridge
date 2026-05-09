@@ -21,15 +21,14 @@ import type { MiniRepoCrossRepoEdge } from './types.js'
 // Re-export so wrappers don't have to import both modules.
 export type { MiniRepoCrossRepoEdge } from './types.js'
 
-export interface LoadEdgesInput {
+export interface LoadOutgoingEdgesInput {
   readonly db: AgentBridgeDb
   readonly agentId: string
   /**
    * Source repo id. Returns edges where `from_repo_id = fromRepoId`.
-   * Single-direction lookup. `assess_change_impact` only fans
-   * downstream because the edges semantically point "from the changed
-   * repo toward something the change might affect" (consumers,
-   * deployers, dependent services).
+   * `assess_change_impact` uses outgoing edges to find repos the
+   * change explicitly points TO (consumers it deploys to, services it
+   * mirrors a type into).
    */
   readonly fromRepoId: string
   /**
@@ -40,6 +39,25 @@ export interface LoadEdgesInput {
    */
   readonly attached: readonly AttachedRepo[]
 }
+
+export interface LoadIncomingEdgesInput {
+  readonly db: AgentBridgeDb
+  readonly agentId: string
+  /**
+   * Target repo id. Returns edges where `to_repo_id = toRepoId`.
+   * `assess_change_impact` uses incoming edges to find repos that
+   * point AT the changed repo (callers, importers, type mirrors). An
+   * asymmetric edge `frontend --calls--> backend` is invisible to
+   * `loadOutgoingRepoEdges({fromRepoId: backend.id})`; this loader
+   * fills that gap.
+   */
+  readonly toRepoId: string
+  readonly attached: readonly AttachedRepo[]
+}
+
+/** @deprecated Use {@link LoadOutgoingEdgesInput}. Re-exported for callers
+ *  that imported the original name; remove once no caller references it. */
+export type LoadEdgesInput = LoadOutgoingEdgesInput
 
 export interface CrossRepoEdgeWithTarget {
   readonly edge: MiniRepoCrossRepoEdge
@@ -57,7 +75,7 @@ export interface CrossRepoEdgeWithTarget {
  * applicable" rather than an error.
  */
 export async function loadOutgoingRepoEdges(
-  input: LoadEdgesInput,
+  input: LoadOutgoingEdgesInput,
 ): Promise<CrossRepoEdgeWithTarget[]> {
   const { db, agentId, fromRepoId, attached } = input
 
@@ -87,6 +105,52 @@ export async function loadOutgoingRepoEdges(
       edge: {
         from_repo: fromRepoId,
         to_repo: r.toRepoId,
+        connector: r.connector,
+        description: r.description,
+      } satisfies MiniRepoCrossRepoEdge,
+    })
+  }
+  return out
+}
+
+/**
+ * Mirror of {@link loadOutgoingRepoEdges} that walks the other side of
+ * the edge. Returns each edge along with the SOURCE repo (the one that
+ * points at `toRepoId`). The two loaders together give the wrapper
+ * symmetric blast-radius coverage even though the underlying edges are
+ * directional.
+ */
+export async function loadIncomingRepoEdges(
+  input: LoadIncomingEdgesInput,
+): Promise<CrossRepoEdgeWithTarget[]> {
+  const { db, agentId, toRepoId, attached } = input
+
+  const rows = await db.db
+    .select({
+      fromRepoId: schema.repoEdges.fromRepoId,
+      connector: schema.repoEdges.connector,
+      description: schema.repoEdges.description,
+    })
+    .from(schema.repoEdges)
+    .where(
+      and(
+        eq(schema.repoEdges.agentId, agentId),
+        eq(schema.repoEdges.toRepoId, toRepoId),
+      ),
+    )
+
+  if (rows.length === 0) return []
+
+  const attachedById = new Map(attached.map((r) => [r.repo_id, r]))
+  const out: CrossRepoEdgeWithTarget[] = []
+  for (const r of rows) {
+    const target = attachedById.get(r.fromRepoId)
+    if (!target) continue
+    out.push({
+      target,
+      edge: {
+        from_repo: r.fromRepoId,
+        to_repo: toRepoId,
         connector: r.connector,
         description: r.description,
       } satisfies MiniRepoCrossRepoEdge,

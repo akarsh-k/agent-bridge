@@ -27,7 +27,6 @@ import type { AttachedRepo } from '@agent-bridge/shared'
 import { repoSourceDir } from '@agent-bridge/shared/paths'
 
 import {
-  callGitnexusContext,
   callGitnexusQuery,
   type GitnexusQueryHit,
   type ToolDict,
@@ -37,6 +36,7 @@ import {
   type KeywordHit,
 } from '../keyword-search.js'
 import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
+import { readFileChunkFromDisk } from '../read-source.js'
 import { resolveRepoFromHint } from '../repo-resolve.js'
 import type {
   MiniRepo,
@@ -211,61 +211,36 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
     picked.push(h)
   }
 
-  // Fetch context for each suspect site so the LLM has the actual
-  // function body / surrounding code to reason about, not just a path.
+  // Read each suspect site directly from disk so the LLM has the
+  // actual function body / surrounding code, not just a path. Pad
+  // the slice around the hit line so the surrounding context is
+  // visible. Falls back to the query/keyword snippet when disk read
+  // misses (e.g. file vanished between index and read).
   const files: MiniRepoFile[] = []
   for (const h of picked) {
     let chunks: MiniRepoChunk[] = []
-    try {
-      const ctx = await withGitnexusCall(
-        'debug_help',
-        'gitnexus_context',
-        { repo: h.repo.label, path: h.hit.path },
-        () =>
-          callGitnexusContext({
-            tools,
-            repo: h.repo.label,
-            path: h.hit.path,
-          }),
-      )
-      if (ctx) {
-        chunks = [
-          {
-            start_line: ctx.startLine ?? h.hit.line ?? 1,
-            end_line:
-              ctx.endLine ??
-              (ctx.startLine ?? h.hit.line ?? 1) +
-                Math.max(0, ctx.content.split('\n').length - 1),
-            content: ctx.content,
-          },
-        ]
-      } else if (h.hit.snippet) {
-        chunks = [
-          {
-            start_line: h.hit.line ?? 1,
-            end_line: h.hit.line ?? 1,
-            content: h.hit.snippet,
-          },
-        ]
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      warnings.push(`gitnexus_context failed for ${h.hit.path}: ${message}`)
-      if (h.hit.snippet) {
-        chunks = [
-          {
-            start_line: h.hit.line ?? 1,
-            end_line: h.hit.line ?? 1,
-            content: h.hit.snippet,
-          },
-        ]
-      }
+    const focusLine = h.hit.line ?? null
+    const chunk = await readFileChunkFromDisk({
+      repo: h.repo,
+      filePath: h.hit.path,
+      startLine: focusLine,
+      endLine: focusLine,
+      padLines: 8,
+    })
+    if (chunk) {
+      chunks = [
+        { start_line: chunk.startLine, end_line: chunk.endLine, content: chunk.content },
+      ]
+    } else if (h.hit.snippet) {
+      chunks = [
+        { start_line: h.hit.line ?? 1, end_line: h.hit.line ?? 1, content: h.hit.snippet },
+      ]
     }
     files.push({
       repo_id: h.repo.repo_id,
       repo_label: h.repo.label,
       path: h.hit.path,
-      language: inferLanguage(h.hit.path),
+      language: chunk?.language ?? inferLanguage(h.hit.path),
       chunks,
       why: `matched candidate "${h.candidate}" extracted from error text`,
     })

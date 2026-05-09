@@ -31,7 +31,11 @@ import {
   type ToolDict,
 } from '../gitnexus-callers.js'
 import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
-import { loadOutgoingRepoEdges } from '../repo-edges.js'
+import {
+  loadIncomingRepoEdges,
+  loadOutgoingRepoEdges,
+  type CrossRepoEdgeWithTarget,
+} from '../repo-edges.js'
 import { resolveRepoFromHint } from '../repo-resolve.js'
 import type {
   MiniRepo,
@@ -193,7 +197,17 @@ export async function runAssessChangeImpact(
     repo: AttachedRepo
     rows: readonly GitnexusImpactRow[]
   }> = []
-  let outgoingEdges: Awaited<ReturnType<typeof loadOutgoingRepoEdges>> = []
+
+  // Walk both edge directions. Outgoing edges point AT consumers the
+  // change reaches; incoming edges point AT us from callers/importers.
+  // Without the incoming sweep, an asymmetric edge like
+  // `frontend --calls--> backend` is invisible when the change is in
+  // `backend` (backend has no outgoing edges to frontend, but frontend
+  // is still affected). Dedupe by (from_repo, to_repo) — operators
+  // sometimes record a logical relationship as two opposing edges and
+  // we want one cross-repo expansion per pair.
+  let outgoingEdges: CrossRepoEdgeWithTarget[] = []
+  let incomingEdges: CrossRepoEdgeWithTarget[] = []
   try {
     outgoingEdges = await loadOutgoingRepoEdges({
       db,
@@ -206,8 +220,26 @@ export async function runAssessChangeImpact(
       `loadOutgoingRepoEdges failed: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
+  try {
+    incomingEdges = await loadIncomingRepoEdges({
+      db,
+      agentId,
+      toRepoId: target.repo_id,
+      attached: repos,
+    })
+  } catch (err) {
+    warnings.push(
+      `loadIncomingRepoEdges failed: ${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
 
-  for (const { edge, target: edgeTarget } of outgoingEdges) {
+  const expansionTargets = new Map<string, CrossRepoEdgeWithTarget>()
+  for (const e of [...outgoingEdges, ...incomingEdges]) {
+    const key = `${e.edge.from_repo}::${e.edge.to_repo}`
+    if (!expansionTargets.has(key)) expansionTargets.set(key, e)
+  }
+
+  for (const { edge, target: edgeTarget } of expansionTargets.values()) {
     crossEdges.push(edge)
     if (edgeTarget.status !== 'ready') continue
     for (const anchor of trimmedAnchors) {

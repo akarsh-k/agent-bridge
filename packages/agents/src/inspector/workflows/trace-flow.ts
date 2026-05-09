@@ -31,12 +31,12 @@
 import type { AttachedRepo } from '@agent-bridge/shared'
 
 import {
-  callGitnexusContext,
   callGitnexusImpact,
   type GitnexusImpactRow,
   type ToolDict,
 } from '../gitnexus-callers.js'
 import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
+import { readFileChunkFromDisk } from '../read-source.js'
 import { resolveRepoFromHint } from '../repo-resolve.js'
 import type {
   MiniRepo,
@@ -185,38 +185,24 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
     .filter((r) => r.depth <= CONTEXT_DEPTH_CAP)
     .slice(0, CONTEXT_FETCH_CAP)
 
+  // Read the body of each top hop directly from disk. gitnexus_context
+  // is graph-only — for file content we always slice the source.
   const files: MiniRepoFile[] = []
   for (const row of fetchTargets) {
-    try {
-      const ctx = await withGitnexusCall(
-        'trace_flow',
-        'gitnexus_context',
-        { repo: target.label, path: row.path },
-        () =>
-          callGitnexusContext({ tools, repo: target.label, path: row.path }),
-      )
-      const chunks: MiniRepoChunk[] = ctx
-        ? [
-            {
-              start_line: ctx.startLine ?? 1,
-              end_line:
-                ctx.endLine ?? (ctx.startLine ?? 1) +
-                Math.max(0, ctx.content.split('\n').length - 1),
-              content: ctx.content,
-            },
-          ]
-        : []
-      files.push({
-        repo_id: target.repo_id,
-        repo_label: target.label,
-        path: row.path,
-        language: ctx?.language ?? 'unknown',
-        chunks,
-        why: `depth ${row.depth} from anchor "${anchor}"`,
-      })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      warnings.push(`gitnexus_context failed for ${row.path}: ${message}`)
+    const chunk = await readFileChunkFromDisk({ repo: target, filePath: row.path })
+    const chunks: MiniRepoChunk[] = chunk
+      ? [{ start_line: chunk.startLine, end_line: chunk.endLine, content: chunk.content }]
+      : []
+    files.push({
+      repo_id: target.repo_id,
+      repo_label: target.label,
+      path: row.path,
+      language: chunk?.language ?? 'unknown',
+      chunks,
+      why: `depth ${row.depth} from anchor "${anchor}"`,
+    })
+    if (!chunk) {
+      warnings.push(`couldn't read ${row.path} from disk`)
     }
   }
 

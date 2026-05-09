@@ -1,0 +1,23 @@
+{
+  "name": "@agent-bridge/tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Local fixture harness — multi-repo ecommerce demo + inspector smoke runner.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p ."
+  },
+  "dependencies": {
+    "@agent-bridge/db": "workspace:*",
+    "@agent-bridge/shared": "workspace:*",
+    "@agent-bridge/agents": "workspace:*",
+    "drizzle-orm": "^0.45.2",
+    "pg": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.2",
+    "@types/pg": "^8.20.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}

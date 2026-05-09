@@ -289,6 +289,37 @@ importers:
         specifier: ~6.0.3
         version: 6.0.3
 
+  tests:
+    dependencies:
+      '@agent-bridge/agents':
+        specifier: workspace:*
+        version: link:../packages/agents
+      '@agent-bridge/db':
+        specifier: workspace:*
+        version: link:../packages/db
+      '@agent-bridge/shared':
+        specifier: workspace:*
+        version: link:../packages/shared
+      drizzle-orm:
+        specifier: ^0.45.2
+        version: 0.45.2(@types/pg@8.20.0)(pg@8.20.0)(postgres@3.4.9)
+      pg:
+        specifier: ^8.20.0
+        version: 8.20.0
+    devDependencies:
+      '@types/node':
+        specifier: ^24.12.2
+        version: 24.12.2
+      '@types/pg':
+        specifier: ^8.20.0
+        version: 8.20.0
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+
 packages:
 
   '@a2a-js/sdk@0.2.5':

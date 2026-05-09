@@ -41,14 +41,40 @@ export interface GitnexusQueryHit {
   readonly reason: string
 }
 
-export interface GitnexusContextResult {
-  readonly repo: string
-  readonly path: string
-  /** The file body or relevant portion. May be empty if gitnexus couldn't fetch. */
-  readonly content: string
-  readonly language: string | null
+/**
+ * One graph neighbour returned by `gitnexus_context` under
+ * `incoming.{calls,imports,...}` or `outgoing.{...}`. Gitnexus's actual
+ * keys vary by node kind (calls / imports / inherits / references / …)
+ * so we model them as a flat keyed map.
+ */
+export interface GitnexusContextEdge {
+  readonly uid: string
+  readonly name: string
+  readonly filePath: string
+}
+
+export interface GitnexusContextSymbol {
+  readonly uid: string
+  readonly name: string
+  /** "Function", "Interface", "Class", "Method", "File", … (gitnexus node kind). */
+  readonly kind: string
+  readonly filePath: string
   readonly startLine: number | null
   readonly endLine: number | null
+}
+
+/**
+ * Graph context for one symbol. Note: gitnexus_context returns symbol
+ * METADATA + EDGES, not file content. To get the symbol's body, slice
+ * the source file from disk using `symbol.filePath` + `startLine`/
+ * `endLine`. See `read-source.ts:readFileChunkFromDisk`.
+ */
+export interface GitnexusContextResult {
+  readonly repo: string
+  readonly status: string
+  readonly symbol: GitnexusContextSymbol
+  readonly incoming: Record<string, readonly GitnexusContextEdge[]>
+  readonly outgoing: Record<string, readonly GitnexusContextEdge[]>
 }
 
 export interface GitnexusImpactRow {
@@ -91,29 +117,55 @@ export async function callGitnexusQuery(
 }
 
 export interface ContextInput extends CallGitnexusInput {
-  /** File path within the repo. Required for `context`. */
-  readonly path: string
-  /** Optional symbol (function/class) to focus the context on. */
-  readonly symbol?: string
+  /**
+   * Symbol name to anchor the context on (function, class, interface,
+   * method). Either `name` or `uid` is required — gitnexus_context
+   * is symbol-anchored, NOT file-anchored. To get a file body, slice
+   * the source from disk; this caller surfaces the graph relationships
+   * around the symbol, not the bytes of the file it lives in.
+   */
+  readonly name?: string
+  /**
+   * Fully-qualified node id like
+   * `Function:app/routes/products.py:list_products`. Use this when
+   * `name` would be ambiguous (e.g. multiple `Product` symbols across
+   * kinds). Either `name` or `uid` must be provided.
+   */
+  readonly uid?: string
 }
 
 export async function callGitnexusContext(
   input: ContextInput,
 ): Promise<GitnexusContextResult | null> {
-  const { tools, path, symbol, repo } = input
+  const { tools, name, uid, repo } = input
+  if (!name && !uid) {
+    throw new Error(
+      '[gitnexus-callers] callGitnexusContext requires `name` or `uid`',
+    )
+  }
   const tool = tools['gitnexus_context']
   if (!tool || !tool.execute) {
     throw new Error('[gitnexus-callers] gitnexus_context tool is not mounted')
   }
-  const args: Record<string, unknown> = { path }
-  if (symbol) args['symbol'] = symbol
+  const args: Record<string, unknown> = {}
+  if (name) args['name'] = name
+  if (uid) args['uid'] = uid
   if (repo) args['repo'] = repo
   const raw = await tool.execute(args as never, {} as never)
-  return parseContextResult(raw, repo ?? '', path)
+  return parseContextResult(raw, repo ?? '')
 }
 
 export interface ImpactInput extends CallGitnexusInput {
-  /** File path or symbol to assess. */
+  /**
+   * Symbol name (function, class, interface, method) to assess.
+   *
+   * Gitnexus 1.6.3's `impact` tool is symbol-anchored: passing a file
+   * path returns `Target '<path>' not found`. To go from a path to a
+   * symbol, query first (`callGitnexusQuery({query: '<path>', limit: 5})`)
+   * and forward the matched hit's `symbol` field as `target`. A
+   * dedicated `callGitnexusImpactByPath(...)` shim is on the TODO list
+   * once we want this dance in more than one wrapper.
+   */
   readonly target: string
   readonly direction: 'upstream' | 'downstream'
   readonly depth?: number
@@ -381,13 +433,13 @@ function collectLegacyItems(top: Record<string, unknown>): unknown[] {
 function parseContextResult(
   raw: unknown,
   repo: string,
-  path: string,
 ): GitnexusContextResult | null {
   const data = unwrap(raw)
   if (!data || typeof data !== 'object') return null
 
-  // gitnexus_context typically returns `{ content, language?, startLine?, endLine? }`
-  // OR wraps in `{ result: { ... } }` / `{ context: { ... } }`.
+  // gitnexus_context returns `{ status, symbol: {...}, incoming: {...},
+  // outgoing: {...}, processes: [...] }`. An error response carries an
+  // `error` field instead — we surface that as null so callers degrade.
   const candidates: Array<Record<string, unknown>> = []
   const collect = (v: unknown): void => {
     if (!v || typeof v !== 'object' || Array.isArray(v)) return
@@ -400,19 +452,50 @@ function parseContextResult(
   collect(data)
 
   for (const o of candidates) {
-    const content = readString(o, ['content', 'body', 'text'])
-    if (typeof content === 'string') {
-      return {
-        repo: readString(o, ['repo', 'repository']) ?? repo,
-        path: readString(o, ['path', 'filePath']) ?? path,
-        content,
-        language: readString(o, ['language', 'lang']),
-        startLine: readNumber(o, ['startLine', 'start', 'lineStart']),
-        endLine: readNumber(o, ['endLine', 'end', 'lineEnd']),
-      }
+    if (typeof o['error'] === 'string') return null
+    const symbolRaw = o['symbol']
+    if (!symbolRaw || typeof symbolRaw !== 'object') continue
+    const sym = symbolRaw as Record<string, unknown>
+    const uid = readString(sym, ['uid', 'id'])
+    const name = readString(sym, ['name'])
+    const kind = readString(sym, ['kind', 'type'])
+    const filePath = readString(sym, ['filePath', 'path'])
+    if (!uid || !name || !kind || !filePath) continue
+    return {
+      repo: readString(o, ['repo', 'repository']) ?? repo,
+      status: readString(o, ['status']) ?? 'found',
+      symbol: {
+        uid,
+        name,
+        kind,
+        filePath,
+        startLine: readNumber(sym, ['startLine', 'start', 'lineStart']),
+        endLine: readNumber(sym, ['endLine', 'end', 'lineEnd']),
+      },
+      incoming: parseEdgeMap(o['incoming']),
+      outgoing: parseEdgeMap(o['outgoing']),
     }
   }
   return null
+}
+
+function parseEdgeMap(raw: unknown): Record<string, readonly GitnexusContextEdge[]> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out: Record<string, readonly GitnexusContextEdge[]> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(value)) continue
+    const edges: GitnexusContextEdge[] = []
+    for (const item of value) {
+      if (!item || typeof item !== 'object') continue
+      const o = item as Record<string, unknown>
+      const uid = readString(o, ['uid', 'id'])
+      const name = readString(o, ['name'])
+      const filePath = readString(o, ['filePath', 'path'])
+      if (uid && name && filePath) edges.push({ uid, name, filePath })
+    }
+    if (edges.length > 0) out[key] = edges
+  }
+  return out
 }
 
 function parseImpactRows(
