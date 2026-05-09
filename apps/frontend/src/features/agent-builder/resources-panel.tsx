@@ -8,10 +8,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import type {
-  CodingAgentSystemSkillResponse,
-  GitnexusLibrarySkillsResponse,
-} from '@agent-bridge/shared'
+import type { CodingAgentSystemSkillResponse } from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
 import { Button } from '../../ui/button'
 import { Pill, type PillKind } from '../../ui/pill'
@@ -25,7 +22,6 @@ import { RowMenu } from '../../ui/row-menu'
 import {
   ApiError,
   getCodingAgentSystemSkill,
-  getGitnexusLibrarySkills,
 } from '../../lib/rpc'
 import { navigate } from '../../lib/router'
 import { useDragReorder } from '../../lib/use-drag-reorder'
@@ -543,7 +539,6 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
             <BuiltInSubhead />
             <div className="ab-card ab-list-card">
               <SystemSkillRow />
-              <GitnexusLibrarySkillsRow />
             </div>
           </>
         ) : (
@@ -639,7 +634,6 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
             <BuiltInSubhead />
             <div className="ab-card ab-list-card">
               <SystemSkillRow />
-              <GitnexusLibrarySkillsRow />
             </div>
           </>
         )}
@@ -833,233 +827,6 @@ function SystemSkillRow() {
           }}
         >
           <Markdown source={skill.body} />
-        </div>
-      )}
-    </>
-  )
-}
-
-// ─── GitNexus library skills row ────────────────────────────────────────
-
-type GitnexusLibSkillsState =
-  | { status: 'loading' }
-  | { status: 'ready'; data: GitnexusLibrarySkillsResponse }
-  | { status: 'error'; message: string }
-
-/**
- * Read-only row at the bottom of the Skills list. Surfaces the
- * markdown skill files that ship inside the gitnexus npm package
- * (`node_modules/.../gitnexus/skills/*.md`) which `composeInstructions`
- * auto-attaches to every agent's instructions. Operators see them
- * for transparency; can't edit (vendor content, version-locked).
- *
- * Expand to see the list of attached skill names; click one to read
- * its body inline. Mirrors the SystemSkillRow accordion pattern.
- */
-function GitnexusLibrarySkillsRow() {
-  const [state, setState] = useState<GitnexusLibSkillsState>({
-    status: 'loading',
-  })
-  const [expanded, setExpanded] = useState(false)
-  const [openSlug, setOpenSlug] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      try {
-        const data = await getGitnexusLibrarySkills()
-        if (!cancelled) setState({ status: 'ready', data })
-      } catch (err) {
-        if (!cancelled) {
-          setState({
-            status: 'error',
-            message:
-              err instanceof ApiError
-                ? err.message
-                : err instanceof Error
-                  ? err.message
-                  : 'Failed to load gitnexus library skills',
-          })
-        }
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  if (state.status === 'loading') {
-    return (
-      <div
-        className="ab-list-row"
-        style={{ opacity: 0.6, fontSize: 13, color: 'var(--text-dim)' }}
-      >
-        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-          <FileIcon />
-        </div>
-        <div className="ab-list-row-head">
-          <div className="ab-list-row-title">Loading gitnexus library skills…</div>
-        </div>
-      </div>
-    )
-  }
-
-  if (state.status === 'error') {
-    return (
-      <div className="ab-list-row" style={{ fontSize: 13 }}>
-        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-          <FileIcon />
-        </div>
-        <div className="ab-list-row-head">
-          <div className="ab-list-row-title">GitNexus library skills (unavailable)</div>
-          <div className="ab-list-row-sub" style={{ color: 'var(--warn)' }}>
-            {state.message}
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  if (state.data.ok === false) {
-    return (
-      <div className="ab-list-row" style={{ fontSize: 13 }}>
-        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-          <FileIcon />
-        </div>
-        <div className="ab-list-row-head">
-          <div className="ab-list-row-title">GitNexus library skills (unavailable)</div>
-          <div className="ab-list-row-sub" style={{ color: 'var(--warn)' }}>
-            {state.data.message}
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  const data = state.data
-  if (data.skills.length === 0) {
-    return (
-      <div className="ab-list-row" style={{ fontSize: 13 }}>
-        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-          <FileIcon />
-        </div>
-        <div className="ab-list-row-head">
-          <div className="ab-list-row-title">GitNexus library skills</div>
-          <div className="ab-list-row-sub" style={{ color: 'var(--text-muted)' }}>
-            No skills shipped with this gitnexus version.
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  const totalBytes = data.skills.reduce((sum, s) => sum + s.bytes, 0)
-  return (
-    <>
-      <button
-        type="button"
-        className="ab-list-row"
-        onClick={() => setExpanded((v) => !v)}
-        aria-expanded={expanded}
-        style={{
-          width: '100%',
-          background: 'transparent',
-          border: 'none',
-          font: 'inherit',
-          textAlign: 'left',
-          cursor: 'pointer',
-        }}
-      >
-        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-          <FileIcon />
-        </div>
-        <div className="ab-list-row-head">
-          <div className="ab-list-row-title">
-            GitNexus library skills ({data.skills.length})
-          </div>
-          <div className="ab-list-row-sub">
-            Vendor-shipped from gitnexus v{data.version} ·{' '}
-            {totalBytes.toLocaleString()} chars total
-          </div>
-        </div>
-        <div className="ab-list-row-meta">
-          <Pill kind="accent">Built-in</Pill>
-          <span
-            className="ab-row-affordance"
-            aria-hidden="true"
-            style={{
-              transform: expanded ? 'rotate(180deg)' : undefined,
-              transition: 'transform 160ms var(--ease-out)',
-              display: 'inline-flex',
-            }}
-          >
-            <ChevronDownIcon />
-          </span>
-        </div>
-      </button>
-      {expanded && (
-        <div
-          style={{
-            background: 'var(--surface-hi)',
-            borderTop: '1px solid var(--border)',
-          }}
-        >
-          {data.skills.map((s) => {
-            const isOpen = openSlug === s.slug
-            return (
-              <div key={s.slug} style={{ borderTop: '1px solid var(--border)' }}>
-                <button
-                  type="button"
-                  className="ab-list-row"
-                  onClick={() => setOpenSlug(isOpen ? null : s.slug)}
-                  aria-expanded={isOpen}
-                  style={{
-                    width: '100%',
-                    background: 'transparent',
-                    border: 'none',
-                    font: 'inherit',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-                    <FileIcon />
-                  </div>
-                  <div className="ab-list-row-head">
-                    <div className="ab-list-row-title">{s.name}</div>
-                    <div className="ab-list-row-sub">
-                      {s.description} · {s.bytes.toLocaleString()} chars
-                    </div>
-                  </div>
-                  <div className="ab-list-row-meta">
-                    <span
-                      className="ab-row-affordance"
-                      aria-hidden="true"
-                      style={{
-                        transform: isOpen ? 'rotate(180deg)' : undefined,
-                        transition: 'transform 160ms var(--ease-out)',
-                        display: 'inline-flex',
-                      }}
-                    >
-                      <ChevronDownIcon />
-                    </span>
-                  </div>
-                </button>
-                {isOpen && (
-                  <div
-                    style={{
-                      padding: '14px 18px 14px 62px',
-                      fontSize: 13,
-                      lineHeight: 1.55,
-                      borderTop: '1px solid var(--border)',
-                    }}
-                  >
-                    <Markdown source={s.body} />
-                  </div>
-                )}
-              </div>
-            )
-          })}
         </div>
       )}
     </>

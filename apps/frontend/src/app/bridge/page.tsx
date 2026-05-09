@@ -1,14 +1,15 @@
 /**
  * Bridge dashboard — config block from `GET /api/bridge/config`,
- * exposed tools = agents with `llmProviderId !== null` rendered as
- * `query_<slug>`. The runs card was removed in favour of the global
+ * exposed tools = agents with `llmProviderId !== null` each rendered
+ * as one `<slug>__inspect_codebase` MCP tool plus any operator-authored
+ * `bridge_tools` rows. The runs card was removed in favour of the global
  * /logs page; users select Source=Bridge there for the equivalent
  * filtered view, with full per-event detail per row.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  CODING_AGENT_TOOL_METADATA,
+  INSPECT_CODEBASE_METADATA,
   type BridgeToolResponse,
 } from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
@@ -159,10 +160,14 @@ function ToolsCard() {
         <div className="ab-section-title">Exposed tools</div>
         <div className="ab-section-sub">
           {exposed.length} agent{exposed.length === 1 ? '' : 's'} exposed
-          to your IDE. Each one ships{' '}
-          {CODING_AGENT_TOOL_METADATA.length} built-in tools for the
-          coding agent (plan, debug, ask, investigate, impact, list
-          repos). Add your own tools per-agent on the Bridge tools tab.
+          to your IDE. Each one ships one built-in tool —{' '}
+          <span className="ab-mono">
+            &lt;slug&gt;__{INSPECT_CODEBASE_METADATA.nameSuffix}
+          </span>{' '}
+          — that the IDE LLM calls with a free-form query. The agent
+          picks the right inspector wrapper internally and returns a
+          structured envelope. Add your own tools per-agent on the
+          Bridge tools tab.
           {skipped > 0 && ` · ${skipped} skipped (no LLM provider)`}
         </div>
       </div>
@@ -214,19 +219,11 @@ function ExposedAgentRow({
   highlight: boolean
   defaultOpen: boolean
 }) {
-  // Virtual tools (always-on coding-agent toolkit) are slug-prefixed
-  // by the bridge: `<slug>__plan_feature` etc. Explicit rows from
-  // `bridge_tools` ship by their literal `name`. The expanded panel
-  // below renders both, mirroring what the IDE actually sees on
-  // `tools/list`.
-  const virtualNames = useMemo(
-    () =>
-      CODING_AGENT_TOOL_METADATA.map((t) => ({
-        wireName: `${agent.slug}__${t.name}`,
-        meta: t,
-      })),
-    [agent.slug],
-  )
+  // The always-on built-in is `<slug>__inspect_codebase`. Operator-
+  // authored rows from `bridge_tools` ship by their literal `name`.
+  // The expanded panel below renders both, mirroring what the IDE
+  // actually sees on `tools/list`.
+  const inspectName = `${agent.slug}__${INSPECT_CODEBASE_METADATA.nameSuffix}`
   const [open, setOpen] = useState(defaultOpen)
   const [bridgeTools, setBridgeTools] = useState<
     readonly BridgeToolResponse[] | null
@@ -352,18 +349,15 @@ function ExposedAgentRow({
           }}
         >
           <ToolGroup
-            label="Coding-agent toolkit"
-            sub="Built-in. The IDE sees these on every agent. Names are prefixed with the agent's slug so multi-agent installs don't collide."
-            tools={virtualNames.map((v) => ({
-              name: v.wireName,
-              description: v.meta.summary,
-              enabled: true,
-              tag: v.meta.synchronous
-                ? 'sync'
-                : v.meta.allowAllRepos
-                  ? 'any-repo'
-                  : 'single-repo',
-            }))}
+            label="Inspector"
+            sub="Built-in. The IDE sees this on every agent. The name is prefixed with the agent's slug so multi-agent installs don't collide."
+            tools={[
+              {
+                name: inspectName,
+                description: INSPECT_CODEBASE_METADATA.summary,
+                enabled: true,
+              },
+            ]}
           />
 
           {loadingBridgeTools && (
@@ -406,8 +400,8 @@ function ExposedAgentRow({
               className="ab-field-help"
               style={{ marginTop: 8, fontStyle: 'italic' }}
             >
-              No custom tools on this agent. The IDE sees just the{' '}
-              {CODING_AGENT_TOOL_METADATA.length} built-ins above. Add a
+              No custom tools on this agent. The IDE sees just{' '}
+              <span className="ab-mono">{inspectName}</span> above. Add a
               custom tool from the agent's Bridge tools tab.
             </div>
           )}

@@ -1,6 +1,6 @@
 /**
- * Repo detail page. Surfaces clone/index/wiki status, lets the
- * operator clone, re-index, generate wiki, edit the PAT, and
+ * Repo detail page. Surfaces clone + index status, lets the
+ * operator clone, re-index, edit the PAT, and
  * delete. Live progress comes through SSE on the repo's stream id.
  */
 
@@ -15,11 +15,9 @@ import {
   ApiError,
   cloneRepo,
   indexRepo,
-  repoWikiViewerUrl,
 } from '../../../../lib/rpc'
 import { toast } from '../../../../ui/toast-store'
 import { confirmDialog } from '../../../../ui/dialog-store'
-import { WikiGenerateSheet } from '../../../../features/library/wiki-generate-sheet'
 import { RepoLogTail } from '../../../../features/library/repo-log-tail'
 
 // Code-split: React Flow + dagre only ship when the modal opens.
@@ -53,7 +51,6 @@ export function RepoDetailPage({ id }: { id: string }) {
   const [busy, setBusy] = useState(false)
   const [running, setRunning] = useState<string | null>(null)
   const [graphOpen, setGraphOpen] = useState(false)
-  const [wikiSheet, setWikiSheet] = useState(false)
 
   if (!repo) {
     return (
@@ -195,23 +192,14 @@ export function RepoDetailPage({ id }: { id: string }) {
               View graph
             </Button>
           )}
-          {repo.wikiStatus === 'ready' && (
-            <a
-              href={repoWikiViewerUrl(repo.id)}
-              target="_blank"
-              rel="noreferrer"
-              className="ab-btn ab-btn-secondary"
-            >
-              Open wiki
-            </a>
-          )}
-          <Button
-            variant="primary"
-            onClick={() => setWikiSheet(true)}
-            disabled={running !== null}
-          >
-            Generate wiki
-          </Button>
+          {/*
+            Wiki generation UI (Open wiki / Generate wiki buttons) is
+            parked. The agent runtime doesn't currently consume the
+            generated wiki — see `understand_module.ts:11` for the
+            deferred wrapper integration. Backend routes + queue +
+            `repos.wiki_*` columns stay intact so re-enabling is one
+            UI change. See WikiGenerateSheet import note below.
+          */}
         </div>
       </div>
 
@@ -274,30 +262,6 @@ export function RepoDetailPage({ id }: { id: string }) {
               label="Embeddings"
               value={repo.indexSummary.embeddings?.toLocaleString() ?? '—'}
             />
-            <div className="ab-field">
-              <span className="ab-field-label">Wiki</span>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  fontSize: 14,
-                }}
-              >
-                <Pill
-                  kind={repo.wikiStatus === 'ready' ? 'success' : 'neutral'}
-                  dot
-                >
-                  {repo.wikiStatus ?? 'none'}
-                </Pill>
-                {repo.wikiPages !== null &&
-                  repo.wikiPages !== undefined && (
-                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
-                      {repo.wikiPages} pages
-                    </span>
-                  )}
-              </div>
-            </div>
           </div>
         ) : (
           <div className="ab-field-help">
@@ -360,11 +324,7 @@ export function RepoDetailPage({ id }: { id: string }) {
           <GraphModal repo={repo} onClose={() => setGraphOpen(false)} />
         </Suspense>
       )}
-      <WikiGenerateSheet
-        open={wikiSheet}
-        repoId={repo.id}
-        onClose={() => setWikiSheet(false)}
-      />
+      {/* WikiGenerateSheet hidden — see note in the action bar above. */}
     </div>
   )
 }

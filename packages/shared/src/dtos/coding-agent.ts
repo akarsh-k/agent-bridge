@@ -75,57 +75,134 @@ export interface CodingAgentToolMetadata {
   readonly synchronous: boolean
 }
 
+/**
+ * @deprecated The V1 six-virtual model (plan_feature, plan_bugfix, …) was
+ * replaced by the wrapper-tool architecture. The bridge now exposes ONE
+ * MCP tool per agent (`<slug>__inspect_codebase`) plus operator-authored
+ * `bridge_tools` rows. New code should consume {@link INSPECT_CODEBASE_METADATA}.
+ *
+ * Left in place because event types in `events.ts` still reference the
+ * underlying name union; ripping them out is a separate cleanup.
+ */
 export const CODING_AGENT_TOOL_METADATA: ReadonlyArray<CodingAgentToolMetadata> =
+  Object.freeze([])
+
+/**
+ * Slim, browser-safe metadata for the single MCP tool the bridge ships
+ * per agent under the wrapper-tool architecture
+ * (`docs/ARCHITECTURE.md` §10).
+ *
+ * Mirrors what `apps/mcp-bridge/src/index.ts:INSPECT_CODEBASE_INPUT_SCHEMA`
+ * advertises on `tools/list`. Exposed here so the frontend can render
+ * the bridge dashboard without a network round-trip — the IDE is what
+ * actually receives this from the live `tools/list`.
+ */
+export interface InspectCodebaseMetadata {
+  /** Suffix appended to `<agent.slug>__` in the live tool name. */
+  readonly nameSuffix: 'inspect_codebase'
+  readonly summary: string
+  readonly description: string
+  /** Argument keys the IDE LLM is expected to pass. */
+  readonly inputKeys: ReadonlyArray<{
+    readonly name: 'query' | 'repo_hint' | 'remote_url' | 'local_folder' | 'branch'
+    readonly required: boolean
+    readonly description: string
+  }>
+}
+
+/**
+ * Static catalog of the six inspector wrappers the agent's LLM
+ * actually sees as tools. The Resources tab's "Built-in" section reads
+ * this to render what's auto-attached without spawning a subprocess.
+ *
+ * Descriptions are mirrored verbatim from
+ * `packages/agents/src/inspector/index.ts`'s `createTool({ description })`
+ * calls. Keep these in sync when editing one or the other — drift is
+ * a documentation bug, not a runtime bug, but the operator-facing
+ * description should match what the LLM is shown.
+ */
+export interface InspectorToolDefinition {
+  readonly name:
+    | 'find_in_codebase'
+    | 'list_repos'
+    | 'trace_flow'
+    | 'assess_change_impact'
+    | 'debug_help'
+    | 'understand_module'
+  readonly description: string
+}
+
+export const INSPECTOR_TOOL_DEFINITIONS: ReadonlyArray<InspectorToolDefinition> =
   Object.freeze([
     {
-      name: 'plan_feature',
-      summary: 'Plan a feature in one repo with cross-repo touch points.',
-      description:
-        'Given a feature description and a target repo, returns affected files, reusable hooks/components/utilities, cross-repo touch points, naming patterns, and risks. Operates on one repo at a time.',
-      allowAllRepos: false,
-      synchronous: false,
-    },
-    {
-      name: 'plan_bugfix',
-      summary: 'Diagnose a bug and propose a fix in one repo.',
-      description:
-        'Given an error / stack trace / repro steps, returns suspect call sites with line numbers, recent related changes, and risks. Pairs well with the IDE’s "share file context" feature.',
-      allowAllRepos: false,
-      synchronous: false,
-    },
-    {
-      name: 'ask_general',
-      summary: 'Free-form Q&A grounded in the multi-repo context.',
-      description:
-        'Markdown answer with cited file paths. Pass a specific `repo_hint` to scope the answer, or `repo_hint: "__all__"` to ask across every attached repo.',
-      allowAllRepos: true,
-      synchronous: false,
-    },
-    {
-      name: 'investigate_codebase',
-      summary: 'Trace a code path from an anchor toward a goal.',
-      description:
-        'Pass a starting `path` or `symbol` and a goal. the agent returns an ordered trace of hops across repos, optionally with a Mermaid graph for ≥3-hop traces.',
-      allowAllRepos: true,
-      synchronous: false,
-    },
-    {
-      name: 'assess_impact',
-      summary: 'Cross-repo blast radius of a proposed change.',
-      description:
-        'Pass the files / symbols / package you intend to rename, remove, modify, or add. the agent returns every direct and transitive consumer across attached repos.',
-      allowAllRepos: true,
-      synchronous: false,
-    },
-    {
       name: 'list_repos',
-      summary: 'List the repos attached to this agent.',
       description:
-        'Cheap, deterministic, no LLM call. The IDE coding agent should call this once at session start to populate `repo_hint` autocomplete.',
-      allowAllRepos: false,
-      synchronous: true,
+        'List the repositories attached to this agent. Use this once at the start of a conversation when you do not know which repos you have. Returns a mini-repo whose `summary` carries the inventory inline (label, role, status, aliases, description). Cheap, deterministic, no gitnexus calls.',
+    },
+    {
+      name: 'find_in_codebase',
+      description:
+        'Find code in the attached repos using hybrid keyword + semantic search. Returns a mini-repo: a list of matched files with snippets, language tags, and the reason each was matched. Pass a free-form `query` (user-language is fine) and optionally a `repo_hint` to scope to one repo. Read-only — never edits or proposes file changes.',
+    },
+    {
+      name: 'trace_flow',
+      description:
+        'Walk the call/import graph from a starting file or symbol toward a goal. Returns a mini-repo with `graph_subset` (nodes + edges) and `files` chunks for the closest hops. Single-repo only. Pass `repo_hint` when the agent has more than one repo. Read-only.',
+    },
+    {
+      name: 'assess_change_impact',
+      description:
+        'Compute blast radius for a proposed change (rename / remove / modify / add). Returns a mini-repo where each `files` row classifies a path as `direct` or `transitive` at depth N, plus operator-curated cross-repo edges in `cross_repo_edges`. Single primary repo. Read-only.',
+    },
+    {
+      name: 'debug_help',
+      description:
+        'Diagnose a bug from raw error text. Extracts file paths + symbol names via language-agnostic regex, runs the codebase search for each, fetches surrounding context for the top suspect call sites. Returns a mini-repo with file chunks and the matched candidate per row. Read-only.',
+    },
+    {
+      name: 'understand_module',
+      description:
+        'Explain what a file or symbol does. Returns a mini-repo with the anchor file body + its outgoing dependencies (depth ≤ 2). Use when the developer asks "what does X do?" or "how does X work?". Read-only.',
     },
   ])
+
+export const INSPECT_CODEBASE_METADATA: InspectCodebaseMetadata = Object.freeze({
+  nameSuffix: 'inspect_codebase',
+  summary:
+    'Ask any question about the agent’s attached codebases. The agent picks the right wrapper internally.',
+  description:
+    'One MCP tool per agent. The IDE LLM passes a free-form `query` plus optional repo hints; the agent runs its inspector wrappers (find / trace / impact / debug / understand / list) and returns a bounded `mini_repos[]` envelope: file paths + chunks + graph slices + cross-repo edges. Read-only — never edits files.',
+  inputKeys: Object.freeze([
+    {
+      name: 'query' as const,
+      required: true,
+      description:
+        'Free-form question or instruction. The agent picks find / trace / impact / debug / understand / list internally.',
+    },
+    {
+      name: 'repo_hint' as const,
+      required: false,
+      description:
+        'Friendly label of an attached repo (role, alias, URL tail). Omit when the agent has only one repo or you want all repos searched.',
+    },
+    {
+      name: 'remote_url' as const,
+      required: false,
+      description:
+        'Highest-signal repo identifier; pass it when readable from the IDE (`git remote get-url origin`).',
+    },
+    {
+      name: 'local_folder' as const,
+      required: false,
+      description: 'IDE workspace folder name as a fallback signal.',
+    },
+    {
+      name: 'branch' as const,
+      required: false,
+      description: 'Current branch — used as a tiebreaker only.',
+    },
+  ]),
+})
 
 /**
  * Reserved `repo_hint` value meaning "the question is general across

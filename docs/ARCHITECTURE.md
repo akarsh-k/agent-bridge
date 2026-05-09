@@ -1113,7 +1113,53 @@ without branching downstream. Memory-bounded by ripgrep's stream
 parser, so it stays stable on the 50k-file repos this design was
 built for.
 
-### 10.13 Direction summary
+### 10.13 Parked features (infrastructure present, UI hidden)
+
+Two surfaces have full backend + DB infrastructure but no operator-facing
+UI right now. They were built end-to-end at one point, then hidden when
+the wrapper-tool architecture made them either unused (custom tools) or
+unconsumed (wiki). Re-enabling either is a focused, contained change.
+
+**Custom tools (the `tools` table — HTTP / shell / mastra_builtin / custom).**
+
+- Schema: `public.tools` (`id`, `agent_id`, `kind`, `name`, `description`,
+  `config_json`, `position`).
+- Backend: full CRUD under `apps/backend/src/routes/tools.ts`.
+- Frontend RPC: `addTool`, `patchTool`, `removeTool` in `lib/rpc`,
+  consumed by `workspace-context`.
+- What's missing: `packages/agents/buildAgent` does NOT read
+  `schema.tools`. The LLM never sees these rows. The frontend Add /
+  Edit / Delete affordances were removed from the Resources Tools tab
+  to stop operators authoring rows that nothing consumes; the tab
+  still lists existing rows read-only with an *Inactive* pill so prior
+  data isn't lost from view.
+- To re-enable: implement Mastra `createTool` paths for each `kind`
+  inside `buildAgent` (sandbox the `shell` kind!), then restore the
+  CRUD UI in `apps/frontend/src/features/agent-tools/tools-tab.tsx`.
+
+**Wiki generation (`gitnexus wiki`).**
+
+- Schema: `repos.wiki_status` / `wiki_generated_at` / `wiki_pages` /
+  `wiki_last_error`.
+- Backend: `POST /api/repos/:id/wiki` enqueues, the worker's
+  `generate-wiki` BullMQ job runs `gitnexus wiki` against the source,
+  markdown lands under `<source>/.gitnexus/wiki/`. Static-serve at
+  `GET /api/repos/:id/wiki(/*)` is intact.
+- What's missing: no inspector wrapper consumes the wiki. The
+  `understand_module` docstring already names this as deferred work
+  (slice the wiki page when `wikiStatus === 'ready'` AND `wikiGeneratedAt`
+  is recent). The frontend Generate / Open wiki buttons + status pill
+  were removed from the repo detail page to stop operators paying LLM
+  cost for output the agent can't read.
+- To re-enable: add a freshness gate + wiki read inside
+  `understand_module.ts` (and optionally `find_in_codebase.ts` as a
+  pre-filter), then restore the buttons in
+  `apps/frontend/src/app/library/repos/[id]/page.tsx`.
+
+Same pattern in both: keep the data and the routes, hide the trigger
+until the runtime that consumes them is wired.
+
+### 10.14 Direction summary
 
 | Concept | Direction | Where defined | Visible to IDE? |
 | --- | --- | --- | --- |
