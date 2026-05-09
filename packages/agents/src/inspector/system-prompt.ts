@@ -4,8 +4,9 @@
  *
  * Replaces the v1 `coding-agent/system-skill.md` (860 lines) with a
  * focused ≤80-line guide. Composed into every agent's instructions by
- * `build-agent.ts:composeInstructions`, after the operator's system
- * prompt and authored skills.
+ * `build-agent.ts:composeInstructions`, AFTER the operator's base
+ * system prompt and BEFORE operator-authored skills — so skills get
+ * the last-word position and can override wrapper-call defaults.
  *
  * Cache strategy mirrors the old loader: read once per process, cache
  * the resolved string. The file size is ~3 KB, so memory is fine.
@@ -22,7 +23,7 @@
 
 import { readFile } from 'node:fs/promises'
 
-export const INSPECTOR_SYSTEM_PROMPT_VERSION = '0.2.0' as const
+export const INSPECTOR_SYSTEM_PROMPT_VERSION = '0.3.0' as const
 
 export const INSPECTOR_SYSTEM_PROMPT_HEADING = '# Inspector toolkit' as const
 

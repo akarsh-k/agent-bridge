@@ -552,35 +552,46 @@ async function composeInstructions(
   basePrompt: string,
   skills: readonly SkillRow[],
 ): Promise<string> {
+  // Composition order matters. The LLM weights system-prompt content by
+  // recency: the closer to the user message, the louder it speaks. We
+  // therefore order:
+  //
+  //   1. operator's base system prompt        — sets identity / tone
+  //   2. inspector toolkit guide              — baseline tool behavior
+  //   3. operator skills                      — last-word direction
+  //
+  // Skills land AFTER the inspector prompt so an operator skill saying
+  // "ignore the wrappers, just say hi" actually overrides the wrapper-
+  // call instinct rather than getting drowned out by ~80 lines of
+  // wrapper direction immediately following it.
+  //
+  // The escape hatch from V1 still works: a skill body containing the
+  // literal `# Inspector toolkit` heading is treated as an explicit
+  // override; the auto-attach is skipped and that skill becomes the
+  // sole inspector guide.
   const parts: string[] = []
 
   const trimmedBase = basePrompt.trim()
-  if (trimmedBase.length > 0) {
-    parts.push(trimmedBase)
-  }
+  if (trimmedBase.length > 0) parts.push(trimmedBase)
 
-  // Idempotency check matches the v1 pattern: if the operator already
-  // authored a section with the heading marker (escape hatch), skip
-  // the auto-attach so we don't double-render.
-  let alreadyHasInspectorSection = trimmedBase.includes(
-    INSPECTOR_SYSTEM_PROMPT_HEADING,
-  )
+  const trimmedSkills = skills
+    .map((s) => ({ name: s.name, body: s.markdownBody.trim() }))
+    .filter((s) => s.body.length > 0)
 
-  for (const skill of skills) {
-    const body = skill.markdownBody.trim()
-    if (body.length === 0) continue
-    if (body.includes(INSPECTOR_SYSTEM_PROMPT_HEADING)) {
-      alreadyHasInspectorSection = true
-    }
-    parts.push(`## ${skill.name}\n\n${body}`)
-  }
+  const operatorOverridesInspector =
+    trimmedBase.includes(INSPECTOR_SYSTEM_PROMPT_HEADING) ||
+    trimmedSkills.some((s) => s.body.includes(INSPECTOR_SYSTEM_PROMPT_HEADING))
 
-  // Auto-attach the inspector toolkit guide. Loud throw on FS failure —
-  // the agent without this section would call wrapper tools without
-  // knowing the contract, which is worse than failing the build.
-  if (!alreadyHasInspectorSection) {
+  if (!operatorOverridesInspector) {
+    // Loud throw on FS failure — the agent without this section would
+    // call wrapper tools without knowing the contract, which is worse
+    // than failing the build.
     const inspectorPrompt = await loadInspectorSystemPrompt()
     if (inspectorPrompt.length > 0) parts.push(inspectorPrompt)
+  }
+
+  for (const skill of trimmedSkills) {
+    parts.push(`## ${skill.name}\n\n${skill.body}`)
   }
 
   // Empty total is allowed. some LLMs accept an empty system message
