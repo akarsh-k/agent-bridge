@@ -111,15 +111,21 @@ export interface InspectCodebaseMetadata {
 }
 
 /**
- * Static catalog of the six inspector wrappers the agent's LLM
- * actually sees as tools. The Resources tab's "Built-in" section reads
- * this to render what's auto-attached without spawning a subprocess.
+ * Single source of truth for the inspector wrappers' names + descriptions.
  *
- * Descriptions are mirrored verbatim from
- * `packages/agents/src/inspector/index.ts`'s `createTool({ description })`
- * calls. Keep these in sync when editing one or the other — drift is
- * a documentation bug, not a runtime bug, but the operator-facing
- * description should match what the LLM is shown.
+ * Consumed in two places:
+ *   - The agent runtime (`packages/agents/src/inspector/index.ts`) reads
+ *     each `description` to populate the Mastra `createTool({...})` calls
+ *     — i.e. these are the strings the LLM actually sees in its tool
+ *     dict at run time.
+ *   - The frontend Resources tab + Bridge dashboard render the same
+ *     catalog read-only so operators see what their agent is auto-
+ *     attached to.
+ *
+ * Edit descriptions HERE; both consumers pick up the change. Adding /
+ * removing wrappers is still a two-place change (this file + the
+ * matching `buildXxxTool` factory in `inspector/index.ts`) because the
+ * wrappers each have their own input schema + execute body.
  */
 export interface InspectorToolDefinition {
   readonly name:
@@ -131,6 +137,8 @@ export interface InspectorToolDefinition {
     | 'understand_module'
   readonly description: string
 }
+
+export type InspectorToolName = InspectorToolDefinition['name']
 
 export const INSPECTOR_TOOL_DEFINITIONS: ReadonlyArray<InspectorToolDefinition> =
   Object.freeze([
@@ -165,6 +173,23 @@ export const INSPECTOR_TOOL_DEFINITIONS: ReadonlyArray<InspectorToolDefinition> 
         'Explain what a file or symbol does. Returns a mini-repo with the anchor file body + its outgoing dependencies (depth ≤ 2). Use when the developer asks "what does X do?" or "how does X work?". Read-only.',
     },
   ])
+
+/**
+ * Lookup helper for `INSPECTOR_TOOL_DEFINITIONS`. Throws on miss so the
+ * agent runtime fails loudly at boot if a wrapper name drifts away
+ * from the catalog — better than silently shipping a tool with an
+ * empty description to the LLM.
+ */
+export function inspectorToolDescription(name: InspectorToolName): string {
+  const found = INSPECTOR_TOOL_DEFINITIONS.find((t) => t.name === name)
+  if (!found) {
+    throw new Error(
+      `[inspectorToolDescription] no entry for "${name}" in INSPECTOR_TOOL_DEFINITIONS — ` +
+        `update the catalog in @agent-bridge/shared/dtos/coding-agent.ts.`,
+    )
+  }
+  return found.description
+}
 
 export const INSPECT_CODEBASE_METADATA: InspectCodebaseMetadata = Object.freeze({
   nameSuffix: 'inspect_codebase',

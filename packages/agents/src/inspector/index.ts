@@ -30,7 +30,10 @@ import type { MastraModelConfig } from '@mastra/core/llm'
 import { z } from 'zod'
 
 import type { AgentBridgeDb } from '@agent-bridge/db'
-import type { AttachedRepo } from '@agent-bridge/shared'
+import {
+  inspectorToolDescription,
+  type AttachedRepo,
+} from '@agent-bridge/shared'
 
 import { loadAttachedRepos } from '../coding-agent/repo-loader.js'
 
@@ -187,8 +190,7 @@ function buildFindInCodebaseTool(
   // outputSchema (which is fine. we own this code path end-to-end).
   return createTool({
     id: 'find_in_codebase',
-    description:
-      'Find code in the attached repos using hybrid keyword + semantic search. Returns a mini-repo: a list of matched files with snippets, language tags, and the reason each was matched. Pass a free-form `query` (user-language is fine — "where is translation handled?", "auth middleware") and optionally a `repo_hint` to scope to one repo. Read-only — never edits or proposes file changes.',
+    description: inspectorToolDescription('find_in_codebase'),
     inputSchema: findInCodebaseInputSchema,
     execute: async (input) =>
       runFindInCodebase({
@@ -209,8 +211,7 @@ function buildListReposTool(
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'list_repos',
-    description:
-      'List the repositories attached to this agent. Use this once at the start of a conversation when you do not know which repos you have. Returns a mini-repo whose `summary` carries the inventory inline (label, role, status, aliases, description). Cheap, deterministic, no gitnexus calls.',
+    description: inspectorToolDescription('list_repos'),
     inputSchema: listReposInputSchema,
     // outputSchema omitted for the same readonly-array reason as
     // find_in_codebase; mirrors the closure we captured at mount.
@@ -265,8 +266,7 @@ function buildTraceFlowTool(
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'trace_flow',
-    description:
-      'Walk the call/import graph from a starting file or symbol toward a goal. Returns a mini-repo with `graph_subset` (nodes + edges) and `files` chunks for the closest hops. Single-repo only. pass `repo_hint` when the agent has more than one repo. Read-only.',
+    description: inspectorToolDescription('trace_flow'),
     inputSchema: traceFlowInputSchema,
     execute: async (input) =>
       runTraceFlow({
@@ -314,8 +314,7 @@ function buildAssessChangeImpactTool(
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'assess_change_impact',
-    description:
-      'Compute blast radius for a proposed change (rename / remove / modify / add). Returns a mini-repo where each `files` row classifies a path as `direct` or `transitive` at depth N, plus operator-curated cross-repo edges in `cross_repo_edges`. Always names whether cross-repo expansion ran or why it was skipped. Single primary repo. Read-only.',
+    description: inspectorToolDescription('assess_change_impact'),
     inputSchema: assessChangeImpactInputSchema,
     execute: async (input) =>
       runAssessChangeImpact({
@@ -366,8 +365,7 @@ function buildDebugHelpTool(
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'debug_help',
-    description:
-      'Diagnose a bug from raw error text. Extracts file paths + symbol names via language-agnostic regex, runs gitnexus_query for each, fetches gitnexus_context for the top suspect call sites. Returns a mini-repo with file chunks and the matched candidate per row. Read-only.',
+    description: inspectorToolDescription('debug_help'),
     inputSchema: debugHelpInputSchema,
     execute: async (input) =>
       runDebugHelp({
@@ -407,8 +405,7 @@ function buildUnderstandModuleTool(
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'understand_module',
-    description:
-      'Explain what a file or symbol does. Returns a mini-repo with the anchor file body + its outgoing dependencies (depth ≤ 2). Use when the developer asks "what does X do?" or "how does X work?". Read-only.',
+    description: inspectorToolDescription('understand_module'),
     inputSchema: understandModuleInputSchema,
     execute: async (input) =>
       runUnderstandModule({
