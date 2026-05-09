@@ -21,13 +21,8 @@ settings.local.json
 .vite/
 .eslintcache
 
-# Builder-only working docs. These are personal planning/scratch notes the
-# builder keeps locally; they are NOT part of the repo contract and must not
-# be committed. Shared design docs (e.g. docs/ARCHITECTURE.md) stay tracked.
-docs/PLAN.md
-docs/**/*.local.md
-docs/private/
-docs/scratch/
+docs/*
+!docs/ARCHITECTURE.md
 
 # Local IDE / editor state (personal, not repo-wide).
 # .cursor/rules/ is intentionally NOT ignored — those are the repo's shared

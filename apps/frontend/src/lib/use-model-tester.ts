@@ -56,6 +56,18 @@ export interface UseModelTesterReturn {
     modelId: string | null | undefined,
     capability?: ModelTestCapability,
   ) => string | undefined
+  /**
+   * Last-detected embedding vector dimension for `(modelId,
+   * capability='embedding')`. The probe reads `data[0].embedding.length`
+   * from the upstream `/v1/embeddings` response, so this is the model's
+   * actual output dim — no guessing. The provider edit page uses this
+   * to auto-fill `embeddingDims` after a successful embedding test.
+   * Returns `undefined` when the model hasn't been tested yet OR when
+   * the probe couldn't recognise the response shape.
+   */
+  readonly embeddingDimOf: (
+    modelId: string | null | undefined,
+  ) => number | undefined
 }
 
 const stateKey = (
@@ -68,6 +80,11 @@ export function useModelTester(
 ): UseModelTesterReturn {
   const [stateMap, setStateMap] = useState<Record<string, ModelTestState>>({})
   const [messageMap, setMessageMap] = useState<Record<string, string>>({})
+  // Embedding-dim cache. keyed by modelId only (capability is implicit
+  // — only embedding probes populate this).
+  const [embeddingDimMap, setEmbeddingDimMap] = useState<
+    Record<string, number>
+  >({})
 
   // Provider-scoped reset. Switching the agent's provider invalidates
   // every cached "passed/failed" since the next test will hit a
@@ -81,6 +98,7 @@ export function useModelTester(
     setSeededFor(providerId)
     setStateMap({})
     setMessageMap({})
+    setEmbeddingDimMap({})
   }
 
   const test = useCallback(
@@ -106,6 +124,12 @@ export function useModelTester(
         if (res.ok) {
           setStateMap((s) => ({ ...s, [key]: 'ok' }))
           setMessageMap((s) => ({ ...s, [key]: `${res.durationMs}ms` }))
+          if (
+            capability === 'embedding' &&
+            typeof res.embeddingDim === 'number'
+          ) {
+            setEmbeddingDimMap((m) => ({ ...m, [modelId]: res.embeddingDim! }))
+          }
           return
         }
         const reason = res.message ?? res.code
@@ -137,5 +161,6 @@ export function useModelTester(
       m ? stateMap[stateKey(m, capability)] : undefined,
     messageOf: (m, capability = 'chat') =>
       m ? messageMap[stateKey(m, capability)] : undefined,
+    embeddingDimOf: (m) => (m ? embeddingDimMap[m] : undefined),
   }
 }

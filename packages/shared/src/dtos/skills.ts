@@ -18,13 +18,28 @@
 import { z } from 'zod'
 
 const SKILL_NAME_MAX = 120
+
 /**
- * Intentionally below the backend's 64 KiB global body-limit middleware so
- * this per-field refine can fire with a descriptive error instead of being
- * pre-empted by a generic 413 "Payload too large" from the global limiter.
- * If we ever need longer skill bodies, raise the global cap too.
+ * Per-skill body size caps (`docs/ARCHITECTURE.md §10` Phase F F2/F3).
+ *
+ * The wrapper-tool architecture intentionally keeps the system prompt
+ * tiny (Phase F1's `system-prompt.md` is ~70 lines). Operator-authored
+ * skills augment that prompt and ride into every chat turn, so they
+ * need their own ceiling — historically the v1 toolkit shipped one
+ * 860-line skill in every prompt and called it the worst failure mode
+ * (`lesson_learned.md` §5.6).
+ *
+ * 4 KiB is enough for ~80 lines of markdown — about the same budget
+ * the inspector system prompt itself uses. 200 lines is a hard line
+ * cap on top so an operator can't fit an essay under the byte limit.
+ *
+ * Per-agent total cap of 12 KiB is enforced separately by the backend
+ * route (it requires summing across the agent's existing skills + the
+ * incoming change, which a per-field DTO can't see).
  */
-const MARKDOWN_BODY_MAX = 32 * 1024
+export const SKILL_BODY_MAX_BYTES = 4 * 1024
+export const SKILL_BODY_MAX_LINES = 200
+export const PER_AGENT_SKILL_BUDGET_BYTES = 12 * 1024
 
 /** Loose, UI-friendly. Strict slug rules are overkill for display names. */
 const skillNameSchema = z
@@ -38,7 +53,14 @@ const skillNameSchema = z
 
 const markdownBodySchema = z
   .string()
-  .max(MARKDOWN_BODY_MAX, `markdownBody exceeds ${MARKDOWN_BODY_MAX}-byte limit`)
+  .max(
+    SKILL_BODY_MAX_BYTES,
+    `markdownBody exceeds ${SKILL_BODY_MAX_BYTES}-byte limit (Phase F2; per-skill cap)`,
+  )
+  .refine(
+    (v) => v.split('\n').length <= SKILL_BODY_MAX_LINES,
+    `markdownBody exceeds ${SKILL_BODY_MAX_LINES}-line limit (Phase F2; per-skill cap)`,
+  )
 
 const positionSchema = z.number().int().nonnegative().max(1_000_000)
 

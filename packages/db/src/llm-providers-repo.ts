@@ -33,3 +33,26 @@ export async function getForWorker(
     .limit(1)
   return row ?? null
 }
+
+/**
+ * Read the workspace embedding provider — the (singleton) row with
+ * `role='embedding'`. The schema enforces uniqueness via a partial unique
+ * index, so at most one row ever exists. `docs/ARCHITECTURE.md §10` Phase D D2
+ * uses this in the worker's index-repo job to route gitnexus's
+ * `--embeddings` pipeline to the workspace's chosen embedder via the
+ * `GITNEXUS_EMBEDDING_*` env vars.
+ *
+ * Returns `null` when no embedding provider is configured. Callers
+ * decide whether to fail loudly (`buildAgent` D1) or proceed silently
+ * with gitnexus's default local embedder (worker D2).
+ */
+export async function getEmbeddingProvider(
+  handle: AgentBridgeDb,
+): Promise<LlmProviderRow | null> {
+  const [row] = await handle.db
+    .select()
+    .from(llmProviders)
+    .where(eq(llmProviders.role, 'embedding'))
+    .limit(1)
+  return row ?? null
+}

@@ -242,15 +242,14 @@ function BudgetBody({
           <SubRow key={s.name} label={s.name} tokens={s.tokens} />
         ))}
 
-      {/* System skill. auto-appended to every agent's instructions
-          right after the operator's skills. Listed as its own
-          breakdown row (rather than rolled into Skills) because the
-          source is different (build-time .md, not a `skills` row)
-          and the operator can't influence its size. Renders distinctly
-          when the .md fails to load so a missing build artifact is
-          visible. */}
+      {/* Inspector toolkit's auto-attached system prompt
+          (`docs/ARCHITECTURE.md §10` Phase F1). Replaces the v1 860-line
+          coding-agent skill. Listed as its own row because the source
+          is build-time (.md), not an editable `skills` row. Renders
+          distinctly when the .md fails to load so a missing build
+          artifact is visible. */}
       <BreakdownRow
-        label="System skill (built-in)"
+        label="System prompt (built-in)"
         tokens={estimate.parts.systemSkill?.tokens ?? 0}
         total={baseline}
         sublabel={
@@ -260,28 +259,14 @@ function BudgetBody({
         }
       />
 
-      <BreakdownRow
-        label="GitNexus library skills (built-in)"
-        tokens={estimate.parts.gitnexusLibrarySkills?.tokens ?? 0}
-        total={baseline}
-        sublabel={
-          estimate.parts.gitnexusLibrarySkills === null
-            ? 'Not attached (gitnexus install unreachable)'
-            : `${estimate.parts.gitnexusLibrarySkills.count} skills · gitnexus v${estimate.parts.gitnexusLibrarySkills.version}`
-        }
-      />
-
-      <BreakdownRow
-        label="Attached repos hint"
-        tokens={estimate.parts.attachedReposHint}
-        total={baseline}
-      />
-
-      <BreakdownRow
-        label="Repo edges hint"
-        tokens={estimate.parts.repoEdgesHint}
-        total={baseline}
-      />
+      {/* GitNexus library skills + attached-repos hint + repo-edges
+          hint were all dropped from the prompt by the wrapper-tool
+          architecture (PLAN_v2.md B6 / D9 / D12). The data still
+          travels — just inside wrapper responses (`list_repos`,
+          `assess_change_impact`) where it's actionable. The
+          token-estimate response keeps these fields at 0/null for
+          backwards-compat, but rendering them as always-zero rows
+          would mislead the operator. Hidden here. */}
 
       <BreakdownRow
         label={`Tools (${estimate.parts.tools.length})`}

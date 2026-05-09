@@ -49,6 +49,27 @@ const baseFields = {
   baseUrl: z.url({ message: 'baseUrl must be a valid URL' }).nullable().optional(),
   defaultModel: z.string().trim().min(1).max(200).nullable().optional(),
   apiKey: secretInputSchema.optional(),
+  /**
+   * Embedding vector dimension count (`docs/ARCHITECTURE.md §10` Phase D D3).
+   * Only meaningful for `role='embedding'` rows; the backend rejects
+   * the field on chat-role rows. Forwarded to gitnexus as
+   * `GITNEXUS_EMBEDDING_DIMS` so its embedder sizing matches the
+   * remote model. When NULL, gitnexus's 384 default is used — most
+   * BPE/transformer embedders return ≥ 768, so leaving this NULL on
+   * a non-default model causes a runtime "Embedding dimension
+   * mismatch" failure during indexing.
+   *
+   * Common values: 384 (gitnexus default), 768 (all-mpnet-base),
+   * 1024 (BGE-large, Qwen3-Embedding-0.6B), 1536 (text-embedding-
+   * 3-small / ada-002), 3072 (text-embedding-3-large).
+   */
+  embeddingDims: z
+    .number()
+    .int()
+    .min(8)
+    .max(8192)
+    .nullable()
+    .optional(),
 } as const
 
 // ─── Create ──────────────────────────────────────────────────────────────
@@ -61,6 +82,7 @@ export const llmProviderCreateInputSchema = z
     baseUrl: baseFields.baseUrl,
     defaultModel: baseFields.defaultModel,
     apiKey: baseFields.apiKey,
+    embeddingDims: baseFields.embeddingDims,
   })
   .strict()
   .superRefine((v, ctx) => {
@@ -77,6 +99,16 @@ export const llmProviderCreateInputSchema = z
         code: 'custom',
         path: ['baseUrl'],
         message: `baseUrl is not supported for kind="${v.kind}"`,
+      })
+    }
+    // `embeddingDims` only meaningful for embedding-role rows. Reject
+    // on chat rows so an operator doesn't silently set it expecting it
+    // to do something on a chat provider.
+    if (v.role !== 'embedding' && v.embeddingDims != null) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['embeddingDims'],
+        message: `embeddingDims is only valid on role="embedding" providers`,
       })
     }
   })
@@ -99,6 +131,7 @@ export const llmProviderUpdateInputSchema = z
     baseUrl: baseFields.baseUrl,
     defaultModel: baseFields.defaultModel,
     apiKey: baseFields.apiKey,
+    embeddingDims: baseFields.embeddingDims,
     /**
      * Confirmation flag from the embedding-model-change dialog. Set
      * by the UI when the operator confirms changing the embedding
@@ -141,6 +174,14 @@ export const llmProviderResponseSchema = z.object({
    * embedding-role rows feed `/v1/embeddings`.
    */
   defaultModel: z.string().nullable(),
+  /**
+   * Embedding vector dimension count. Always `null` on chat-role rows.
+   * Forwarded to gitnexus as `GITNEXUS_EMBEDDING_DIMS`. NULL means
+   * gitnexus uses its 384 default. operators with non-default
+   * embedders MUST set this to the model's actual dimension or
+   * indexing fails with "Embedding dimension mismatch".
+   */
+  embeddingDims: z.number().int().nullable(),
   /** Presence-only sentinel. Never contains plaintext. */
   apiKey: secretSentinelSchema,
   /** Cached `/v1/models` response or `null` if never refreshed. */
@@ -212,6 +253,15 @@ export const llmProviderTestResponseSchema = z.discriminatedUnion('ok', [
        * (truncated to ~120 chars). `null` for `stage: 'reachable'`.
        */
       sample: z.string().nullable(),
+      /**
+       * For embedding-role inference probes: the dimension of the
+       * vector the upstream returned (i.e. `data[0].embedding.length`).
+       * `null` for chat probes and for embedding probes whose response
+       * shape we couldn't recognise. The provider edit page uses this
+       * to auto-fill `embeddingDims` after a successful test so
+       * operators don't have to look up their model's dimension.
+       */
+      embeddingDim: z.number().int().nullable().optional(),
     })
     .strict(),
   z

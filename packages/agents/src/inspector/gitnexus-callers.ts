@@ -1,0 +1,493 @@
+/**
+ * Thin async wrappers around the gitnexus MCP tool dict
+ * (`docs/ARCHITECTURE.md §10` Phase B B3).
+ *
+ * The wrapper-tool architecture (D1) keeps the gitnexus subprocess + its
+ * `tools` dict alive, but the LLM never sees the `gitnexus_*` tools
+ * directly. Instead our deterministic workflows call them through the
+ * functions below. Each function:
+ *
+ *   - takes the live `tools` dict (from `mountGitnexusMcp(...)`),
+ *   - calls the relevant tool's `execute(...)`,
+ *   - parses gitnexus's response shape (text-wrapped JSON, structured
+ *     content, or array — see `unwrap` below),
+ *   - returns a typed value the workflow can reason about.
+ *
+ * Failure mode: throw with a descriptive message. The workflow is
+ * responsible for catching and degrading. these are infrastructure-level
+ * helpers, not user-facing code.
+ *
+ * Idempotent on the gitnexus side — every supported call (`query`,
+ * `context`, `impact`, `cypher`, `detect_changes`) is read-only.
+ */
+
+import type { Tool } from '@mastra/core/tools'
+
+// ─── Types the callers return ────────────────────────────────────────────
+
+/**
+ * One hit from `gitnexus_query`. Gitnexus returns this as
+ * "process-grouped hybrid search (BM25 + semantic + RRF)" so each entry
+ * has a fused score; we surface only what the workflow needs to pick
+ * the next call (path + line + reason).
+ */
+export interface GitnexusQueryHit {
+  readonly repo: string
+  readonly path: string
+  readonly line: number | null
+  readonly symbol: string | null
+  readonly score: number
+  readonly snippet: string | null
+  readonly reason: string
+}
+
+export interface GitnexusContextResult {
+  readonly repo: string
+  readonly path: string
+  /** The file body or relevant portion. May be empty if gitnexus couldn't fetch. */
+  readonly content: string
+  readonly language: string | null
+  readonly startLine: number | null
+  readonly endLine: number | null
+}
+
+export interface GitnexusImpactRow {
+  readonly repo: string
+  readonly path: string
+  readonly direction: 'upstream' | 'downstream'
+  readonly depth: number
+  readonly confidence: 'high' | 'medium' | 'low' | null
+  readonly reason: string
+}
+
+// ─── Public surface ──────────────────────────────────────────────────────
+
+export type ToolDict = Record<string, Tool<any, any, any, any>>
+
+export interface CallGitnexusInput {
+  readonly tools: ToolDict
+  /** Canonical gitnexus registry name — pre-resolved by the caller. */
+  readonly repo?: string
+}
+
+export interface QueryInput extends CallGitnexusInput {
+  readonly query: string
+  /** Cap on results returned by gitnexus. Default 20, max 100. */
+  readonly limit?: number
+}
+
+export async function callGitnexusQuery(
+  input: QueryInput,
+): Promise<GitnexusQueryHit[]> {
+  const { tools, query, repo, limit = 20 } = input
+  const tool = tools['gitnexus_query']
+  if (!tool || !tool.execute) {
+    throw new Error('[gitnexus-callers] gitnexus_query tool is not mounted')
+  }
+  const args: Record<string, unknown> = { query, limit }
+  if (repo) args['repo'] = repo
+  const raw = await tool.execute(args as never, {} as never)
+  return parseQueryHits(raw)
+}
+
+export interface ContextInput extends CallGitnexusInput {
+  /** File path within the repo. Required for `context`. */
+  readonly path: string
+  /** Optional symbol (function/class) to focus the context on. */
+  readonly symbol?: string
+}
+
+export async function callGitnexusContext(
+  input: ContextInput,
+): Promise<GitnexusContextResult | null> {
+  const { tools, path, symbol, repo } = input
+  const tool = tools['gitnexus_context']
+  if (!tool || !tool.execute) {
+    throw new Error('[gitnexus-callers] gitnexus_context tool is not mounted')
+  }
+  const args: Record<string, unknown> = { path }
+  if (symbol) args['symbol'] = symbol
+  if (repo) args['repo'] = repo
+  const raw = await tool.execute(args as never, {} as never)
+  return parseContextResult(raw, repo ?? '', path)
+}
+
+export interface ImpactInput extends CallGitnexusInput {
+  /** File path or symbol to assess. */
+  readonly target: string
+  readonly direction: 'upstream' | 'downstream'
+  readonly depth?: number
+}
+
+export async function callGitnexusImpact(
+  input: ImpactInput,
+): Promise<GitnexusImpactRow[]> {
+  const { tools, target, direction, depth = 2, repo } = input
+  const tool = tools['gitnexus_impact']
+  if (!tool || !tool.execute) {
+    throw new Error('[gitnexus-callers] gitnexus_impact tool is not mounted')
+  }
+  const args: Record<string, unknown> = { target, direction, depth }
+  if (repo) args['repo'] = repo
+  const raw = await tool.execute(args as never, {} as never)
+  return parseImpactRows(raw, direction)
+}
+
+// ─── Envelope unwrap ─────────────────────────────────────────────────────
+
+/**
+ * Gitnexus's MCP server emits results in a few shapes depending on tool
+ * + version. Recognised inputs (in order of preference):
+ *
+ *   1. Already-parsed object/array (Mastra's MCP wrapper sometimes
+ *      hands us `structuredContent` directly).
+ *   2. `{ content: [{ type: 'text', text: '<json>' }] }` — the canonical
+ *      MCP `CallToolResult`. We strip gitnexus's optional next-step
+ *      hint (`\n\n---\n**Next:** …` divider) and parse the prefix.
+ *   3. Raw string. JSON-parse it directly.
+ *
+ * Returns `null` when nothing parseable was found. Workflows treat
+ * `null` as "no results" (legitimate empty case), not as an error.
+ *
+ * Mirrors the unwrap logic in `mcp/gitnexus-mcp.ts:parseTextPayload`
+ * but generalised to any shape gitnexus might emit, not just lists.
+ */
+export function unwrap(raw: unknown): unknown | null {
+  if (raw === null || raw === undefined) return null
+
+  if (typeof raw === 'string') return tryJson(raw)
+  if (Array.isArray(raw)) return raw
+
+  if (typeof raw !== 'object') return null
+
+  const obj = raw as Record<string, unknown>
+
+  // Mastra-style structuredContent passthrough.
+  if (obj['structuredContent'] !== undefined) {
+    const sc = obj['structuredContent']
+    return typeof sc === 'string' ? tryJson(sc) : sc
+  }
+
+  // MCP CallToolResult.
+  if (Array.isArray(obj['content'])) {
+    for (const part of obj['content'] as unknown[]) {
+      if (!part || typeof part !== 'object') continue
+      const p = part as Record<string, unknown>
+      if (p['type'] === 'text' && typeof p['text'] === 'string') {
+        const parsed = tryJson(p['text'] as string)
+        if (parsed !== null) return parsed
+      }
+    }
+    return null
+  }
+
+  // Direct object passthrough.
+  return obj
+}
+
+function tryJson(text: string): unknown | null {
+  const trimmed = text.trim()
+  if (trimmed.length === 0) return null
+
+  // Strategy 1: strip gitnexus's next-step divider.
+  const dividerIdx = trimmed.indexOf('\n\n---\n')
+  const candidates: string[] = []
+  if (dividerIdx >= 0) candidates.push(trimmed.slice(0, dividerIdx).trim())
+  candidates.push(trimmed)
+
+  // Strategy 2: last balanced bracket (defensive against suffix changes).
+  const lastBracket = Math.max(
+    trimmed.lastIndexOf(']'),
+    trimmed.lastIndexOf('}'),
+  )
+  if (lastBracket >= 0 && lastBracket < trimmed.length - 1) {
+    candidates.push(trimmed.slice(0, lastBracket + 1))
+  }
+
+  for (const c of candidates) {
+    if (c.length === 0) continue
+    try {
+      return JSON.parse(c) as unknown
+    } catch {
+      /* try next */
+    }
+  }
+  return null
+}
+
+// ─── Parsers ─────────────────────────────────────────────────────────────
+
+/**
+ * Parse gitnexus 1.6.3's process-grouped `query` response.
+ *
+ * Actual shape (from gitnexus's local-backend.js):
+ *
+ *   {
+ *     processes:        [ { id, summary, priority, symbol_count, … } ],
+ *     process_symbols:  [ { id, name, type, filePath, startLine, endLine,
+ *                           module?, content?, process_id, step_index } ],
+ *     definitions:      [ { id, name, type, filePath, startLine, endLine,
+ *                           module?, content? } ],
+ *     timing:           { … },
+ *     warning?:         'FTS extension unavailable - keyword search degraded.
+ *                        Run: gitnexus analyze --force to rebuild indexes.'
+ *   }
+ *
+ * We mine `process_symbols` + `definitions` for hits; both carry the
+ * file path, line range, and symbol name we need. Process metadata
+ * (`processes[]`) is summary-only, no file paths — useful for grouping
+ * but not for our flat hit list.
+ *
+ * Older / pre-1.6.3 shapes (`{results}` / `{items}` / bare arrays /
+ * `{groups: [{items}]}`) stay supported as fallbacks so a future
+ * gitnexus revert doesn't break us. Dedupe by `(filePath, name)` so a
+ * symbol that appears in multiple processes isn't double-counted.
+ *
+ * If the response carries a top-level `warning` (gitnexus's hint about
+ * a degraded FTS index), we surface it on the first hit's `reason`
+ * field so the operator sees actionable diagnosis instead of an
+ * unexplained empty result.
+ */
+function parseQueryHits(raw: unknown): GitnexusQueryHit[] {
+  const data = unwrap(raw)
+  if (!data || typeof data !== 'object') {
+    if (Array.isArray(data)) return parseLegacyArray(data)
+    return []
+  }
+  const top = data as Record<string, unknown>
+
+  // gitnexus 1.6.3 process-grouped shape.
+  const processSymbols = Array.isArray(top['process_symbols'])
+    ? (top['process_symbols'] as unknown[])
+    : []
+  const definitions = Array.isArray(top['definitions'])
+    ? (top['definitions'] as unknown[])
+    : []
+
+  // Build a process-id → priority map so symbols inside high-priority
+  // processes get a higher score.
+  const processPriority = new Map<string, number>()
+  if (Array.isArray(top['processes'])) {
+    for (const p of top['processes'] as unknown[]) {
+      if (!p || typeof p !== 'object') continue
+      const o = p as Record<string, unknown>
+      const id = typeof o['id'] === 'string' ? o['id'] : null
+      const pri = typeof o['priority'] === 'number' ? o['priority'] : 0
+      if (id) processPriority.set(id, pri)
+    }
+  }
+
+  const out: GitnexusQueryHit[] = []
+  const seen = new Set<string>()
+  const pushSymbol = (item: unknown, defaultReason: string): void => {
+    if (!item || typeof item !== 'object') return
+    const o = item as Record<string, unknown>
+    const path = readString(o, ['filePath', 'path', 'file'])
+    if (!path) return
+    const symbol = readString(o, ['name', 'symbol', 'symbolName'])
+    const dedupeKey = `${path}::${symbol ?? ''}`
+    if (seen.has(dedupeKey)) return
+    seen.add(dedupeKey)
+    const pid = readString(o, ['process_id'])
+    const score = pid != null ? (processPriority.get(pid) ?? 0) : 0
+    out.push({
+      repo: readString(o, ['repo', 'repository']) ?? '',
+      path,
+      line: readNumber(o, ['startLine', 'line', 'lineNumber']),
+      symbol,
+      score,
+      snippet: readString(o, ['content', 'snippet', 'preview', 'text']),
+      reason:
+        readString(o, ['reason', 'why', 'matchType']) ??
+        readString(o, ['type']) ??
+        defaultReason,
+    })
+  }
+  for (const item of processSymbols) pushSymbol(item, 'process flow symbol')
+  for (const item of definitions) pushSymbol(item, 'standalone definition')
+
+  // Sort by score desc so caller's top-N slicing surfaces the most
+  // important matches first.
+  out.sort((a, b) => b.score - a.score)
+
+  // Surface gitnexus's degraded-index warning. operators should see
+  // "FTS unavailable" the first time it happens, not silently get 0
+  // hits from a half-built index.
+  if (out.length === 0 && typeof top['warning'] === 'string') {
+    return [
+      {
+        repo: '',
+        path: '',
+        line: null,
+        symbol: null,
+        score: 0,
+        snippet: null,
+        reason: `gitnexus warning: ${top['warning']}`,
+      },
+    ].filter(() => false) // drop the synthetic — caller doesn't want a path-less hit
+  }
+
+  // Fallback: pre-1.6.3 / future shapes. Try `{results}` / `{items}` /
+  // `{groups: [{items}]}` paths if we got nothing from the canonical shape.
+  if (out.length === 0) {
+    const legacy = collectLegacyItems(top)
+    for (const item of legacy) pushSymbol(item, 'legacy hit')
+  }
+
+  return out
+}
+
+function parseLegacyArray(items: readonly unknown[]): GitnexusQueryHit[] {
+  const out: GitnexusQueryHit[] = []
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue
+    const o = item as Record<string, unknown>
+    const path = readString(o, ['path', 'filePath', 'file'])
+    if (!path) continue
+    out.push({
+      repo: readString(o, ['repo', 'repository']) ?? '',
+      path,
+      line: readNumber(o, ['line', 'startLine', 'lineNumber']),
+      symbol: readString(o, ['symbol', 'name', 'symbolName']),
+      score: readNumber(o, ['score', 'rrf', 'rank']) ?? 0,
+      snippet: readString(o, ['snippet', 'preview', 'text']),
+      reason:
+        readString(o, ['reason', 'why', 'matchType']) ?? 'gitnexus_query hit',
+    })
+  }
+  return out
+}
+
+function collectLegacyItems(top: Record<string, unknown>): unknown[] {
+  const out: unknown[] = []
+  const collect = (v: unknown): void => {
+    if (Array.isArray(v)) {
+      out.push(...v)
+      return
+    }
+    if (!v || typeof v !== 'object') return
+    const o = v as Record<string, unknown>
+    if (Array.isArray(o['results'])) collect(o['results'])
+    if (Array.isArray(o['items'])) collect(o['items'])
+    if (Array.isArray(o['hits'])) collect(o['hits'])
+    if (Array.isArray(o['groups'])) {
+      for (const g of o['groups'] as unknown[]) collect(g)
+    }
+  }
+  collect(top)
+  return out
+}
+
+function parseContextResult(
+  raw: unknown,
+  repo: string,
+  path: string,
+): GitnexusContextResult | null {
+  const data = unwrap(raw)
+  if (!data || typeof data !== 'object') return null
+
+  // gitnexus_context typically returns `{ content, language?, startLine?, endLine? }`
+  // OR wraps in `{ result: { ... } }` / `{ context: { ... } }`.
+  const candidates: Array<Record<string, unknown>> = []
+  const collect = (v: unknown): void => {
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return
+    const o = v as Record<string, unknown>
+    candidates.push(o)
+    if (o['result']) collect(o['result'])
+    if (o['context']) collect(o['context'])
+    if (o['data']) collect(o['data'])
+  }
+  collect(data)
+
+  for (const o of candidates) {
+    const content = readString(o, ['content', 'body', 'text'])
+    if (typeof content === 'string') {
+      return {
+        repo: readString(o, ['repo', 'repository']) ?? repo,
+        path: readString(o, ['path', 'filePath']) ?? path,
+        content,
+        language: readString(o, ['language', 'lang']),
+        startLine: readNumber(o, ['startLine', 'start', 'lineStart']),
+        endLine: readNumber(o, ['endLine', 'end', 'lineEnd']),
+      }
+    }
+  }
+  return null
+}
+
+function parseImpactRows(
+  raw: unknown,
+  direction: 'upstream' | 'downstream',
+): GitnexusImpactRow[] {
+  const data = unwrap(raw)
+  if (!data) return []
+
+  const items: unknown[] = []
+  const collect = (v: unknown): void => {
+    if (Array.isArray(v)) {
+      items.push(...v)
+      return
+    }
+    if (!v || typeof v !== 'object') return
+    const o = v as Record<string, unknown>
+    if (Array.isArray(o['items'])) collect(o['items'])
+    if (Array.isArray(o['results'])) collect(o['results'])
+    if (Array.isArray(o['impact'])) collect(o['impact'])
+    if (Array.isArray(o['rows'])) collect(o['rows'])
+  }
+  collect(data)
+
+  const out: GitnexusImpactRow[] = []
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue
+    const o = item as Record<string, unknown>
+    const path = readString(o, ['path', 'filePath', 'file'])
+    if (!path) continue
+    out.push({
+      repo: readString(o, ['repo', 'repository']) ?? '',
+      path,
+      direction:
+        (readString(o, ['direction']) === 'upstream' ||
+        readString(o, ['direction']) === 'downstream'
+          ? (readString(o, ['direction']) as 'upstream' | 'downstream')
+          : direction),
+      depth: readNumber(o, ['depth']) ?? 0,
+      confidence:
+        (readString(o, ['confidence']) as
+          | 'high'
+          | 'medium'
+          | 'low'
+          | null) ?? null,
+      reason: readString(o, ['reason', 'why']) ?? 'gitnexus_impact hit',
+    })
+  }
+  return out
+}
+
+// ─── Field readers ───────────────────────────────────────────────────────
+
+function readString(
+  obj: Record<string, unknown>,
+  keys: readonly string[],
+): string | null {
+  for (const k of keys) {
+    const v = obj[k]
+    if (typeof v === 'string' && v.length > 0) return v
+  }
+  return null
+}
+
+function readNumber(
+  obj: Record<string, unknown>,
+  keys: readonly string[],
+): number | null {
+  for (const k of keys) {
+    const v = obj[k]
+    if (typeof v === 'number' && Number.isFinite(v)) return v
+    if (typeof v === 'string' && v.trim().length > 0) {
+      const n = Number(v)
+      if (Number.isFinite(n)) return n
+    }
+  }
+  return null
+}

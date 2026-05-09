@@ -8,6 +8,20 @@
       "when": 1778253258421,
       "tag": "0000_worried_miss_america",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778293984855,
+      "tag": "0001_slimy_lake",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778295630033,
+      "tag": "0002_striped_sue_storm",
+      "breakpoints": true
     }
   ]
 }

@@ -109,6 +109,9 @@ export async function testProvider(
       model: result.model,
       message: result.message,
       sample: result.sample,
+      ...(result.embeddingDim != null
+        ? { embeddingDim: result.embeddingDim }
+        : {}),
     }
   }
 

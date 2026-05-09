@@ -36,14 +36,25 @@ export type CloneRepoJob = z.infer<typeof cloneRepoJobSchema>
  *
  * `mode` is purely for UX — it's forwarded verbatim to the `repo.index.started`
  * SSE payload so the frontend can label the log banner ("Initial index…" vs
- * "Re-indexing…") and choose whether to add `-f/--force` to the gitnexus
- * invocation. No secret lives on the payload — indexing is a local-only
- * operation and the source tree is already on disk.
+ * "Re-indexing…"). It does NOT decide whether to force-rebuild. that's
+ * the `force` flag below.
+ *
+ * `force` (default `false`, `docs/ARCHITECTURE.md §10` D16/A5) — when `true`, the
+ * worker passes `-f` to `gitnexus analyze`, blowing away the existing
+ * graph + embeddings store and rebuilding from scratch. Default behaviour
+ * relies on gitnexus's incremental analyze, which only re-parses files
+ * whose content/mtime changed since the previous run. This is what every
+ * "Update index" click should hit; "Rebuild from scratch" is the explicit
+ * escape hatch (separate UI affordance, confirm dialog).
+ *
+ * No secret lives on the payload. indexing is a local-only operation and
+ * the source tree is already on disk.
  */
 export const indexRepoJobSchema = z
   .object({
     repoId: z.uuid(),
     mode: z.enum(['initial', 'reindex']),
+    force: z.boolean().default(false),
   })
   .strict()
 

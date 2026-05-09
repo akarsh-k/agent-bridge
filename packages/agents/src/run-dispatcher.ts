@@ -89,6 +89,7 @@ import {
 } from '@agent-bridge/shared'
 import type { EventBus } from '@agent-bridge/shared/event-bus'
 import { createRunRedactor, type RunRedactor } from './run-redactor.js'
+import { runWithInspectorContext } from './inspector/run-context.js'
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -314,7 +315,6 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
           },
         }
       : {}
-    const output = await built.agent.stream(prompt, streamOptions)
 
     // Mastra 1.28 returns `ReadableStream<ChunkType>` for
     // `.fullStream`. It implements async iteration natively.
@@ -323,9 +323,35 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
     let finishReason: string | null = null
     let errorThrown: { message: string; kind: RunErrorPayload['kind'] } | null =
       null
-    let lastUsage: RunFinishedPayload['usage'] | undefined = undefined
+    // No initializer here — `let X: T | undefined = undefined` narrows
+    // out of the closure boundary in TS's CFA (the post-closure read
+    // sees only `undefined`). Declaring without an initializer keeps
+    // the declared union type intact. semantically identical.
+    let lastUsage: RunFinishedPayload['usage'] | undefined
 
-    for await (const chunk of output.fullStream as AsyncIterable<unknown>) {
+    // Wrap the entire stream-iteration block in the inspector run
+    // context (`docs/ARCHITECTURE.md §10` Phase C C4). Mastra's tool-execute
+    // context exposes `agent.toolCallId` but not our app-level `runId`,
+    // so wrapper tools read `{db, eventBus, redactor, runId, …}` from
+    // AsyncLocalStorage instead. The dispatcher initiates the stream
+    // AND drains it inside the same `run(...)` block — async hooks
+    // propagate through `agent.stream`, the for-await loop, and any
+    // tool executes Mastra dispatches under the hood.
+    const builtAgent = built.agent
+    const runBatcher = batcher
+    await runWithInspectorContext(
+      {
+        db,
+        eventBus,
+        redactor,
+        runId,
+        streamId,
+        agentStreamId,
+        agentId,
+      },
+      async () => {
+        const output = await builtAgent.stream(prompt, streamOptions)
+        for await (const chunk of output.fullStream as AsyncIterable<unknown>) {
       const mapped = mapChunk(chunk, runId)
       if (!mapped) continue
 
@@ -353,7 +379,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
         // the durable history.
         await eventBus.publish(tokenEvent)
         await eventBus.publish({ ...tokenEvent, streamId: agentStreamId })
-        batcher.push(payload)
+        runBatcher.push(payload)
         continue
       }
 
@@ -410,7 +436,9 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
           data: mapped.data,
         },
       )
-    }
+        }
+      },
+    )
 
     // Drain the final token batch BEFORE publishing run.finished so a
     // subscriber reading events in order sees the last tokens first.

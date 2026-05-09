@@ -9,7 +9,7 @@
  * Source is **derived from the `stream_id` prefix** at response time —
  * `'run:'` → `'ui'`, `'bridge:'` → `'bridge'`. We don't store source
  * as a column because the prefix already encodes it (Phase 5 design
- * decision in `docs/PLAN.md`).
+ * decision in `docs/ARCHITECTURE.md`).
  *
  * The list-row shape deliberately TRUNCATES `inputPrompt` and
  * `outputSummary` to keep the response under a few hundred KB even

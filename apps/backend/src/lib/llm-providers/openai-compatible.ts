@@ -154,6 +154,7 @@ async function embeddingProbe(
       ? `embedding returned (${dim}-dim vector)`
       : 'embedding endpoint accepted the request but the response shape was unexpected',
     sample: null,
+    embeddingDim: dim,
   }
 }
 
@@ -228,15 +229,65 @@ function extractOpenAIChatText(payload: unknown): string | null {
   return null
 }
 
+/**
+ * Pull the embedding vector dimension out of whatever shape the
+ * upstream returned. Recognised inputs (in order of preference):
+ *
+ *   1. OpenAI standard: `{ data: [{ embedding: [number, …] }] }`
+ *   2. OpenAI-bare-array: `{ data: [[number, …]] }` (some llama.cpp builds)
+ *   3. `{ embedding: [number, …] }` (some local servers when single input)
+ *   4. `{ embeddings: [[number, …]] }` (Cohere / some self-hosted)
+ *   5. Bare `[[number, …]]` array
+ *
+ * Returns the length of the first numeric vector found. `null` only
+ * when nothing recognisable matches AND the payload doesn't look like
+ * an embedding response at all.
+ */
 function extractEmbeddingDim(payload: unknown): number | null {
+  // Bare top-level array of vectors.
+  if (Array.isArray(payload)) {
+    const first = payload[0]
+    if (Array.isArray(first) && first.length > 0 && typeof first[0] === 'number') {
+      return first.length
+    }
+    return null
+  }
   if (typeof payload !== 'object' || payload === null) return null
-  const { data } = payload as { data?: unknown }
-  if (!Array.isArray(data) || data.length === 0) return null
-  const first = data[0] as { embedding?: unknown } | null
-  if (!first || typeof first !== 'object') return null
-  const emb = first.embedding
-  if (!Array.isArray(emb) || emb.length === 0) return null
-  return emb.length
+  const obj = payload as Record<string, unknown>
+
+  // OpenAI standard + bare-array variants.
+  const data = obj['data']
+  if (Array.isArray(data) && data.length > 0) {
+    const first = data[0]
+    // Standard: { embedding: [...] }
+    if (first && typeof first === 'object' && !Array.isArray(first)) {
+      const emb = (first as { embedding?: unknown }).embedding
+      if (Array.isArray(emb) && emb.length > 0 && typeof emb[0] === 'number') {
+        return emb.length
+      }
+    }
+    // Bare-array: data: [[...]]
+    if (Array.isArray(first) && first.length > 0 && typeof first[0] === 'number') {
+      return first.length
+    }
+  }
+
+  // Single-input convenience: { embedding: [...] }
+  const emb = obj['embedding']
+  if (Array.isArray(emb) && emb.length > 0 && typeof emb[0] === 'number') {
+    return emb.length
+  }
+
+  // Cohere-ish: { embeddings: [[...]] }
+  const embs = obj['embeddings']
+  if (Array.isArray(embs) && embs.length > 0) {
+    const first = embs[0]
+    if (Array.isArray(first) && first.length > 0 && typeof first[0] === 'number') {
+      return first.length
+    }
+  }
+
+  return null
 }
 
 function countOpenAIModels(payload: unknown): number | null {

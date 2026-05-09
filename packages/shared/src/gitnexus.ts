@@ -122,6 +122,14 @@ export interface RunGitnexusOptions {
   readonly allowHostHome?: boolean
   readonly stdio?: 'inherit' | 'pipe' | 'ignore'
   readonly signal?: AbortSignal
+  /**
+   * Extra env vars layered on top of the sandbox baseline (`docs/ARCHITECTURE.md §10`
+   * Phase D D2). Used to forward `GITNEXUS_EMBEDDING_*` so gitnexus's
+   * embedder routes to the workspace's chosen embedding provider instead
+   * of the default local embedder. Caller is responsible for redacting
+   * any secret env values from logs (the shared `RunRedactor` pattern).
+   */
+  readonly env?: Record<string, string>
 }
 
 /**
@@ -138,6 +146,7 @@ export function runGitnexus(
     stdio = 'pipe',
     signal,
     fromModuleUrl,
+    env,
   } = options
   const { nodeBin, cliEntry } = resolveGitnexusCli(fromModuleUrl)
   return spawnSandboxed(nodeBin, [cliEntry, ...args], {
@@ -146,6 +155,7 @@ export function runGitnexus(
     stdio,
     signal,
     sandbox: 'default',
+    ...(env ? { env } : {}),
   })
 }
 

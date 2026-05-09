@@ -22,11 +22,10 @@ import { and, asc, eq } from 'drizzle-orm'
 import type { AgentBridgeDb } from '@agent-bridge/db'
 import { schema } from '@agent-bridge/db'
 import {
-  CODING_AGENT_SYSTEM_SKILL_VERSION,
-  loadCodingAgentSystemSkill,
-} from './coding-agent/system-skill.js'
-import { loadGitnexusLibrarySkills } from './coding-agent/gitnexus-library-skills.js'
-import { loadGitnexusToolDefinitions } from './system-tools.js'
+  INSPECTOR_SYSTEM_PROMPT_VERSION,
+  loadInspectorSystemPrompt,
+} from './inspector/system-prompt.js'
+import { inspectorWrapperNames } from '@agent-bridge/shared'
 
 // Known cap per model. The Configure-tab card shows a percentage of
 // this; absent entries fall back to "unknown" so the user sees a
@@ -178,6 +177,30 @@ export interface TokenEstimate {
 }
 
 /**
+ * Short, stable description per inspector wrapper for the budget card.
+ * The Mastra Agent's tool dict ships richer text (see
+ * `inspector/index.ts`); we only need approximate token weight here.
+ */
+function describeInspectorWrapper(name: string): string {
+  switch (name) {
+    case 'find_in_codebase':
+      return 'Hybrid keyword + semantic code search across attached repos. Returns mini-repo with files + chunks.'
+    case 'trace_flow':
+      return 'Walk the call/import graph from a starting anchor toward a goal. Returns mini-repo with graph_subset + chunks.'
+    case 'assess_change_impact':
+      return 'Compute blast radius for a proposed change (rename / remove / modify / add). Returns direct + transitive dependents and operator-curated cross-repo edges.'
+    case 'debug_help':
+      return 'Diagnose a bug from raw error text. Extracts file paths and symbols, finds suspect call sites with chunks.'
+    case 'understand_module':
+      return 'Explain a file or symbol — body + outgoing dependencies (depth ≤ 2).'
+    case 'list_repos':
+      return 'List the repositories attached to this agent (label, role, status, aliases).'
+    default:
+      return ''
+  }
+}
+
+/**
  * Compute the token breakdown for an agent's static payload — the
  * stuff that ships on every chat completion regardless of which
  * thread or message the user sends.
@@ -256,19 +279,19 @@ export async function estimateAgentTokens(
     }))
   const skillsTotal = skills.reduce((sum, s) => sum + s.tokens, 0)
 
-  // Coding-agent system skill. auto-appended in `composeInstructions`
-  // after the operator's skills. Same fail-silent contract as the
-  // gitnexus tool list below: a load failure (missing .md in
-  // `dist/src/coding-agent/`) gives 0 tokens and a null entry, which
-  // the budget card surfaces as a config gap. Skipping the auto-attach
-  // when an operator override is present is rare; we charge the full
-  // body here regardless to keep the estimator deterministic.
+  // Inspector toolkit's auto-appended system prompt (`docs/ARCHITECTURE.md §10`
+  // F1/F5). The Phase-B6 wrapper-tool architecture replaced the v1
+  // 860-line coding-agent skill with this ~70-line guide. Same fail-
+  // silent contract: a load failure (missing .md in
+  // `dist/src/inspector/`) gives a null entry, which the budget card
+  // surfaces as a config gap. The shared `TokenEstimateSystemSkill`
+  // type is kept for backwards-compat with the frontend's budget card.
   let systemSkill: TokenEstimateSystemSkill | null = null
   try {
-    const skillBody = await loadCodingAgentSystemSkill()
+    const skillBody = await loadInspectorSystemPrompt()
     systemSkill = {
-      name: 'Coding-agent toolkit guidance',
-      version: CODING_AGENT_SYSTEM_SKILL_VERSION,
+      name: 'Inspector toolkit',
+      version: INSPECTOR_SYSTEM_PROMPT_VERSION,
       tokens: tokenize(enc, skillBody),
     }
   } catch {
@@ -276,136 +299,33 @@ export async function estimateAgentTokens(
     // "0 tokens" to nudge the operator toward a rebuild.
   }
 
-  // GitNexus library skills. vendor-shipped from the npm package,
-  // auto-appended in `composeInstructions`. Same fail-silent contract:
-  // an empty list (loader couldn't resolve gitnexus) gives null;
-  // a non-empty list contributes the concatenated bodies + the
-  // section heading we render around them.
-  let gitnexusLibrarySkills: TokenEstimateGitnexusLibrarySkills | null = null
-  try {
-    const lib = await loadGitnexusLibrarySkills()
-    if (lib.skills.length > 0) {
-      // Mirror the rendered shape from `renderGitnexusLibrarySkills`
-      // so the count matches what the LLM will actually see.
-      const bodies = lib.skills.map((s) => `### ${s.name}\n\n${s.body}`)
-      const head =
-        '## GitNexus library skills\n\n' +
-        'The following skills are shipped inside the gitnexus npm package and ' +
-        'auto-attached here. They are written by gitnexus\'s authors to teach ' +
-        'an LLM how to call `gitnexus_*` tools effectively. Treat them as ' +
-        'authoritative for tool-call shapes and recipes when answering ' +
-        'questions that need code-graph evidence.'
-      const block = [head, ...bodies].join('\n\n')
-      gitnexusLibrarySkills = {
-        version: lib.version,
-        count: lib.skills.length,
-        tokens: tokenize(enc, block),
-      }
-    }
-  } catch {
-    /* leave null. budget card surfaces "library skills unavailable" */
-  }
+  // The v1 auto-attached blocks (gitnexus library skills, attached-
+  // repos inventory, repo-edges) are gone from the prompt under the
+  // wrapper-tool architecture (B6). Repos + edges now travel inside
+  // wrapper responses (`list_repos`, `assess_change_impact`) where
+  // they're actionable; library skills are dead weight without the
+  // direct gitnexus_* tool surface. Fields kept on the response shape
+  // for backwards-compat with the budget card; values stay `null`/`0`
+  // permanently (unused in the new prompt).
+  const gitnexusLibrarySkills: TokenEstimateGitnexusLibrarySkills | null = null
+  const attachedReposHint = 0
+  const repoEdgesHint = 0
+  void edgeRows // computed above for future use; intentionally unused now
 
-  // Attached-repos hint mirrors `appendGitnexusRepoHint`. Only counts
-  // when the agent has ≥1 ready repo (otherwise gitnexus doesn't
-  // mount and the hint isn't appended).
-  let attachedReposHint = 0
-  if (repoRows.length > 0) {
-    const lines = repoRows
-      .map((r) => {
-        const label = r.role?.trim() || r.remoteUrl
-        const head = `- ${label}  (${r.remoteUrl}#${r.branch})`
-        return r.description ? `${head} — ${r.description}` : head
-      })
-      .join('\n')
-    const block = `## Attached repositories (${repoRows.length})\n\n${lines}`
-    attachedReposHint = tokenize(enc, block)
-  }
-
-  // Repo edges hint mirrors `appendRepoEdges`. Only when ≥2 repos AND
-  // ≥1 edge.
-  let repoEdgesHint = 0
-  if (repoRows.length >= 2 && edgeRows.length > 0) {
-    const lines = edgeRows
-      .map((e) => `- ${e.fromRepoId} ${e.connector} ${e.toRepoId}`)
-      .join('\n')
-    repoEdgesHint = tokenize(enc, `## Repo relationships\n\n${lines}`)
-  }
-
-  // Tools — gitnexus first (auto-mounted when ready repos exist).
-  // Each tool's full JSON Schema (name + description + parameters)
-  // ships on every call. We approximate by serializing the same
-  // `{ name, description, parameters }` shape Mastra/AI SDK would
-  // bake into the request body.
+  // Tools — the inspector wrapper toolkit. Six tools registered per
+  // agent (five when no repos are attached → only `list_repos`).
+  // We don't have access to the wrappers' Zod input schemas here
+  // without going through `mountInspectorTools`, so we approximate
+  // with name + a one-line description + the same 60-token wrapper
+  // overhead used in the v1 estimator. Slight undercount; the budget
+  // card flags this in the help text.
   const tools: TokenEstimateTool[] = []
-  if (repoRows.length > 0) {
-    try {
-      const result = await loadGitnexusToolDefinitions()
-      if (result.ok) {
-        for (const t of result.tools) {
-          // Approximate the JSON Schema overhead by stringifying the
-          // tool definition. Real OpenAI requests wrap each tool in
-          // `{type: 'function', function: { name, description,
-          // parameters: {...} }}` — the parameters are the bulk; for
-          // gitnexus tools we don't have the schema here, so we count
-          // name + description and add a flat 60-token overhead for
-          // the JSON Schema wrapper. This undercounts slightly; the
-          // budget card flags this in the help text.
-          const text = JSON.stringify({
-            name: t.name,
-            description: t.description,
-          })
-          const tokens = tokenize(enc, text) + 60
-          tools.push({ name: t.name, tokens, source: 'gitnexus' })
-        }
-      }
-    } catch {
-      // gitnexus unreachable — skip silently. The budget card will
-      // show 0 gitnexus tokens; it's more honest to undercount than
-      // to throw and block the whole estimate.
-    }
-  }
-
-  // Wiki tools. auto-mounted when at least one attached repo has
-  // `wikiStatus='ready'`. Two tools with known descriptions; we
-  // count them with the same name+description+wrapper formula
-  // gitnexus uses above. Fail-silent if the count query throws -
-  // same rationale as gitnexus.
-  try {
-    const wikiReady = await db
-      .select({ id: schema.repos.id })
-      .from(schema.agentRepos)
-      .innerJoin(schema.repos, eq(schema.agentRepos.repoId, schema.repos.id))
-      .where(
-        and(
-          eq(schema.agentRepos.agentId, agentId),
-          eq(schema.repos.wikiStatus, 'ready'),
-        ),
-      )
-    if (wikiReady.length > 0) {
-      const wikiToolDefs: Array<{ name: string; description: string }> = [
-        {
-          name: 'gitnexus_wiki_list_pages',
-          description:
-            'List the pages in a repo\'s pre-generated wiki. narrative summaries written by `gitnexus wiki`. Cheaper than fanning out 5+ graph queries when you need a high-level "how does X work" overview. Pass the repo\'s friendly label (role / alias / URL tail). Returns an ordered tree.',
-        },
-        {
-          name: 'gitnexus_wiki_get_page',
-          description:
-            'Read one page of a repo\'s pre-generated wiki. Use AFTER `gitnexus_wiki_list_pages` told you which slug to fetch. Returns the markdown body. The wiki is a snapshot. verify any concrete file/line claim against `gitnexus_context` before quoting it.',
-        },
-      ]
-      for (const t of wikiToolDefs) {
-        const text = JSON.stringify({
-          name: t.name,
-          description: t.description,
-        })
-        const tokens = tokenize(enc, text) + 60
-        tools.push({ name: t.name, tokens, source: 'gitnexus' })
-      }
-    }
-  } catch {
-    /* skip silently. same fail-open as gitnexus above */
+  for (const name of inspectorWrapperNames) {
+    if (name !== 'list_repos' && repoRows.length === 0) continue
+    const description = describeInspectorWrapper(name)
+    const text = JSON.stringify({ name, description })
+    const tokens = tokenize(enc, text) + 60
+    tools.push({ name, tokens, source: 'gitnexus' })
   }
 
   const toolsTotal = tools.reduce((sum, t) => sum + t.tokens, 0)
@@ -414,9 +334,6 @@ export async function estimateAgentTokens(
     systemPromptTokens +
     skillsTotal +
     (systemSkill?.tokens ?? 0) +
-    (gitnexusLibrarySkills?.tokens ?? 0) +
-    attachedReposHint +
-    repoEdgesHint +
     toolsTotal
 
   return {

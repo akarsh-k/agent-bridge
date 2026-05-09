@@ -15,6 +15,7 @@ import { zValidator } from '@hono/zod-validator'
 import { and, asc, eq } from 'drizzle-orm'
 import { Hono } from 'hono'
 import {
+  PER_AGENT_SKILL_BUDGET_BYTES,
   skillAgentParamSchema,
   skillCreateInputSchema,
   skillItemParamSchema,
@@ -23,6 +24,7 @@ import {
   type SkillResponse,
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
+import type { Context } from 'hono'
 import { getDb } from '../db.js'
 import { publishAgentConfig } from '../lib/agent-events.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
@@ -52,6 +54,71 @@ async function agentExists(agentId: string): Promise<boolean> {
   return Boolean(row)
 }
 
+/**
+ * Per-agent skill body budget enforcement (`docs/ARCHITECTURE.md §10` Phase F4).
+ *
+ * Sums `markdownBody.length` across the agent's existing skills,
+ * optionally excluding one skill id (the one being PATCHed — its old
+ * body is being replaced). Returns a `Overflow` handle when adding
+ * `incomingBytes` would exceed `PER_AGENT_SKILL_BUDGET_BYTES`; null
+ * when there's room.
+ *
+ * Race-safe enough for a single-operator app: between this check and
+ * the INSERT/UPDATE, another concurrent skill add could push us over,
+ * but that requires two operators clicking save inside the same
+ * couple of ms. Postgres-level enforcement (CHECK constraint over a
+ * subquery) is non-trivial; the application-level check is the right
+ * trade-off.
+ */
+async function wouldExceedAgentSkillBudget(
+  agentId: string,
+  incomingBytes: number,
+  excludeSkillId: string | null,
+): Promise<Overflow | null> {
+  const { db } = getDb()
+  const rows = await db
+    .select({
+      id: schema.skills.id,
+      bytes: schema.skills.markdownBody,
+    })
+    .from(schema.skills)
+    .where(eq(schema.skills.agentId, agentId))
+
+  let existing = 0
+  for (const r of rows) {
+    if (excludeSkillId && r.id === excludeSkillId) continue
+    existing += r.bytes.length
+  }
+  const total = existing + incomingBytes
+  if (total <= PER_AGENT_SKILL_BUDGET_BYTES) return null
+  return new Overflow(existing, incomingBytes, total)
+}
+
+class Overflow {
+  // Frontend's tsconfig sets `erasableSyntaxOnly: true`, which forbids
+  // TypeScript parameter properties (`constructor(private readonly x)`).
+  // Explicit field declarations keep monorepo typecheck clean even from
+  // backend code.
+  private readonly existing: number
+  private readonly incoming: number
+  private readonly total: number
+  constructor(existing: number, incoming: number, total: number) {
+    this.existing = existing
+    this.incoming = incoming
+    this.total = total
+  }
+  toResponse(c: Context) {
+    return httpError(c, {
+      code: 'validation_failed',
+      message:
+        `Per-agent skill body budget exceeded: ` +
+        `existing ${this.existing} bytes + incoming ${this.incoming} bytes = ${this.total} bytes ` +
+        `> cap ${PER_AGENT_SKILL_BUDGET_BYTES} bytes. ` +
+        `Trim or remove an existing skill before adding more.`,
+    })
+  }
+}
+
 export const skillsRouter = new Hono()
   // ─── POST /api/agents/:agentId/skills ────────────────────────────────────
   .post(
@@ -75,6 +142,18 @@ export const skillsRouter = new Hono()
           message: `agent ${agentId} not found`,
         })
       }
+
+      // Phase F4: per-agent total skill body cap. Sum the existing
+      // skills' bytes against the incoming body. exceeding the cap
+      // returns 422 with a clear message rather than letting it land
+      // and pollute the system prompt of every chat turn.
+      const incomingBytes = (body.markdownBody ?? '').length
+      const overflow = await wouldExceedAgentSkillBudget(
+        agentId,
+        incomingBytes,
+        null,
+      )
+      if (overflow) return overflow.toResponse(c)
 
       try {
         const [row] = await db
@@ -165,6 +244,20 @@ export const skillsRouter = new Hono()
       if ('name' in body) patch.name = body.name
       if ('markdownBody' in body) patch.markdownBody = body.markdownBody
       if ('position' in body) patch.position = body.position
+
+      // Phase F4: per-agent total cap on PATCH too. We exclude the
+      // skill being updated from the existing-bytes sum (its old body
+      // is being replaced). PATCHes that don't touch markdownBody skip
+      // the check entirely.
+      if ('markdownBody' in body) {
+        const incomingBytes = (body.markdownBody ?? '').length
+        const overflow = await wouldExceedAgentSkillBudget(
+          agentId,
+          incomingBytes,
+          id,
+        )
+        if (overflow) return overflow.toResponse(c)
+      }
 
       try {
         // Double-filter on (id, agentId) enforces cross-agent isolation.

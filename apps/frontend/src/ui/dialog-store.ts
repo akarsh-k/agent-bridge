@@ -24,7 +24,7 @@ export interface ConfirmRequest {
   /**
    * If set, the dialog renders an Input field and the confirm
    * button stays disabled until the user types this exact string.
-   * Used for high-blast-radius deletes (Stripe-style).
+   * Used for high-blast-radius deletes.
    */
   confirmText?: string
   /**

@@ -33,8 +33,8 @@
  *     `.env` from the repo root via `loadRootDotenv` — so the IDE only
  *     needs to know the command + args, never any secrets. Including
  *     them in the response would be a config leak risk.
- *   - Auth tokens. Stdio = "trust the parent process" (PID-auth) for
- *     Phase 5d; HTTP transport with HMAC/bearer is deferred.
+ *   - Auth tokens. Stdio = "trust the parent process" (PID-auth);
+ *     HTTP transport with HMAC/bearer is deferred.
  *
  * Dev vs prod:
  *   - When `NODE_ENV !== 'production'` we point at `tsx`'s CLI module

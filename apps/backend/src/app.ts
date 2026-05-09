@@ -58,7 +58,7 @@ const requestLogger: MiddlewareHandler = env.isProd
 // configJson can reach hundreds of KB across many rows), so we route
 // the larger cap through that one path and keep the conservative
 // 64 KiB cap for everything else. See `1c-skills-tools` lesson in
-// `docs/PLAN.md` — the cap is set defensively so per-field Zod errors
+// `docs/ARCHITECTURE.md` — the cap is set defensively so per-field Zod errors
 // surface before the global 413 ever fires.
 const SMALL_BODY_LIMIT = 64 * 1024
 const IMPORT_BODY_LIMIT = 4 * 1024 * 1024

@@ -49,6 +49,7 @@
 import { zValidator } from '@hono/zod-validator'
 import { Hono } from 'hono'
 import {
+  indexRepoBodySchema,
   repoIdParamSchema,
   repoStreamId,
   repoWikiInputSchema,
@@ -149,8 +150,18 @@ export const repoJobsRouter = new Hono().post(
       if (!result.success) return httpValidationError(c, result.error)
       return
     }),
+    // Body is optional. legacy callers (e.g. existing UI before A5 lands the
+    // "Rebuild from scratch" affordance) post no body and get the default
+    // incremental behaviour. Explicit `force: true` opts into the
+    // full-rebuild path.
+    zValidator('json', indexRepoBodySchema, (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    }),
     async (c) => {
       const { id } = c.req.valid('param')
+      const body = c.req.valid('json')
+      const force = body.force ?? false
       const handle = getDb()
 
       // Read-first so we can emit a precise 404 vs 409 message. The 409
@@ -192,12 +203,14 @@ export const repoJobsRouter = new Hono().post(
       // auto-chains). Here we're a user-initiated re-index of a repo that
       // already had a prior clone, so always `reindex` — even if the prior
       // state was 'error' (user's mental model is "try again", not "first
-      // time"), the previous summary row is still there and `--force` on
-      // analyze will rebuild cleanly.
+      // time"). `force` is the body flag (D16/A5): default `false` runs
+      // gitnexus's incremental analyze; `true` is the explicit
+      // "Rebuild from scratch" gesture and adds `-f` to gitnexus.
       try {
         const { jobId } = await enqueueIndexRepo({
           repoId: updated.id,
           mode: 'reindex',
+          force,
         })
         return c.json(
           {
