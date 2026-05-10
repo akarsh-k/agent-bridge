@@ -441,7 +441,7 @@ Everything else. Mastra has no opinion or schema here, so we design freely:
 | `mcp_connections`, `agent_mcp_tools` | Mastra consumes MCP tools at runtime, not DB  |
 | `llm_providers` (incl. `embedding_dims`) | Mastra providers are instantiated, not stored |
 | `bridge_tools`                       | Operator-authored IDE-facing tools (§8.2)     |
-| `runs` (incl. `minirepo_json`, `callsite_json`) | UI-facing audit log + D17′ envelope cache + per-run callsite |
+| `runs` (incl. `minirepo_json` jsonb) | UI-facing audit log + D17′ envelope cache     |
 | `run_events`                         | UI-facing audit log; `mastra.traces` is OTel  |
 
 A few of these columns have non-obvious shapes worth calling out
@@ -465,14 +465,6 @@ inline:
   inside one transaction with a 14 KiB oldest-eviction policy
   (see §10.4). Used by both the chat-tab tool-call cards and the
   `inspect_codebase` bridge envelope so they cannot drift.
-- **`runs.callsite_json`** — jsonb, captured at dispatch time.
-  Carries `{client, agent, tool, repo?, started_at}` (see
-  `Callsite` in `@agent-bridge/shared/dtos/runs`). Bridge handlers
-  read the negotiated MCP `clientInfo` for `client.name` (cursor /
-  claude-code / codex); the chat backend stamps `'web-chat'`.
-  Persistence-only — not injected into the LLM's prompt stack
-  (see §10.7 for the rationale on why an earlier injection
-  approach was reverted).
 
 **`runs` vs `mastra.traces`.** Both exist and that's deliberate. Our `runs`
 carries UI semantics (`stream_id` for SSE, `input_prompt`, user-facing
@@ -1108,22 +1100,6 @@ authored their template on purpose).
 
 `ok: true` always — chit-chat is a valid response and the IDE LLM
 decides what to do with it.
-
-**Per-run callsite** — every run (chat or bridge) persists a
-`Callsite` payload on `runs.callsite_json` capturing
-`{client, agent, tool, repo?, started_at}`. The bridge handlers read
-the IDE's negotiated MCP `clientInfo` for the `client` field; the
-chat backend stamps `client.name = 'web-chat'`. The /logs UI surfaces
-this so operators can see "called from Cursor on `<repo>`" per row.
-
-The dispatcher does NOT inject the callsite into the LLM's prompt
-stack: an earlier prepend-as-markdown approach echoed the block back
-to users (model treated it as user content) and triggered template
-errors on local models with strict Jinja chat templates (Qwen,
-certain Mistral variants). Per-run runtime context that's both
-invisible to users AND safe across local-model templates needs a
-deeper Mastra-side change; for now callsite is persistence-only and
-operator skills can't reference it at runtime.
 
 ### 10.8 Auto-attached system prompt
 

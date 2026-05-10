@@ -572,23 +572,6 @@ export const runs = pgTable(
      * semantics for IDE consumers.
      */
     minirepoJson: jsonb('minirepo_json'),
-    /**
-     * Captured call-site context for this run (`docs/ARCHITECTURE.md`
-     * §10 — per-agent inspector flag rollout). Always-on; populated at
-     * dispatch time by the bridge handler (for IDE-originated runs)
-     * or the chat backend (for web-chat runs). Surfaces:
-     *   - which MCP client called (cursor / claude-code / codex / web-chat / …)
-     *   - which agent + which tool (inspect_codebase / ask_agent /
-     *     operator-authored bridge_tools name)
-     *   - the repo hints the IDE LLM passed (when applicable)
-     *   - run start timestamp
-     * Used by `composeInstructions` to inject a `## Callsite` system
-     * message at the top of every run's message stack so operator
-     * skills can reference it. Persisted here for the /logs UI to
-     * render "called from Cursor on ecommerce-frontend" per row.
-     * The shape mirrors `Callsite` in `@agent-bridge/shared/dtos/runs`.
-     */
-    callsiteJson: jsonb('callsite_json'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

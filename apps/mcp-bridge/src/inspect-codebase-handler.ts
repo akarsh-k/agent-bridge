@@ -30,22 +30,10 @@ import { eq } from 'drizzle-orm'
 
 import { dispatchRun } from '@agent-bridge/agents'
 import { runsRepo, schema, type AgentBridgeDb } from '@agent-bridge/db'
-import { bridgeStreamId, type Callsite } from '@agent-bridge/shared'
+import { bridgeStreamId } from '@agent-bridge/shared'
 import type { EventBus } from '@agent-bridge/shared/event-bus'
 
 // ─── Public surface ──────────────────────────────────────────────────────
-
-/**
- * Negotiated `clientInfo` from the MCP `initialize` handshake, captured
- * once at session start by the bridge process. Surfaced through
- * `BridgeContext.getClientInfo()` so each handler can stamp the
- * captured identity onto its `Callsite` without the SDK reaching into
- * its internals from multiple files.
- */
-export interface IdeClientInfo {
-  readonly name: string
-  readonly version: string | null
-}
 
 export interface BridgeContext {
   readonly db: AgentBridgeDb
@@ -56,13 +44,6 @@ export interface BridgeContext {
    * entrypoint.
    */
   readonly threadId: string
-  /**
-   * Returns the IDE's negotiated MCP `clientInfo` (name + version) or
-   * `null` if the handshake hasn't completed yet (defensive — tool
-   * calls aren't allowed before initialize lands). Read lazily so
-   * late-binding works if the IDE re-initializes.
-   */
-  readonly getClientInfo: () => IdeClientInfo | null
 }
 
 export interface AgentRecord {
@@ -144,19 +125,11 @@ export async function executeInspectCodebase(
   const runId = randomUUID()
   const streamId = bridgeStreamId(runId)
 
-  const callsite = buildCallsite({
-    clientInfo: ctx.getClientInfo(),
-    agent,
-    toolName: 'inspect_codebase',
-    rawArgs,
-  })
-
   await runsRepo.createRun(ctx.db, {
     id: runId,
     agentId: agent.id,
     inputPrompt: prompt,
     streamId,
-    callsite,
   })
 
   try {
@@ -168,7 +141,6 @@ export async function executeInspectCodebase(
       streamId,
       prompt,
       threadId: ctx.threadId,
-      callsite,
     })
   } catch (err) {
     return mcpError(err instanceof Error ? err.message : 'Bridge dispatch failed')
@@ -263,20 +235,12 @@ export async function executePhase7Tool(
   const runId = randomUUID()
   const streamId = bridgeStreamId(runId)
 
-  const callsite = buildCallsite({
-    clientInfo: ctx.getClientInfo(),
-    agent,
-    toolName: bridgeTool.name,
-    rawArgs,
-  })
-
   await runsRepo.createRun(ctx.db, {
     id: runId,
     agentId: agent.id,
     inputPrompt: prompt,
     streamId,
     bridgeToolName: bridgeTool.name,
-    callsite,
   })
 
   try {
@@ -288,7 +252,6 @@ export async function executePhase7Tool(
       streamId,
       prompt,
       threadId: ctx.threadId,
-      callsite,
     })
   } catch (err) {
     return mcpError(err instanceof Error ? err.message : 'Bridge dispatch failed')
@@ -326,65 +289,6 @@ interface WireEnvelope {
   readonly mini_repos: readonly unknown[]
   readonly prose_summary?: string
   readonly warnings: readonly string[]
-}
-
-/**
- * Assemble a `Callsite` from the bridge's per-call inputs. Used by
- * `executeInspectCodebase`, `executePhase7Tool`, and exported so
- * `executeAskAgent` (in its own file) can reuse the exact same shape.
- *
- * `repo` is populated only when at least one repo hint was in `rawArgs`
- * — for `ask_agent` the hint object is empty so this returns `null`,
- * which is honest about the tool not being repo-aware. For
- * `inspect_codebase` the IDE LLM typically passes `remote_url` +
- * `branch` + `local_folder` so this is rich.
- */
-export function buildCallsite(input: {
-  readonly clientInfo: IdeClientInfo | null
-  readonly agent: AgentRecord
-  readonly toolName: string
-  readonly rawArgs: Record<string, unknown>
-}): Callsite {
-  const { clientInfo, agent, toolName, rawArgs } = input
-  const repo = extractRepoCallsite(rawArgs)
-  return {
-    client: clientInfo
-      ? {
-          name: clientInfo.name,
-          ...(clientInfo.version ? { version: clientInfo.version } : {}),
-        }
-      : { name: 'unknown-mcp-client' },
-    agent: { slug: agent.slug, name: agent.name },
-    tool: { name: toolName },
-    ...(repo ? { repo } : {}),
-    started_at: new Date().toISOString(),
-  }
-}
-
-function extractRepoCallsite(
-  rawArgs: Record<string, unknown>,
-): Callsite['repo'] | null {
-  const label = stringArg(rawArgs, 'repo_hint')
-  const remote_url = stringArg(rawArgs, 'remote_url')
-  const branch = stringArg(rawArgs, 'branch')
-  const local_folder = stringArg(rawArgs, 'local_folder')
-  if (!label && !remote_url && !branch && !local_folder) return null
-  return {
-    ...(label ? { label } : {}),
-    ...(remote_url ? { remote_url } : {}),
-    ...(branch ? { branch } : {}),
-    ...(local_folder ? { local_folder } : {}),
-  }
-}
-
-function stringArg(
-  rawArgs: Record<string, unknown>,
-  key: string,
-): string | null {
-  const v = rawArgs[key]
-  if (typeof v !== 'string') return null
-  const trimmed = v.trim()
-  return trimmed.length > 0 ? trimmed : null
 }
 
 function formatHintLine(rawArgs: Record<string, unknown>): string {
