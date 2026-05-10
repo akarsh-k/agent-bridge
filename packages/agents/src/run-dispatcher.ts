@@ -361,6 +361,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
       currentStepIndex: -1,
       currentStepStartedAt: 0,
       tokenIndex: 0,
+      pendingReasoning: '',
     }
 
     // Wrap the entire stream-iteration block in the inspector run
@@ -658,6 +659,16 @@ interface MapChunkState {
    *  the matching `run.model.result`. 0 before the first step. */
   currentStepStartedAt: number
   tokenIndex: number
+  /**
+   * Reasoning text accumulated across `reasoning-delta` chunks within
+   * the current step. Reset to '' on each `step-start`; copied into
+   * the `reasoning` field on the next `run.model.result`. Reasoning-
+   * capable models (Qwen3, DeepSeek R1, o1) emit chain-of-thought as
+   * a separate chunk stream; without this, the content is silently
+   * dropped while the wrapper tokens (`<think>` / `</think>`) leak
+   * into the text stream and look like empty blocks in the chat UI.
+   */
+  pendingReasoning: string
 }
 
 /**
@@ -706,6 +717,10 @@ function mapChunk(
       state.currentStepIndex =
         explicit !== null ? explicit : state.currentStepIndex + 1
       state.currentStepStartedAt = ts
+      // Drop any reasoning carried over from a prior step. Reasoning is
+      // per-step; if the next step doesn't emit any, the model.result
+      // for it should report `reasoning: null`, not the previous step's.
+      state.pendingReasoning = ''
       return {
         kind: 'run.step.started',
         ts,
@@ -716,6 +731,25 @@ function mapChunk(
         } satisfies RunStepStartedPayload,
       }
     }
+    case 'reasoning-delta': {
+      // Accumulate Mastra's per-token reasoning stream into MapState.
+      // The matching `run.model.result` reads this on `step-finish` and
+      // surfaces it as `reasoning` so /logs can show the model's chain
+      // of thought. No event emitted here — the deltas are observability,
+      // not first-class lifecycle. The chat tab strips the `<think>`
+      // wrappers from the visible text stream separately.
+      const text = stringOr(payload['text'], '')
+      if (text) state.pendingReasoning += text
+      return null
+    }
+    case 'reasoning-start':
+    case 'reasoning-end':
+    case 'reasoning-signature':
+    case 'redacted-reasoning':
+      // Companions to `reasoning-delta` — boundary markers + signed
+      // attestations from providers like Anthropic. Swallow silently;
+      // they don't carry text we need to surface.
+      return null
     case 'step-finish': {
       return {
         kind: 'run.step.finished',
@@ -865,7 +899,16 @@ function mapChunkToModelEvent(
       const toolCalls = Array.isArray(payload['toolCalls'])
         ? (payload['toolCalls'] as ReadonlyArray<unknown>)
         : []
-      const reasoning = stringOr(payload['reasoning'], null)
+      // Reasoning comes from MapState (accumulated across `reasoning-
+      // delta` chunks during this step), NOT from the step-finish
+      // payload — Mastra streams reasoning separately and step-finish
+      // doesn't carry it. Fall back to `payload['reasoning']` for any
+      // future provider that does surface it on step-finish, then to
+      // null when neither has it.
+      const reasoning =
+        state.pendingReasoning.length > 0
+          ? state.pendingReasoning
+          : stringOr(payload['reasoning'], null)
       const response = payload['response'] ?? null
       const durationMs =
         state.currentStepStartedAt > 0

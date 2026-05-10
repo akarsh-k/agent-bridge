@@ -757,14 +757,41 @@ function AssistantBubble({ msg }: { msg: ChatMessage }) {
       </div>
     )
   }
+  // Strip reasoning-model wrapper tags from the rendered text. Qwen3
+  // (and similar reasoning-capable local models) emit `<think>…</think>`
+  // around their chain-of-thought; Mastra routes the inner text into a
+  // `reasoning-*` chunk stream while the literal wrapper tokens leak
+  // into the regular text-delta stream, leaving us with empty wrappers
+  // in `msg.text`. Strip at render time only — `runs.output_summary`
+  // keeps the raw stream so /logs preserves the debug signal, and
+  // /logs's run.model.result event captures the actual reasoning text
+  // separately (dispatcher handles `reasoning-*` chunks).
+  const visibleText = stripThinkBlocks(msg.text)
   return (
     <div className="ab-msg-bubble ab-msg-bubble-md">
-      <Markdown source={msg.text} />
+      <Markdown source={visibleText} />
       {msg.status === 'streaming' && (
         <span style={{ opacity: 0.5 }}> ▍</span>
       )}
     </div>
   )
+}
+
+/**
+ * Remove `<think>...</think>` blocks (the wrapper Qwen3-class reasoning
+ * models emit around chain-of-thought). Handles empty wrappers (the
+ * common case — content lives in `reasoning-*` chunks the dispatcher
+ * routes elsewhere), multiline content, and multiple blocks per
+ * message. Collapses any leftover blank-line runs so the chat bubble
+ * doesn't end up with three blank lines where the reasoning block was.
+ *
+ * Conservative regex — only matches the exact `<think>` / `</think>`
+ * pair (case-sensitive, no attributes). Other HTML-ish content the
+ * model might emit passes through to Markdown unchanged.
+ */
+function stripThinkBlocks(text: string): string {
+  const stripped = text.replace(/<think>[\s\S]*?<\/think>/g, '')
+  return stripped.replace(/\n{3,}/g, '\n\n').trim()
 }
 
 function ThreadRail({

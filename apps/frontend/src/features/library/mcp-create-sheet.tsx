@@ -2,7 +2,7 @@
  * "Connect MCP" side-sheet. Stdio + http + sse transports.
  */
 
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ClipboardEvent } from 'react'
 import {
   mcpConnectionCreateInputSchema,
   mcpTransports,
@@ -58,10 +58,16 @@ function McpCreateForm({
     allowHostHome
   const guardedClose = useDirtyClose(dirty && !busy, onClose)
 
+  // Accept either format: one-arg-per-line (the textarea convention)
+  // OR a JSON string array — `["-y", "mcp-remote", "https://…"]` —
+  // which is what every IDE config (Cursor `mcp.json`, Claude Desktop,
+  // etc.) ships. Operators copy from there 90% of the time, so the
+  // form handles both rather than forcing them to reformat.
   const submit = async () => {
     setErr(null)
     const argsJson = isStdio
-      ? argsRaw
+      ? parseJsonStringArray(argsRaw) ??
+        argsRaw
           .split('\n')
           .map((l) => l.trim())
           .filter(Boolean)
@@ -153,8 +159,26 @@ function McpCreateForm({
               className="ab-textarea ab-mono"
               value={argsRaw}
               onChange={(e) => setArgsRaw(e.target.value)}
-              placeholder="--db-url\npostgres://…"
+              onPaste={(e: ClipboardEvent<HTMLTextAreaElement>) => {
+                // If the operator pasted a full JSON string array
+                // (`["-y", "mcp-remote", …]` — what IDE configs ship),
+                // expand it to one-arg-per-line in the textarea so what
+                // they see matches what we'll send.
+                const pasted = e.clipboardData.getData('text')
+                const arr = parseJsonStringArray(pasted)
+                if (arr === null) return // let the default paste run
+                e.preventDefault()
+                setArgsRaw(arr.join('\n'))
+              }}
+              placeholder={'--db-url\npostgres://…'}
             />
+            <span className="ab-field-help">
+              Or paste a JSON array like{' '}
+              <code className="ab-mono">
+                {'["-y", "mcp-remote", "https://…"]'}
+              </code>{' '}
+              — we'll split it for you.
+            </span>
           </div>
           <div className="ab-field">
             <label
@@ -218,4 +242,29 @@ export function McpCreateSheet({
   return (
     <McpCreateForm key={openCount} onClose={onClose} onCreated={onCreated} />
   )
+}
+
+/**
+ * Parse a textarea string as a JSON array of strings, the format every
+ * IDE config (Cursor `mcp.json`, Claude Desktop, etc.) uses for stdio
+ * server `args`. Returns the parsed array on a clean match; `null`
+ * otherwise so the caller can fall back to the line-split convention.
+ *
+ * Strict on both ends: requires the trimmed content to start with `[`
+ * and end with `]` AND parse as an array AND have every element be a
+ * string. Anything else (single bracket, mixed types, malformed JSON)
+ * falls through so partial typed input doesn't get silently mangled.
+ */
+function parseJsonStringArray(raw: string): string[] | null {
+  const trimmed = raw.trim()
+  if (!trimmed.startsWith('[') || !trimmed.endsWith(']')) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    return null
+  }
+  if (!Array.isArray(parsed)) return null
+  if (!parsed.every((x) => typeof x === 'string')) return null
+  return parsed as string[]
 }
