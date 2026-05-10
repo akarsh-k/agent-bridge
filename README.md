@@ -1,6 +1,6 @@
 # Agent Bridge
 
-**A local-first agent workbench and MCP bridge for IDE coding agents.**
+**A local-first agent workbench and MCP bridge that gives IDE coding agents grounded codebase research before they edit.**
 
 Agent Bridge started from a simple idea: coding agents are good at editing
 code, but they often do weak research before they act.
@@ -11,7 +11,8 @@ search. That works for small tasks, but it breaks down in real applications
 where behavior crosses repo boundaries: frontend → backend, shared types →
 generated clients, service → worker, schema → tests.
 
-Agent Bridge gives those IDE agents a better research path over MCP.
+Agent Bridge gives those IDE agents a better way to research your
+codebase over MCP before they edit.
 
 It runs locally, indexes the repos you attach, understands the edges
 between them, and exposes agents that your IDE can call before making
@@ -19,11 +20,10 @@ code changes. The coding agent still writes the patch. Agent Bridge
 supplies grounded, structured evidence so the patch is based on the real
 shape of your codebase instead of a shallow grep loop.
 
-Agent Bridge is local-first, not local-only; sidecar-first, not
-sidecar-only. Its primary use case is acting as a local research sidecar
-for IDE coding agents, but you can also create blank agents, attach
-skills, attach MCP tools, configure memory and model providers, and
-expose those agents through the same MCP bridge.
+Its primary use case is acting as a local research sidecar for IDE
+coding agents, but you can also create blank agents, attach skills,
+attach MCP tools, configure memory and model providers, and expose
+those agents through the same MCP bridge.
 
 > **License:** Source-available under
 > [PolyForm Noncommercial 1.0.0](LICENSE). Free for personal, research,
@@ -32,13 +32,13 @@ expose those agents through the same MCP bridge.
 
 ## Built on open-source tooling
 
-Agent Bridge is built on open-source tools and standards:
+Agent Bridge is built on open-source tools and open standards:
 
 - **Mastra** powers the agent runtime, memory, model abstraction, and
   tool execution layer.
 - **GitNexus** powers codebase indexing, graph context, embeddings, and
   code inspection.
-- **MCP** is the bridge between IDE coding agents and Agent Bridge.
+- **MCP** is the protocol used to bridge IDE coding agents and Agent Bridge.
 - **Postgres, pgvector, and Redis** provide local storage, vector search,
   queues, events, and run history.
 
@@ -84,7 +84,7 @@ main modes.
 Coding-helper agents are designed to help Cursor, Claude Code, Codex,
 and other IDE agents research your codebase before making changes.
 
-These agents attach repos, use GitNexus-backed graph and embedding
+These agents can attach repos, use GitNexus-backed graph and embedding
 context, follow operator-defined repo edges, and expose code-inspection
 tools through the MCP bridge. For each coding-helper agent, the bridge
 exposes:
@@ -113,7 +113,8 @@ the agent's behavior, attach the tools it should use, and make it
 callable from your IDE or any MCP-compatible client.
 
 So Agent Bridge is both a research sidecar for coding agents *and* a
-local-first platform for building custom MCP-exposed agents.
+local-first platform for building custom MCP-exposed agents — it's
+local-first, not local-only; sidecar-first, not sidecar-only.
 
 ## Local LLMs and model usage
 
@@ -137,7 +138,9 @@ reasoning, but it changes the operating model:
 
 In short: Agent Bridge is local-first at the application and data
 layer, and local-LLM-friendly at the model layer. External APIs are
-optional.
+optional. This lets you choose the trade-off you want: local privacy
+and lower token usage with local models, or stronger hosted reasoning
+with external provider costs.
 
 ## Example questions
 
