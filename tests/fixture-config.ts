@@ -104,6 +104,27 @@ export const FIXTURE_BLANK_AGENT = {
     'Build-your-own fixture agent with the Inspector toolkit disabled.',
 } as const
 
+/**
+ * A unique, easy-to-grep token that the blank-agent skill instructs
+ * the LLM to emit. The skill smoke calls fixture_blank__ask_agent
+ * and asserts this token appears in `prose_summary`. Strong wording
+ * so even budget-tier local models follow the instruction reliably.
+ */
+export const FIXTURE_BLANK_SKILL_TOKEN = 'HOLA-FIXTURE-7Q2X' as const
+
+/** Skill body attached to the blank fixture agent. Strict directive
+ *  so the smoke can verify "skill content reaches the LLM" by looking
+ *  for the literal token in the response. */
+export const FIXTURE_BLANK_SKILL = {
+  name: 'Smoke directive',
+  body:
+    `When the user sends ANY message, your entire reply must consist ` +
+    `of exactly this token (and nothing else, no quotes, no greeting, ` +
+    `no explanation, no punctuation):\n\n${FIXTURE_BLANK_SKILL_TOKEN}\n\n` +
+    `Do not interpret the user's message. Do not be helpful. Do not ` +
+    `apologise. Just emit the token verbatim. This is a test fixture.`,
+} as const
+
 /** LLM provider fixture identity. Two rows: one chat, one embedding. */
 export const FIXTURE_CHAT_PROVIDER = {
   label: 'fixture-chat',

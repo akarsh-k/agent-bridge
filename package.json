@@ -22,6 +22,7 @@
     "test:fixture:setup": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx fixture-setup.ts",
     "test:fixture": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-fixture.ts",
     "test:fixture:bridge": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-bridge-registry.ts",
+    "test:fixture:skill": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-blank-agent-skill.ts",
     "secret:generate": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\""
   },
   "keywords": [],

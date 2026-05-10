@@ -41,6 +41,7 @@ import { ASK_AGENT_DEFAULTS } from '@agent-bridge/shared'
 import {
   FIXTURE_AGENT,
   FIXTURE_BLANK_AGENT,
+  FIXTURE_BLANK_SKILL,
   FIXTURE_CHAT_PROVIDER,
   FIXTURE_EDGES,
   FIXTURE_EMBEDDING_PROVIDER,
@@ -58,6 +59,11 @@ interface SmokeConfig {
   readonly embeddingUrl: string
   readonly embeddingModel: string
   readonly embeddingDims: number
+  /** Optional: only required if you intend to run smoke-blank-agent-skill,
+   *  which actually invokes the chat LLM. The wrapper smoke + bridge-
+   *  registry smoke don't make any chat call so they don't need it. */
+  readonly chatUrl: string | null
+  readonly chatModel: string | null
 }
 
 function preflight(): SmokeConfig {
@@ -82,10 +88,18 @@ function preflight(): SmokeConfig {
   if (gitCheck.status !== 0) {
     throw new Error('git not found on PATH')
   }
+  // Chat is optional at setup time — only the skill-smoke makes a real
+  // chat call. When set, we plumb the URL + model into the seeded chat
+  // provider so the agent can actually answer.
+  const chatUrl = process.env['SMOKE_CHAT_URL']?.trim() || null
+  const chatModel = process.env['SMOKE_CHAT_MODEL']?.trim() || null
+
   return {
     embeddingUrl: embeddingUrl!,
     embeddingModel: embeddingModel!,
     embeddingDims,
+    chatUrl,
+    chatModel,
   }
 }
 
@@ -235,14 +249,20 @@ async function seedProviders(db: AgentBridgeDb): Promise<{
   embeddingProviderId: string
 }> {
   log('▸ seeding LLM providers (chat + embedding)…')
+  // Use SMOKE_CHAT_URL/MODEL when set so the agent can actually answer
+  // (required for the skill smoke). Falls back to a placeholder pointing
+  // at the embedding URL so wrapper + bridge-registry smokes (which
+  // never invoke the chat LLM) still build a valid agent row.
+  const chatBaseUrl = config.chatUrl ?? config.embeddingUrl
+  const chatModel = config.chatModel ?? 'placeholder-chat-model'
   const [chat] = await db.db
     .insert(schema.llmProviders)
     .values({
       kind: FIXTURE_CHAT_PROVIDER.kind,
       role: 'chat',
       label: FIXTURE_CHAT_PROVIDER.label,
-      baseUrl: config.embeddingUrl,
-      defaultModel: 'placeholder-chat-model',
+      baseUrl: chatBaseUrl,
+      defaultModel: chatModel,
       apiKeyEnvelope: null,
     })
     .returning({ id: schema.llmProviders.id })
@@ -314,6 +334,17 @@ async function seedBlankAgent(
     promptTemplate: ASK_AGENT_DEFAULTS.promptTemplate,
     enabled: true,
   })
+
+  // Seed the directive skill so smoke-blank-agent-skill can verify
+  // skills actually reach the LLM via composeInstructions. The skill
+  // body tells the model to emit FIXTURE_BLANK_SKILL_TOKEN verbatim.
+  await db.db.insert(schema.skills).values({
+    agentId: row.id,
+    name: FIXTURE_BLANK_SKILL.name,
+    markdownBody: FIXTURE_BLANK_SKILL.body,
+    position: 0,
+  })
+
   return row.id
 }
 
