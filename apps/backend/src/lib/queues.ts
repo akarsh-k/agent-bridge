@@ -18,9 +18,11 @@ import { Redis } from 'ioredis'
 import {
   QUEUE_NAMES,
   cloneRepoJobSchema,
+  deleteRepoJobSchema,
   generateWikiJobSchema,
   indexRepoJobSchema,
   type CloneRepoJob,
+  type DeleteRepoJob,
   type GenerateWikiJob,
   type IndexRepoJob,
   type QueueName,
@@ -119,6 +121,33 @@ export async function enqueueGenerateWiki(
   const payload = generateWikiJobSchema.parse(input)
   const queue = getQueue(QUEUE_NAMES.generateWiki)
   const job = await queue.add(`wiki:${payload.repoId}`, payload, {
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 5_000 },
+    removeOnComplete: { age: 24 * 3_600, count: 200 },
+    removeOnFail: { age: 7 * 24 * 3_600 },
+  })
+  return { jobId: String(job.id ?? 'unknown') }
+}
+
+/**
+ * Enqueue a `deleteRepo` job. Triggered by `DELETE /api/repos/:id` after
+ * the row is soft-marked `deletion_pending=true` and `agent_repos`
+ * detached. The worker waits for any in-flight clone/index/wiki for
+ * this repo to drain, `rm -rf`s the on-disk source dir, then
+ * hard-deletes the row.
+ *
+ * Retries = 2 — a transient `EBUSY`/`ENOTEMPTY` against a still-open
+ * file handle is worth one auto-retry; beyond that the failure is
+ * usually a permissions / disk issue that retry can't fix. Concurrency
+ * 1 in the worker (see `apps/worker/src/index.ts`) so two delete jobs
+ * for the same repo never race the rm.
+ */
+export async function enqueueDeleteRepo(
+  input: DeleteRepoJob,
+): Promise<{ jobId: string }> {
+  const payload = deleteRepoJobSchema.parse(input)
+  const queue = getQueue(QUEUE_NAMES.deleteRepo)
+  const job = await queue.add(`delete:${payload.repoId}`, payload, {
     attempts: 2,
     backoff: { type: 'exponential', delay: 5_000 },
     removeOnComplete: { age: 24 * 3_600, count: 200 },

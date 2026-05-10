@@ -252,6 +252,23 @@ export const repos = pgTable(
     /** Page count parsed from `gitnexus wiki` stdout (`Pages: N`). */
     wikiPages: integer('wiki_pages'),
     wikiLastError: text('wiki_last_error'),
+    /**
+     * Soft-delete flag. The DELETE route flips this to `true`, detaches
+     * `agent_repos`, and enqueues a `delete-repo` job; the worker handler
+     * waits for any in-flight clone/index/wiki for this repo to finish,
+     * `rm -rf`s the on-disk source dir, then hard-deletes the row.
+     *
+     * Why a soft-delete instead of dropping the row immediately:
+     *   - The on-disk artifacts (cloned source + gitnexus index) outlive
+     *     the SQL DELETE — without a marker, the worker's cleanup job
+     *     would have no way to look up the path after the row is gone.
+     *   - Holding the row keeps FK cascades simple (`agent_repos` /
+     *     `repo_edges` continue to reference a real id) until cleanup
+     *     finishes; the row only disappears once disk is clean.
+     *   - List routes filter `deletion_pending = true` so the UI hides
+     *     the repo immediately while cleanup runs in the background.
+     */
+    deletionPending: boolean('deletion_pending').notNull().default(false),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

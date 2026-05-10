@@ -160,6 +160,29 @@ export async function getForWorker(
   return row ?? null
 }
 
+/**
+ * Hard-delete a repo row. Cascades drop `agent_repos`, `repo_edges`, and
+ * `worker_jobs` (and their `worker_events` via the worker_jobs cascade).
+ * Used by the `delete-repo` worker job after the on-disk source dir has
+ * been removed; the backend's HTTP DELETE flips `deletion_pending=true`
+ * and detaches `agent_repos` first, then enqueues the worker job which
+ * calls this once cleanup succeeds.
+ *
+ * Returns `true` if a row was removed, `false` if it was already gone
+ * (idempotent — covers the "manual SQL delete raced our worker" case
+ * and re-runs of the same job).
+ */
+export async function hardDelete(
+  handle: AgentBridgeDb,
+  repoId: string,
+): Promise<boolean> {
+  const [row] = await handle.db
+    .delete(repos)
+    .where(eq(repos.id, repoId))
+    .returning({ id: repos.id })
+  return Boolean(row)
+}
+
 // ─── indexing ────────────────────────────────────────────────────────────
 
 /**

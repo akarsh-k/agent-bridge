@@ -113,7 +113,7 @@ export const agentReposRouter = new Hono()
         .from(schema.repos)
         .where(eq(schema.repos.id, body.repoId))
         .limit(1)
-      if (!repoRow) {
+      if (!repoRow || repoRow.deletionPending) {
         return httpError(c, {
           code: 'not_found',
           message: `repo ${body.repoId} not found`,

@@ -66,6 +66,22 @@ export const runEventKinds = [
   'repo.wiki.ok',
   'repo.wiki.fail',
   /**
+   * Repo deletion lifecycle. Published by the `delete-repo` worker on
+   * the same `repo:<id>` stream as clone/index/wiki so the Logs UI
+   * can render the cleanup in the same timeline. Sequence:
+   *
+   *   `repo.delete.started`    enqueued and the handler picked it up
+   *   `repo.delete.waiting`    polling siblings; one event per poll
+   *                            cycle that found in-flight work
+   *   `repo.delete.ok`         disk + row removed cleanly
+   *   `repo.delete.fail`       wait timed out or rm failed (BullMQ
+   *                            will retry once before terminal failure)
+   */
+  'repo.delete.started',
+  'repo.delete.waiting',
+  'repo.delete.ok',
+  'repo.delete.fail',
+  /**
    * Emitted by mutating CRUD routes (skills, tools, repos, edges, MCP
    * allowlist, agent core fields) AFTER the DB write succeeds, on the
    * per-agent fan-out channel `agent:<agentId>`. Lets the Activity
@@ -321,7 +337,40 @@ export interface RepoWikiFailPayload {
   readonly exitCode?: number
 }
 
-/** Build the SSE `streamId` for per-repo clone + index + wiki progress. */
+// ─── `repo.delete.*` payload shapes ──────────────────────────────────────
+
+export interface RepoDeleteStartedPayload {
+  readonly repoId: string
+  readonly remoteUrl: string
+  readonly branch: string
+}
+
+/**
+ * Emitted on each polling cycle that finds in-flight clone/index/wiki
+ * jobs for this repo. `pendingByQueue` lets the UI tell the operator
+ * which kind of job is blocking ("waiting on index-repo …").
+ */
+export interface RepoDeleteWaitingPayload {
+  readonly repoId: string
+  readonly elapsedMs: number
+  readonly pendingByQueue: Readonly<Record<string, number>>
+}
+
+export interface RepoDeleteOkPayload {
+  readonly repoId: string
+  readonly waitedMs: number
+  readonly diskRemoved: boolean
+  readonly rowRemoved: boolean
+}
+
+export interface RepoDeleteFailPayload {
+  readonly repoId: string
+  readonly message: string
+  /** `true` when the failure was the 5-minute wait-for-in-flight ceiling. */
+  readonly waitTimeout?: boolean
+}
+
+/** Build the SSE `streamId` for per-repo clone + index + wiki + delete progress. */
 export function repoStreamId(repoId: string): string {
   return `repo:${repoId}`
 }

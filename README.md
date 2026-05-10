@@ -1,39 +1,192 @@
 # Agent Bridge
 
-**Multi-repo grounding for IDE coding agents via MCP.**
+**A local-first agent workbench and MCP bridge for IDE coding agents.**
 
-Cursor, Claude Code, and Codex are great at writing code — but they're blind to
-the *other* repos your code lives next to. Agent Bridge runs locally, indexes
-the repos you point it at, and exposes a single MCP tool — `inspect_codebase` —
-that the IDE LLM can call to ask grounded questions about your multi-repo
-codebase: where does the `Order` type flow, what calls this endpoint, what
-breaks if I change this schema. Answers come back as a structured
-`mini_repos[]` envelope built from operator-curated repo edges + the GitNexus
-knowledge graph.
+Agent Bridge started from a simple idea: coding agents are good at editing
+code, but they often do weak research before they act.
+
+Cursor, Claude Code, Codex, and other IDE coding agents usually see the
+current file, nearby snippets, and whatever they can discover through
+search. That works for small tasks, but it breaks down in real applications
+where behavior crosses repo boundaries: frontend → backend, shared types →
+generated clients, service → worker, schema → tests.
+
+Agent Bridge gives those IDE agents a better research path over MCP.
+
+It runs locally, indexes the repos you attach, understands the edges
+between them, and exposes agents that your IDE can call before making
+code changes. The coding agent still writes the patch. Agent Bridge
+supplies grounded, structured evidence so the patch is based on the real
+shape of your codebase instead of a shallow grep loop.
+
+Agent Bridge is local-first, not local-only; sidecar-first, not
+sidecar-only. Its primary use case is acting as a local research sidecar
+for IDE coding agents, but you can also create blank agents, attach
+skills, attach MCP tools, configure memory and model providers, and
+expose those agents through the same MCP bridge.
 
 > **License:** Source-available under
 > [PolyForm Noncommercial 1.0.0](LICENSE). Free for personal, research,
 > and non-commercial use. Commercial use requires a separate license —
-> open an issue or contact the maintainer.
+> open an issue to start that conversation.
 
-## What it does
+## Built on open-source tooling
 
-- **Inventory + cross-repo edges.** Operator-curated set of repos plus the
-  edges between them (frontend → backend → shared types). The IDE LLM never
-  has to guess a service boundary.
-- **GitNexus-backed grounding.** Each repo gets cloned, parsed, and indexed.
-  Tools like `find_in_codebase`, `trace_flow`, `assess_change_impact`,
-  `debug_help`, `understand_module`, `list_repos` run against that index and
-  return structured results — not raw `grep` output.
-- **MCP bridge for any IDE.** `apps/mcp-bridge` is a stdio MCP server. The
-  Settings page in the UI hands you a paste-ready config block for
-  `~/.cursor/mcp.json` (Cursor) or equivalent. One agent → one tool.
-- **Local-first.** Postgres + Redis run on loopback in Docker Compose. No
-  hosted backend. Secrets encrypted at rest with a key under
-  `.agent-bridge-data/secret.key`.
-- **External MCP connections.** Attach Notion, Atlassian, or any other
-  MCP-compatible service to an agent (HTTP/SSE with OAuth or stdio with
-  env vars) and the agent can call those tools too.
+Agent Bridge is built on open-source tools and standards:
+
+- **Mastra** powers the agent runtime, memory, model abstraction, and
+  tool execution layer.
+- **GitNexus** powers codebase indexing, graph context, embeddings, and
+  code inspection.
+- **MCP** is the bridge between IDE coding agents and Agent Bridge.
+- **Postgres, pgvector, and Redis** provide local storage, vector search,
+  queues, events, and run history.
+
+The goal is not to hide these tools. Agent Bridge combines them into a
+local developer workflow where coding agents can ask better questions
+before they write code.
+
+## Why this exists
+
+Most coding agents have a research problem.
+
+They can edit files, run commands, and search text, but they do not
+naturally understand how a real application is split across repos. When a
+bug crosses a frontend, backend, shared package, worker, or service
+boundary, the IDE agent has to discover the system one tool call at a
+time. That is slow, expensive, and easy to get wrong.
+
+Agent Bridge gives the IDE agent one grounded research interface:
+
+```
+IDE coding agent
+  → MCP call
+    → Agent Bridge agent
+      → deterministic inspector tools
+        → GitNexus graph + embeddings + repo edges
+          → structured evidence back to the IDE
+```
+
+Instead of exposing every low-level search or graph tool directly to the
+IDE agent, Agent Bridge wraps them behind higher-level workflows like
+`find_in_codebase`, `trace_flow`, `assess_change_impact`, `debug_help`,
+`understand_module`, and `list_repos`. That keeps the coding agent from
+looping through noisy search results and gives it a compact answer with
+the files, symbols, relationships, and repo boundaries that matter.
+
+## Two ways to use Agent Bridge
+
+Agent Bridge is not limited to codebase inspection. It supports two
+main modes.
+
+### 1. Coding-helper agents
+
+Coding-helper agents are designed to help Cursor, Claude Code, Codex,
+and other IDE agents research your codebase before making changes.
+
+These agents attach repos, use GitNexus-backed graph and embedding
+context, follow operator-defined repo edges, and expose code-inspection
+tools through the MCP bridge. For each coding-helper agent, the bridge
+exposes:
+
+- `<slug>__inspect_codebase` — structured codebase evidence for
+  debugging, tracing, impact analysis, and module understanding.
+  Returns a `mini_repos[]` envelope with ranked file hits, graph
+  context, cross-repo edges, and summaries.
+- `<slug>__ask_agent` — prose answers for architecture, debugging, and
+  general codebase questions.
+
+This is the sidecar use case: your IDE agent stays focused on the
+coding loop, while Agent Bridge handles deeper codebase research.
+
+### 2. Blank custom agents
+
+You can also create blank agents that are not tied to codebase
+inspection. A blank agent can have its own system prompt, skills, model
+provider, memory settings, external MCP connections, and custom bridge
+tools. Attach tools from services like Notion, Atlassian, Datadog,
+internal MCP servers, or your own local tools, then expose that agent
+through the same MCP bridge.
+
+In this mode, Agent Bridge becomes a local agent workbench. You define
+the agent's behavior, attach the tools it should use, and make it
+callable from your IDE or any MCP-compatible client.
+
+So Agent Bridge is both a research sidecar for coding agents *and* a
+local-first platform for building custom MCP-exposed agents.
+
+## Local LLMs and model usage
+
+Agent Bridge was designed with local LLM workflows in mind.
+
+The web app, MCP bridge, repo indexes, run logs, Postgres, Redis, and
+encrypted secrets run on your machine. The intended setup is that your
+IDE coding agent can ask a local Agent Bridge instance to research the
+codebase, and that research agent can be backed by a local model when
+configured.
+
+External model providers are also supported. This is useful if you want
+to use OpenAI, Anthropic, or another hosted model for stronger
+reasoning, but it changes the operating model:
+
+- prompts and retrieved context may be sent to the external provider;
+- usage may consume paid tokens;
+- cost depends on the provider, model, context size, and number of tool
+  calls;
+- local-first storage does not mean model inference is always local.
+
+In short: Agent Bridge is local-first at the application and data
+layer, and local-LLM-friendly at the model layer. External APIs are
+optional.
+
+## Example questions
+
+From your IDE coding agent, ask things like:
+
+- *Use Agent Bridge to inspect where `OrderStatus` is defined and which
+  repos depend on it.*
+- *Before changing the checkout schema, ask Agent Bridge what frontend
+  and worker code will be affected.*
+- *This error happens when creating an invoice. Ask Agent Bridge to
+  trace the flow from the frontend mutation to the backend handler.*
+- *Find the tests and modules most likely related to the auth callback
+  bug.*
+- *Ask the architecture agent which services depend on this shared
+  package.*
+- *Ask my custom Notion-connected agent what product requirements are
+  related to this feature.*
+
+## What Agent Bridge is not
+
+Agent Bridge is not a replacement for Cursor, Claude Code, Codex, or
+your IDE agent. It does not try to own the editing loop.
+
+It is the research layer behind them: a local MCP server and agent
+workbench that helps the coding agent understand the system before it
+edits. The IDE agent still decides how to apply the change, run
+commands, and produce the final patch. Agent Bridge gives it better
+context before it does that work.
+
+## High-level architecture
+
+```
+Cursor / Claude Code / Codex / MCP-compatible client
+        │
+        │ MCP (stdio)
+        ▼
+apps/mcp-bridge
+        │
+        ▼
+Agent Bridge agent  ─── Mastra agent runtime
+                    ├── deterministic inspector wrappers
+                    ├── GitNexus graph + embeddings
+                    ├── operator-defined repo edges
+                    ├── attached skills
+                    ├── memory configuration
+                    └── optional external MCPs
+```
+
+Full design reference: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Quickstart
 
@@ -42,7 +195,8 @@ Requirements:
 - **Node** matching `engines.node` in root `package.json` (≥24.15.0). A
   `.nvmrc` is included — `nvm use` picks it up.
 - **pnpm** — version pinned via `packageManager` in root `package.json`.
-- **Docker + Docker Compose** for local Postgres (with `pgvector`) and Redis.
+- **Docker + Docker Compose** for local Postgres (with `pgvector`) and
+  Redis.
 
 ```bash
 pnpm install        # installs all workspaces; you may be asked to approve a build script
@@ -50,18 +204,26 @@ cp .env.example .env
 pnpm dev            # preflight → docker compose up -d → start backend / frontend / worker / shared watcher
 ```
 
-Open http://127.0.0.1:5173. Add a repo, wait for clone + index, attach it to
-an agent, then head to **Settings** to wire the MCP bridge into your IDE.
+Open http://127.0.0.1:5173. Then:
 
-`Ctrl+C` stops the Node servers but **leaves Docker containers running** so
-DB state stays warm. Run `pnpm stop` to tear them down (preserves data) or
-`pnpm stop:clean` to drop the volumes too.
+1. Add a model provider.
+2. Add or clone a repo.
+3. Wait for clone and indexing to finish.
+4. Create an agent (Coding-helper for the sidecar use case, or Blank
+   for a custom agent).
+5. Attach repos, skills, and MCP tools as needed.
+6. Open Settings and copy the MCP bridge config into your IDE.
+7. Restart your IDE and call the exposed Agent Bridge tools.
+
+`Ctrl+C` stops the Node servers but **leaves Docker containers
+running** so DB state stays warm. Run `pnpm stop` to tear them down
+(preserves data) or `pnpm stop:clean` to drop the volumes too.
 
 ## Connect your IDE
 
 In the running app, go to **Settings** and copy the auto-generated MCP
-server config (the backend resolves absolute paths so the IDE doesn't need
-to find `tsx` / `node` on its own minimal `PATH`).
+server config. The backend resolves absolute paths so the IDE doesn't
+need to find `tsx` / `node` on its own minimal `PATH`.
 
 For Cursor (`~/.cursor/mcp.json`) the block looks like:
 
@@ -79,10 +241,14 @@ For Cursor (`~/.cursor/mcp.json`) the block looks like:
 }
 ```
 
-Restart your IDE. The bridge advertises one tool per agent — `query_<slug>`
-— calling it from the IDE LLM routes the request to the matching agent in
-your local Agent Bridge install. Run logs and tool traces show up in
-`/logs` in the UI.
+Restart your IDE. The bridge advertises:
+
+- `<slug>__ask_agent` for every agent.
+- `<slug>__inspect_codebase` for Coding-helper agents with inspection
+  enabled.
+- Operator-authored bridge tools when you've added them to an agent.
+
+Run logs and tool traces show up in `/logs` in the UI.
 
 ## Layout
 
@@ -91,7 +257,7 @@ your local Agent Bridge install. Run logs and tool traces show up in
 ├── apps/
 │   ├── backend/          # Hono API server, run dispatcher, bridge endpoints
 │   ├── frontend/         # React 19 + Vite UI
-│   ├── worker/           # BullMQ worker for clone / index / wiki jobs
+│   ├── worker/           # BullMQ worker for clone / index / wiki / delete jobs
 │   └── mcp-bridge/       # stdio MCP server bridging IDEs to agents
 ├── packages/
 │   ├── shared/           # Shared Zod schemas, env helpers, domain types
@@ -130,54 +296,49 @@ Useful env-var overrides:
 - `SKIP_DOCKER=1 pnpm dev` — run app servers only; don't start Postgres/Redis.
 - `SKIP_SHARED_BUILD=1 pnpm dev` — skip the one-time `packages/*` build.
 
-For the local fixture harness (synthetic ecommerce multi-repo demo), see
-[`tests/README.md`](tests/README.md).
+For the local fixture harness (synthetic ecommerce multi-repo demo),
+see [`tests/README.md`](tests/README.md).
 
-## Type sharing
+## Security and local-first design
 
-Two complementary patterns:
+Agent Bridge is designed around a local-first trust boundary:
 
-1. **Hono RPC** — the frontend imports `AppType` from the `backend`
-   workspace and calls `hc<AppType>(baseUrl)`. Fully typed paths, query
-   params, request bodies, and responses with zero code generation.
-2. **`@agent-bridge/shared`** — domain models and Zod schemas used by more
-   than one runtime (backend ↔ worker ↔ frontend ↔ mcp-bridge) live here.
-   Each service extends `baseEnvSchema` for its own env, and uses
-   `parseEnv()` / `loadRootDotenv()` to boot identically.
+- cloned repos stay on your machine;
+- indexes stay on your machine;
+- run logs stay on your machine;
+- Postgres and Redis run locally, bound to loopback by default;
+- secrets (provider API keys, MCP env/header values, OAuth tokens) are
+  encrypted at rest with AES-256-GCM under
+  `<AGENT_BRIDGE_DATA_DIR>/secret.key` (mode 0600);
+- the MCP bridge runs locally over stdio (PID-auth);
+- external model APIs are optional;
+- external MCP tools are optional.
 
-`packages/shared`'s `exports` map points to `src/*.ts` under the `types` and
-`development` conditions and to `dist/*.js` under `import` and `default`.
-Production builds run via `pnpm -r build` in topological order; in dev,
-`scripts/dev.mjs` pre-builds `packages/*` once and then `pnpm -r --parallel
-run dev` starts shared's `tsc --watch` alongside the app servers.
-
-## Security
+Other guarantees:
 
 - CORS origins are required in production; `*` is rejected at startup.
-- Secure headers are applied via `hono/secure-headers` on every response.
-- Request body size is capped per-route via `hono/body-limit`.
-- All endpoint inputs are validated by Zod.
-- Dev defaults bind `HOST` to `127.0.0.1` — set `HOST=0.0.0.0` explicitly
-  only when the process runs in a container or behind a proxy / firewall.
-- Postgres and Redis ports are bound to `127.0.0.1` by default so they are
-  not reachable from the LAN. Override with `POSTGRES_BIND` / `REDIS_BIND`.
+- Secure headers via `hono/secure-headers` on every response.
+- Request body size capped per-route via `hono/body-limit`.
+- All endpoint inputs validated by Zod.
 - Compose services run with `no-new-privileges:true`; Postgres data is
   initialised with `--data-checksums`.
-- Secrets (provider API keys, MCP env/header values, OAuth tokens) live
-  encrypted in Postgres with AES-256-GCM. The master key lives at
-  `<AGENT_BRIDGE_DATA_DIR>/secret.key` (mode 0600), auto-generated on first
-  boot — back it up if you care about the encrypted rows surviving a
-  data-dir reset.
 - `.env` is gitignored. `.env.example` contains only non-secret
   placeholders; update `POSTGRES_PASSWORD` before any non-local use.
 
-To report a security vulnerability, see [SECURITY.md](SECURITY.md). Please
-do not file public issues for vulns.
+**Important distinction:** local-first does not automatically mean
+every model call is local. If you configure a local LLM, inference can
+stay local. If you configure a hosted model provider, retrieved
+context and prompts may be sent to that provider and may consume
+tokens.
+
+To report a security vulnerability, see [SECURITY.md](SECURITY.md) —
+please don't file public issues for vulns.
 
 ## Docs
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — full design reference:
-  monorepo conventions, run lifecycle, MCP architecture, isolation model.
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — full design
+  reference: monorepo conventions, run lifecycle, MCP architecture,
+  isolation model.
 - [`CONTRIBUTING.md`](CONTRIBUTING.md) — setup, code style, PR
   expectations.
 - [`SECURITY.md`](SECURITY.md) — vulnerability disclosure policy.

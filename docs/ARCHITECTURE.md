@@ -1,15 +1,8 @@
 # Agent Bridge — Architecture
 
-> **A note on terminology.** This document was written incrementally
-> alongside the codebase, and earlier sections occasionally reference
-> internal milestone identifiers ("Phase 3f", "Phase B6", "Phase F1",
-> etc.). These were build-order tags from a now-deleted planning
-> document and have no semantic meaning — they're safe to ignore. The
-> surrounding technical content is what matters; treat any "Phase X"
-> tag as if it weren't there.
-
 ## Contents
 
+- [0. What this is and how it fits together](#0-what-this-is-and-how-it-fits-together)
 - [1. High-level map](#1-high-level-map)
 - [2. Components](#2-components)
 - [3. Isolation guarantees (must not regress)](#3-isolation-guarantees-must-not-regress)
@@ -20,6 +13,95 @@
 - [8. Tools — two directions](#8-tools--two-directions)
 - [9. Frontend architecture (`apps/frontend`)](#9-frontend-architecture-appsfrontend)
 - [10. Wrapper-tool architecture (inspector toolkit)](#10-wrapper-tool-architecture-inspector-toolkit)
+- [11. Operational subsystems](#11-operational-subsystems)
+
+## 0. What this is and how it fits together
+
+Agent Bridge is a **local-first** dev tool. The operator runs it on
+their machine; their IDE coding agent (Cursor, Claude Code, Codex)
+calls into it over MCP to ask grounded questions about the operator's
+multi-repo codebase. The agent that answers is itself an LLM with
+access to a knowledge graph + embeddings of every repo the operator
+attached, plus operator-curated edges between those repos.
+
+Four processes make up a running system:
+
+- **`apps/backend`** — Hono HTTP server. Owns every REST endpoint,
+  the SSE event stream, and the in-process **run dispatcher** that
+  drives `agent.stream(...)` for chat-tab and IDE-bridge calls. Reads
+  + writes Postgres directly.
+- **`apps/frontend`** — React 19 + Vite UI. Manages agents, repos,
+  MCP connections, providers, skills. Subscribes to the SSE stream
+  for chat / log live updates. Talks to the backend via Hono RPC
+  (`hc<AppType>(baseUrl)`) — no codegen, fully typed.
+- **`apps/worker`** — BullMQ worker. Runs four queues: `ping`,
+  `clone-repo`, `index-repo`, `generate-wiki`. The backend enqueues;
+  the worker spawns sandboxed `git` / `gitnexus` subprocesses and
+  publishes progress events back through the same Redis bus.
+- **`apps/mcp-bridge`** — stdio MCP server. The IDE spawns this as a
+  subprocess (config block in Settings); it advertises one or two
+  MCP tools per agent and routes calls through the same dispatcher
+  the chat tab uses.
+
+Three packages everyone shares:
+
+- **`packages/shared`** — Zod DTOs, env helpers, crypto, paths,
+  event-bus primitives, gitnexus types. Browser-safe at the root
+  entry; subpath exports (`./crypto`, `./spawn`, ...) are Node-only.
+- **`packages/db`** — Drizzle schema + repos + migrations.
+- **`packages/agents`** — the **only** place allowed to import
+  `@mastra/*`. Owns `buildAgent(...)`, the dispatcher, the inspector
+  wrapper toolkit, and the external-MCP mount. Backend and bridge
+  call into it; nothing in `apps/` touches Mastra directly.
+
+What crosses between processes:
+
+- **HTTP** — frontend ↔ backend (REST + SSE).
+- **stdio** — IDE ↔ mcp-bridge.
+- **Redis pub/sub** — backend ↔ worker (job queue + run-event bus).
+- **Postgres** — backend, worker, mcp-bridge all read/write the same
+  schemas.
+- **Sandboxed subprocesses** — worker → `git` / `gitnexus`; backend's
+  cached agent → `gitnexus` / external MCP servers.
+
+### Glossary
+
+- **Agent** — a row in the `agents` table. Has a system prompt,
+  skills, attached repos, an LLM provider, optional inspector
+  toolkit, optional MCP allowlist, optional bridge tools.
+- **BuiltAgent** — the runtime materialization of an agent
+  (`packages/agents/src/build-agent.ts`). Cached for 30 minutes per
+  agentId; rebuilds on any agent/skill/tool/MCP/provider edit
+  (version-hash drift).
+- **Operator** — the human running Agent Bridge locally. Single user
+  per install. Authors agents, attaches repos, configures providers.
+- **Mastra** — the LLM-runtime + memory framework we wrap (chat
+  history, working memory, semantic recall, tool execution, model
+  abstraction). Lives in `packages/agents` and only there.
+- **Wrapper / inspector wrapper** — one of six deterministic tools
+  the inspector toolkit exposes to the agent's LLM
+  (`find_in_codebase`, `trace_flow`, `assess_change_impact`,
+  `debug_help`, `understand_module`, `list_repos`). Each wraps one
+  or more `gitnexus_*` calls and returns a structured `MiniRepo`.
+- **MiniRepo** — typed envelope returned by every wrapper invocation
+  (`packages/agents/src/inspector/types.ts`). Carries ranked file
+  hits, a graph subset, cross-repo edges, and a one-paragraph prose
+  summary. Capped at 12k tokens.
+- **RunEvent** — one row in `run_events` + one published Redis
+  message per side-effect during a run (LLM call, tool call,
+  gitnexus call, mini-repo built, error, finish). Source of the
+  `/logs` timeline and the chat-tab tool-call cards.
+- **Callsite** — provenance for a run: which surface invoked it
+  (web chat / IDE bridge / smoke harness), which IDE + version (if
+  bridge), which agent slug. Persisted in `runs.callsite_json`.
+- **Run dispatcher** — `packages/agents/src/run-dispatcher.ts`. The
+  one path that takes a built agent + an input message, calls
+  `agent.stream(...)`, and translates Mastra's stream into
+  `run_events` + Redis publishes + dispatcher return value.
+- **Bridge tool** — operator-authored tool exposed to the IDE LLM
+  through the bridge (`bridge_tools` table). Different surface from
+  the agent's *internal* tools (inspector wrappers + external MCPs);
+  see §8.
 
 ## 1. High-level map
 
@@ -41,7 +123,7 @@ flowchart LR
     WIKI[generate-wiki job]
   end
 
-  subgraph Dispatcher["apps/backend/lib/run-dispatcher (in-process)"]
+  subgraph Dispatcher["packages/agents/src/run-dispatcher (imported by backend, in-process)"]
     RUN[agent.stream&nbsp;➜&nbsp;SSE + run_events]
   end
 
@@ -98,11 +180,14 @@ flowchart LR
 
 ## 2. Components
 
-### 2.1 `apps/frontend` (React 19 + Vite + React Flow)
+### 2.1 `apps/frontend` (React 19 + Vite)
 
-Railway-style node-based canvas: agents, attached skills, tools, repos, MCP
-connections are all nodes; edges carry relationships (e.g. repo→repo with a
-one-word connector + description).
+Tabbed UI per agent — Build, Memory, Logs, Chat — with side-sheet flows for
+attaching repos, MCP connections, and skills. The information *is* a graph
+(agents → repos → cross-repo edges, agents → MCP connections → tools), but
+the surface that exposes it is a list, not a canvas; see §9.1 for the
+reasoning. React Flow is used only for the small repo-edges visualisation
+inside the Repos tab.
 
 Only imports from `@agent-bridge/shared` at the **browser-safe root entry** —
 subpath exports like `@agent-bridge/shared/crypto` will break the Vite build
@@ -148,41 +233,34 @@ to Cursor / Claude Code / Codex / any MCP-compatible IDE:
   list — see §10.7 for the wire shapes). Handler:
   `inspect-codebase-handler.ts`.
 
-Operator-authored `bridge_tools` rows continue to register alongside
-with their authored names (§8.2).
+Operator-authored `bridge_tools` rows register alongside with their
+authored names (§8.2).
 
 #### 2.4.1 Bridge session = one Mastra thread
 
 The bridge mints **one `threadId` at process start** (`BRIDGE_THREAD_ID =
 randomUUID()` in `apps/mcp-bridge/src/index.ts`) and reuses it on every
-`dispatchRun(...)` call for the lifetime of the subprocess.
+`dispatchRun(...)` call for the lifetime of the subprocess. Same IDE
+session → one bridge subprocess → one thread → continuous history.
+Restart the IDE / reload the MCP server → fresh subprocess → fresh
+threadId.
 
-Why this exists: pre-fix, every IDE tool call minted a fresh runId AND used
-it as the threadId, so each call landed in its own brand-new Mastra thread.
-That works for stateless one-shot automations ("summarize this URL") but
-breaks chat-style usage — a follow-up like *"what about the migration?"*
-had no in-thread history of the previous turn, so recent-message replay,
-per-thread working memory, and per-thread semantic recall all came up
-empty on every call. The agent appeared amnesiac between consecutive IDE
-messages even though the user thought they were having one conversation.
+The dispatcher's `resolveMemoryIds` (in
+`packages/agents/src/run-dispatcher.ts`) honors an explicit `threadId`
+input — the bridge passes `BRIDGE_THREAD_ID`, the chat tab passes the
+runId. Without this, each IDE tool call would mint a fresh thread and
+the agent would lose chat history, per-thread working memory, and
+per-thread semantic recall between consecutive IDE messages.
 
-Pinning the threadId per bridge process restores the chat-style mental
-model:
-
-- **Same IDE session** (one bridge subprocess) → all tool calls share one
-  thread → continuous history.
-- **Restart IDE / reload MCP server** → bridge subprocess respawns →
-  fresh threadId.
-
-Limitations we accept for v1:
+Known limitations:
 
 - **Multi-tab bleed.** MCP doesn't expose per-chat-tab context to the
   bridge — Cursor with two simultaneous chat tabs sends both tabs'
   messages through the same stdio pipe, so they end up in one thread.
   Workaround for users: restart the IDE / reload the MCP server when
   they want a fresh slate. Future fix: optional `conversationId` field
-  on the bridge tool's input schema (Layer 2), where a capable IDE LLM
-  mints and passes a per-tab id.
+  on the bridge tool's input schema, where a capable IDE LLM mints and
+  passes a per-tab id.
 - **No idle auto-rotation.** If the user comes back to the same IDE
   session after hours, prior context is still loaded. Same workaround
   (manual reload). Time-based rotation was scoped but deferred.
@@ -191,12 +269,6 @@ Limitations we accept for v1:
   recall scope effectively scopes to "this IDE session only." For agents
   that should remember across IDE restarts / chat tabs, pick "per agent"
   scope (cross-thread, persists across every web chat + IDE call).
-
-The dispatcher's existing `resolveMemoryIds` already honored an explicit
-`threadId` input (`packages/agents/src/run-dispatcher.ts:716` —
-`mastraThreadId: input.threadId ?? input.runId`); the bridge fix is a
-five-line plumbing change (`threadId: BRIDGE_THREAD_ID` on the dispatch
-call). No DB schema change.
 
 ### 2.5 `packages/shared`
 
@@ -462,7 +534,7 @@ Everything else. Mastra has no opinion or schema here, so we design freely:
 | `mcp_connections`, `agent_mcp_tools` | Mastra consumes MCP tools at runtime, not DB  |
 | `llm_providers` (incl. `embedding_dims`) | Mastra providers are instantiated, not stored |
 | `bridge_tools`                       | Operator-authored IDE-facing tools (§8.2)     |
-| `runs` (incl. `minirepo_json` jsonb) | UI-facing audit log + D17′ envelope cache     |
+| `runs` (incl. `minirepo_json` jsonb) | UI-facing audit log + mini-repo envelope cache |
 | `run_events`                         | UI-facing audit log; `mastra.traces` is OTel  |
 
 A few of these columns have non-obvious shapes worth calling out
@@ -481,7 +553,7 @@ inline:
   embedding response and writes it back in the same form. The worker
   asserts on it before kicking off `gitnexus analyze --embeddings`
   so a 384↔1024 mismatch fails fast instead of corrupting the index.
-- **`runs.minirepo_json`** — jsonb array, the D17′ envelope cache.
+- **`runs.minirepo_json`** — jsonb array, the mini-repo envelope cache.
   Each wrapper invocation appends a `MiniRepo` via `appendMinirepo`
   inside one transaction with a 14 KiB oldest-eviction policy
   (see §10.4). Used by both the chat-tab tool-call cards and the
@@ -512,9 +584,9 @@ dominate one-shot runs.
 > If Mastra's API consumes the config we store → match their shape exactly.
 > If neither → we design it. No guessing.
 
-This rule is enforced socially (this doc + `packages/agents` being the only
-Mastra-importing module) rather than mechanically. A lint rule banning
-`mastra*` imports outside `packages/agents` is worth adding.
+Enforced mechanically by the root `eslint.config.mjs` `MASTRA_IMPORT_PATTERNS`
+guard rail — any `@mastra/*` import outside `packages/agents/**` fails
+ESLint with a pointer to this section.
 
 ## 8. Tools — two directions
 
@@ -980,11 +1052,11 @@ single open file will rabbit-hole on the wrong thread. We have
 already-indexed graph + embeddings, plus operator-curated repo edges,
 so we can answer in one tool call with structured evidence (call
 graph, related files across repos, ranked hits) instead of begging
-the IDE LLM to explore the codebase line by line. V1 tried to expose
-every gitnexus tool to the IDE LLM directly and failed for reasons
-captured in the local `notes.md` — short version: too many low-level
-tools, no enforced bound on prose, and nothing to stop the IDE LLM
-from looping.
+the IDE LLM to explore the codebase line by line. An earlier design
+exposed every gitnexus tool to the IDE LLM directly; that failed for
+predictable reasons — too many low-level tools to choose between, no
+enforced bound on prose output, and nothing to stop the IDE LLM from
+looping on the same hits.
 
 ### 10.1 Flow
 
@@ -1126,13 +1198,13 @@ decides what to do with it.
 
 `packages/agents/src/inspector/system-prompt.md` (≤ 80 lines)
 auto-appends to every agent's instructions in `composeInstructions`.
-Replaces the v1 860-line skill. Operator override: a skill body
+Replaces an earlier 860-line system skill. Operator override: a skill body
 containing `# Inspector toolkit` skips the auto-attach. Cache-busted
 by `INSPECTOR_SYSTEM_PROMPT_VERSION` baked into the BuiltAgent cache
 hash. Build script copies the `.md` into `dist/` so production
 resolves the same way as dev.
 
-The v1 auto-attached blocks (gitnexus library skills, repo inventory,
+Earlier auto-attached blocks (gitnexus library skills, repo inventory,
 repo edges) are GONE from the prompt. Repo inventory now travels
 inside `list_repos` mini-repo responses; cross-repo edges return
 inside `assess_change_impact`.
@@ -1198,53 +1270,7 @@ without branching downstream. Memory-bounded by ripgrep's stream
 parser, so it stays stable on the 50k-file repos this design was
 built for.
 
-### 10.13 Parked features (infrastructure present, UI hidden)
-
-Two surfaces have full backend + DB infrastructure but no operator-facing
-UI right now. They were built end-to-end at one point, then hidden when
-the wrapper-tool architecture made them either unused (custom tools) or
-unconsumed (wiki). Re-enabling either is a focused, contained change.
-
-**Custom tools (the `tools` table — HTTP / shell / mastra_builtin / custom).**
-
-- Schema: `public.tools` (`id`, `agent_id`, `kind`, `name`, `description`,
-  `config_json`, `position`).
-- Backend: full CRUD under `apps/backend/src/routes/tools.ts`.
-- Frontend RPC: `addTool`, `patchTool`, `removeTool` in `lib/rpc`,
-  consumed by `workspace-context`.
-- What's missing: `packages/agents/buildAgent` does NOT read
-  `schema.tools`. The LLM never sees these rows. The frontend Add /
-  Edit / Delete affordances were removed from the Resources Tools tab
-  to stop operators authoring rows that nothing consumes; the tab
-  still lists existing rows read-only with an *Inactive* pill so prior
-  data isn't lost from view.
-- To re-enable: implement Mastra `createTool` paths for each `kind`
-  inside `buildAgent` (sandbox the `shell` kind!), then restore the
-  CRUD UI in `apps/frontend/src/features/agent-tools/tools-tab.tsx`.
-
-**Wiki generation (`gitnexus wiki`).**
-
-- Schema: `repos.wiki_status` / `wiki_generated_at` / `wiki_pages` /
-  `wiki_last_error`.
-- Backend: `POST /api/repos/:id/wiki` enqueues, the worker's
-  `generate-wiki` BullMQ job runs `gitnexus wiki` against the source,
-  markdown lands under `<source>/.gitnexus/wiki/`. Static-serve at
-  `GET /api/repos/:id/wiki(/*)` is intact.
-- What's missing: no inspector wrapper consumes the wiki. The
-  `understand_module` docstring already names this as deferred work
-  (slice the wiki page when `wikiStatus === 'ready'` AND `wikiGeneratedAt`
-  is recent). The frontend Generate / Open wiki buttons + status pill
-  were removed from the repo detail page to stop operators paying LLM
-  cost for output the agent can't read.
-- To re-enable: add a freshness gate + wiki read inside
-  `understand_module.ts` (and optionally `find_in_codebase.ts` as a
-  pre-filter), then restore the buttons in
-  `apps/frontend/src/app/library/repos/[id]/page.tsx`.
-
-Same pattern in both: keep the data and the routes, hide the trigger
-until the runtime that consumes them is wired.
-
-### 10.14 Direction summary
+### 10.13 Direction summary
 
 | Concept | Direction | Where defined | Visible to IDE? |
 | --- | --- | --- | --- |
@@ -1257,3 +1283,270 @@ until the runtime that consumes them is wired.
 Both directions exist on the same `apps/mcp-bridge` process: the
 bridge IS the IDE-facing MCP server (outbound surface) AND it
 constructs the agent that uses the inbound tools to answer.
+
+## 11. Operational subsystems
+
+The sections above describe the architectural commitments and the
+core runtime model. The pieces below are the operational substrate
+that keeps it running — auditable, observable, and reproducible.
+
+### 11.1 Worker queue topology
+
+The worker hosts five BullMQ queues, each with concurrency tuned to
+the resource profile of its handler. `apps/worker/src/index.ts` boots
+them in lockstep with a single Redis connection per role and asserts
+the pinned GitNexus version before any queue is registered — a version
+mismatch fails the process rather than discovering the drift mid-job.
+
+`ping` runs at `WORKER_CONCURRENCY` (default several in parallel) with
+`attempts: 3` and 1s exponential backoff. It exists only to prove the
+boot pipe — backend → Redis → BullMQ Queue → Worker → handler — and is
+re-enqueued automatically as `boot-smoke` on every worker start.
+
+`clone-repo`, `index-repo`, `generate-wiki`, and `delete-repo` all run
+at concurrency 1 by deliberate choice. Clones are disk and network
+heavy; running two in parallel thrashes both for no wall-clock win on
+a single-operator setup. `gitnexus analyze` is CPU-heavy and writes
+into the shared `gitnexus-home/` cache directory, so two concurrent
+analyses would race the registry file. `gitnexus wiki` is LLM-bound —
+every page is a separate completion against the configured provider —
+and gitnexus persists `--api-key`/`--base-url` flags into
+`~/.gitnexus/config.json` per run; serialising avoids both rate-limit
+contention and config overwrites. The delete handler `rm -rf`s a
+single repo's tree and then hard-deletes its DB row; concurrency 1
+keeps two delete jobs for the same repo from racing the rm.
+
+Retry budgets are taxonomy-aware. `clone-repo` retries once on
+transient network errors (a third attempt typically just stacks onto
+a stale credential failure). `index-repo` runs `attempts: 1` because
+`gitnexus analyze` is deterministic on its input — retrying rarely
+flips a failure into a success and lengthens the "stuck indexing"
+window. `generate-wiki` retries once with a 5s backoff so a transient
+429/500 doesn't waste a full LLM budget on a redo. `delete-repo`
+retries once on transient `EBUSY`/`ENOTEMPTY` errors (a child process
+holding an open handle past the wait window); permission/disk failures
+beyond that aren't retry-fixable.
+
+Retention is asymmetric on purpose. Successful completions fall off
+within 24 hours (capped at 200 entries for the heavy queues, 1 000
+for `ping`); failures linger for 7 days (24 hours for `ping`) so
+operators have time to inspect what broke. The auditable transcript
+lives in `worker_jobs` / `worker_events` (§11.4) — BullMQ retention
+is just the in-flight buffer.
+
+The `delete-repo` handler is the only queue worker that polls its
+sibling queues directly: before touching disk it loops on
+`getJobs(['active','waiting','delayed'])` filtered by `data.repoId`
+across the clone/index/wiki queues, sleeping 2s between polls and
+timing out at five minutes. Without that wait, the rm would race a
+mid-flight `git clone` writing into `source.tmp/` or a `gitnexus
+analyze` writing into `source/.gitnexus/`. The five-minute ceiling
+keeps a stuck sibling job from hanging the delete forever — past
+that, the delete fails, BullMQ retries it once, and the operator
+sees a stuck "deletion pending" repo to investigate.
+
+### 11.2 LLM provider lifecycle
+
+Operators configure providers as OpenAI-compatible endpoints regardless
+of the actual upstream — `openai`, `llama_cpp`, `ollama`, and
+`openai_compatible` all speak the same wire protocol. The single
+connector lives in `apps/backend/src/lib/llm-providers/openai-compatible.ts`;
+new vendors get added behind an OpenAI-compat shim (LiteLLM, vLLM,
+Azure-compat, OpenRouter) rather than a parallel HTTP client. Keeping
+one connector keeps the error taxonomy uniform.
+
+The model catalog is operator-refreshed, not auto-polled.
+`refreshProviderModels` in `refresh-models.ts` issues `GET /v1/models`,
+parses both the OpenAI shape (`{ data: [{ id }] }`) and Ollama's
+fallback (`{ models: [{ name }] }`), de-duplicates while preserving
+upstream order, and persists the result on `llm_providers.models_json`.
+That cell is the single source of truth for the model dropdowns the UI
+renders. The test-connection probe (`test-provider.ts`) is the inference
+counterpart — `POST /v1/chat/completions` with `max_tokens: 8` when a
+model is set, falling back to `GET /v1/models` for reachability when
+not. Both paths are single-decrypt sites: the `apiKeyEnvelope` only
+crosses the encryption boundary inside one local variable per call,
+and `sanitizeMessage` scrubs the plaintext from any returned error
+string before it crosses the response boundary.
+
+Providers split by `role`. Chat-role rows feed `/v1/chat/completions`;
+embedding-role rows feed `/v1/embeddings` and carry an additional
+`embedding_dims` column the worker forwards as `GITNEXUS_EMBEDDING_DIMS`
+when running `gitnexus analyze --embeddings`. The schema enforces a
+partial unique index `llm_providers_embedding_singleton_uq` on
+`role = 'embedding'` so the workspace has at most one embedder — every
+vector consumer (semantic recall, repo indexing, future RAG) shares
+one geometry. Many chat-role rows are fine; the embedder is
+deliberately a singleton.
+
+### 11.3 MCP discover/probe + test-session registry
+
+A new MCP connection's tools are discovered via a one-shot probe in
+`packages/agents/src/mcp/discover-probe.ts` — a throwaway `MCPClient`
+calls `listToolsets()`, returns the raw shape, and tears itself down
+in `finally`. The probe lives in `packages/agents` because the root
+ESLint guard rail forbids `@mastra/*` imports outside that package; the
+backend dispatcher in `apps/backend/src/lib/mcp-connections/discover.ts`
+owns the decrypt site and hands plaintext credentials in. Failures are
+classified into the `McpConnectionDiscoverErrorCode` taxonomy
+(`unreachable | auth | spawn_failed | timeout | unknown`) so the UI
+can branch on cause rather than substring-matching messages.
+
+OAuth makes discovery asynchronous. The user clicks Test, the backend
+calls `discoverMcpToolsOAuth` without an authorization code, Mastra's
+provider responds `REDIRECT` with an authorize URL, and the dispatcher
+parks the in-flight state in the `TestSessionRegistry`
+(`test-sessions.ts`). The frontend opens the URL in a new tab and
+long-polls `/test/poll` while the user walks through the consent
+screen. When the upstream redirects the browser to
+`/oauth/mcp/:connectionId/callback`, the route in
+`apps/backend/src/routes/oauth.ts` (mounted at root, not under `/api`,
+because the URL is registered with upstreams at dynamic-client-
+registration time and must stay stable across API versions) validates
+the `state` param as a CSRF guard, hands the `code` to
+`completeOauthCallback`, and the session transitions through `pending
+→ authorize_required → ok | failed`. Sessions are in-memory only — a
+restart loses them, but the user just clicks Test again.
+
+Per-connection state is single-active: creating a new session for a
+connection cancels the old one (Notion's `state` parameter would
+reject the stale callback anyway). Non-terminal sessions expire after
+five minutes; terminal ones linger for 30 seconds so the last poll
+observes them. After discover succeeds, the operator-curated allowlist
+is what `mountExternalMcps` consults at agent-build time — see §8 for
+the runtime mount path.
+
+### 11.4 Activity / audit tables beyond `run_events`
+
+`run_events` is the per-run transcript (§7), but two adjacent tables
+carry the rest of the operator-visible history.
+
+`agent_config_events` is an append-only audit log of
+`agent.config.changed` events — skill added, repo attached, MCP
+allowlist replaced, anything that mutates an agent's effective
+configuration. `publishAgentConfig` writes a row alongside the live
+SSE frame so the Activity timeline survives page reloads and SSE
+re-subscribes; the live ring only holds the current session.
+`apps/backend/src/routes/agent-config-events.ts` exposes a newest-first
+read-only list with an agent-existence guard so deleted agents 404
+instead of returning silently empty.
+
+`worker_jobs` is the lifecycle row per repo background job — one entry
+per discrete clone, index, or wiki attempt with start/finish timestamps
+and a status enum. `worker_events` is its append-only transcript,
+shaped identically to `run_events` but keyed by `job_id`. The clone /
+index / wiki handlers create the `worker_jobs` row after their initial
+state checks pass and route every published `RunEvent` through both
+the live event bus AND `appendWorkerEvent` so the `/logs` page can
+replay a job's full timeline after the fact. Audit-log writes are
+fail-soft on the same principle the agent dispatcher uses — a DB
+hiccup logs and continues rather than killing the live stream.
+
+The `/logs` page reads all three tables and renders agent runs and
+worker jobs in one timeline. `worker-jobs.ts` and `runs.ts` have
+parallel list/detail shapes precisely so the frontend can render them
+through the same row component.
+
+### 11.5 Run callsite + IDE clientInfo plumbing
+
+`runs.callsite_json` records who initiated a run and how. The shape
+(`Callsite` in `@agent-bridge/shared`) carries the originating
+`client` (name + optional version), the `tool` invoked, and the args
+the caller actually passed. It's provenance metadata, not load-bearing
+for the run's behaviour — bad shapes parse to `null` rather than 500
+the route.
+
+The bridge captures `clientInfo` from the MCP `initialize` handshake.
+`apps/mcp-bridge/src/index.ts` reads it lazily on every tool call via
+`server.getClientVersion()`, so late-binding works if the IDE
+re-initializes. `BridgeContext.getClientInfo()` then hands the value
+into `buildCallsite` in `apps/mcp-bridge/src/inspect-codebase-handler.ts`,
+which stamps it on every dispatched run alongside the agent slug, the
+tool name (`inspect_codebase` for the auto-derived path or the
+operator-authored `bridge_tools.name` for explicit tools), and the
+raw args. Web-chat runs synthesise `{ client: { name: 'web-chat' },
+tool: { name: 'chat' }, … }` so chat and bridge runs share one shape
+and operator skills can branch on `client.name` uniformly.
+
+The callsite is stamped onto the persisted `runs.input_prompt` as a
+single italic line via `formatCallsiteBlock` — the LLM sees provenance
+before the question. The dispatcher in `packages/agents/src/run-dispatcher.ts`
+forwards `prompt` verbatim to Mastra; the prepend happens at the
+caller so the persisted prompt matches what the model actually saw.
+NOT injected as a system message — that path tripped a Mastra
+working-memory + Jinja interaction on local templates.
+
+### 11.6 Backend route surface + Hono RPC
+
+`apps/backend/src/app.ts` composes roughly 25 sub-routers under
+`/api`, grouped by concern. Agent-scoped routers mount under
+`/api/agents/:agentId/…` (`agents`, `skills`, `tools`, `bridge-tools`,
+`agent-runs`, `agent-threads`, `agent-config-events`,
+`agent-mcp-tools`, `agent-repos`, `agent-token-estimate`,
+`agent-working-memory`, `agent-export`). Workspace-global resources
+mount at the API root (`llm-providers`, `mcp-connections`, `repos`,
+`runs`, `worker-jobs`, `bridge`). Read-only system surface lives under
+`/api/system/…` (`system-tools`, `system-skill`). SSE streaming runs
+through `/api/events`. Repo background-job mutations are a secondary
+mount on `repos` (`repo-jobs`, `repo-graph`, `repo-wiki-static`,
+`repo-edges`) so the static-asset handlers and JSON handlers can
+share the same path namespace without router-precedence games. The
+OAuth callback (§11.3) lives at `/oauth/…`, outside `/api`, because
+the redirect URL is registered with upstreams at dynamic-client-
+registration time and must outlive API versioning.
+
+Body-limit policy is path-aware: the global cap is 64 KiB, except
+`/api/agents/import` which gets 4 MiB to accommodate skill markdown
++ `configJson` bundles. CORS, secure-headers, request logging
+(dev-only), and the unhandled-error catch live on the outer app.
+
+The frontend consumes this surface through Hono's typed RPC client
+(`apps/frontend/src/lib/rpc/index.ts`). `hc<AppType>(apiBaseUrl)`
+imports the backend's exported `AppType` directly — a backend route
+refactor propagates as a TS error in the frontend caller. A thin
+`callApi` wrapper awaits the response, parses JSON, and either
+narrows on the `ok: true` envelope or throws `ApiError` carrying the
+backend's `{ code, message, details }` shape. Components never call
+`fetch` or `rpc` directly; the wrapper is the single choke point for
+error shape, future timeouts, and auth headers. A handful of routers
+that mount twice (the `repos` secondary mount, the runs sub-router)
+fall back to typed `fetch` calls because Hono's `hc` infers only the
+last `.route(...)` for a given mount-point — those are the documented
+exceptions, not the norm.
+
+### 11.7 Test / fixture harness
+
+`tests/` is a local-only fixture harness for the inspector toolkit. It
+builds three small ecommerce repos under `tests/fixtures/repos/`
+(`ecommerce-shared` — TS, `ecommerce-frontend` — TS + React,
+`ecommerce-backend` — Python + FastAPI), indexes them with gitnexus
+into a sibling data root, and exercises every wrapper against the
+real subprocess. Useful for contributors verifying the wrapper toolkit
+works end-to-end without setting up real repos.
+
+Isolation is by-construction: a separate Postgres DB
+(`agentbridge_test`), a sibling data root
+(`.agent-bridge-data-test/`), and `DATABASE_URL` +
+`AGENT_BRIDGE_DATA_DIR` set in-process before any worker module
+loads. The dev DB and dev data root are never touched.
+
+Two phases. `tests/fixture-setup.ts` (Phase 1, `pnpm test:fixture:setup`)
+bootstraps the test DB, copies fixture trees into the data root,
+`git init`s each one, and calls `handleIndexRepoJob` directly (no
+BullMQ) to produce the `meta.json` and embeddings.
+`tests/smoke-fixture.ts` (Phase 2, `pnpm test:fixture`) runs the
+deterministic wrapper assertions — `list_repos`,
+`find_in_codebase("Product")`, `understand_module(…)`,
+`trace_flow(…)`, `assess_change_impact(…)`, `debug_help(…)`.
+Assertions are intentionally loose ("at least N hits across these
+repos") because BM25 + semantic + RRF ranking is non-deterministic
+across embedder versions; the goal is regression detection — wrappers
+that suddenly return zero hits, mounts that fail to spawn, schema
+drift.
+
+Two adjacent smokes target other contracts. `smoke-blank-agent-skill.ts`
+verifies operator-authored skills reach the LLM on a `inspector_enabled
+= false` agent (requires `SMOKE_CHAT_*` env pointed at a real chat
+endpoint). `smoke-bridge-registry.ts` exercises the bridge's tool-
+registry build for both inspector-enabled and blank agents without
+invoking the model.

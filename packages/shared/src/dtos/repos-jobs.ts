@@ -90,3 +90,28 @@ export const generateWikiJobSchema = z
   .strict()
 
 export type GenerateWikiJob = z.infer<typeof generateWikiJobSchema>
+
+/**
+ * `deleteRepo` job payload — kicked off by the `DELETE /api/repos/:id`
+ * route after the row is soft-marked `deletion_pending=true`. The
+ * worker waits for any in-flight clone/index/wiki job for this repo
+ * to finish, `rm -rf`s the on-disk source dir, then hard-deletes the
+ * row.
+ *
+ * `repoId` is enough — the handler re-fetches the row to recompute
+ * the disk path. We carry `remoteUrl`/`branch` purely for log
+ * legibility ("deleting repo akarsh-k/foo") and to recompute the path
+ * if the row vanished mid-job (paranoid fallback).
+ *
+ * No secret lives on the payload. Deletion is a local FS op against a
+ * dir we already own.
+ */
+export const deleteRepoJobSchema = z
+  .object({
+    repoId: z.uuid(),
+    remoteUrl: z.string().min(1),
+    branch: z.string().min(1),
+  })
+  .strict()
+
+export type DeleteRepoJob = z.infer<typeof deleteRepoJobSchema>

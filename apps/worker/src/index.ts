@@ -11,6 +11,7 @@ import { handlePingJob } from './jobs/ping.js'
 import { handleCloneRepoJob } from './jobs/clone-repo.js'
 import { handleIndexRepoJob } from './jobs/index-repo.js'
 import { handleGenerateWikiJob } from './jobs/generate-wiki.js'
+import { makeDeleteRepoHandler } from './jobs/delete-repo.js'
 import { closeProducerQueues } from './jobs/enqueue.js'
 
 /**
@@ -192,17 +193,71 @@ async function main(): Promise<void> {
     )
   })
 
+  // ── delete-repo ───────────────────────────────────────────────────────
+  // Concurrency 1: the handler `rm -rf`s a single repo's tree and then
+  // hard-deletes its DB row. Two concurrent delete jobs for the same
+  // repo would race the rm; concurrency 1 across the queue (rather
+  // than sharded by repo id) is simpler and the operator-facing
+  // throughput cost is zero — deletes are not on the hot path. The
+  // handler waits for any in-flight clone/index/wiki for its target
+  // repo to drain before touching disk; the sibling queues are
+  // injected so the handler reuses these `Queue` instances rather
+  // than opening fresh Redis sockets.
+  const deleteRepoQueue = new Queue(QUEUE_NAMES.deleteRepo, {
+    connection: createRedisConnection({ role: 'queue' }),
+    defaultJobOptions: {
+      // One auto-retry covers a transient `EBUSY`/`ENOTEMPTY` where
+      // a child process held an open handle past the wait window.
+      // Beyond that the failure is usually a permissions / disk
+      // issue retry can't fix. Matches the queue config in
+      // `apps/backend/src/lib/queues.ts:enqueueDeleteRepo`.
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 5_000 },
+      removeOnComplete: { age: 24 * 3_600, count: 200 },
+      removeOnFail: { age: 7 * 24 * 3_600 },
+    },
+  })
+
+  const deleteRepoWorker = new Worker(
+    QUEUE_NAMES.deleteRepo,
+    makeDeleteRepoHandler({
+      siblingQueues: {
+        cloneRepo: cloneRepoQueue,
+        indexRepo: indexRepoQueue,
+        generateWiki: generateWikiQueue,
+      },
+    }),
+    {
+      connection: createRedisConnection({ role: 'worker' }),
+      concurrency: 1,
+    },
+  )
+
+  deleteRepoWorker.on('ready', () => {
+    console.info(`[worker:${QUEUE_NAMES.deleteRepo}] ready (concurrency=1)`)
+  })
+  deleteRepoWorker.on('completed', (job) => {
+    console.info(`[worker:${QUEUE_NAMES.deleteRepo}] completed job ${job.id}`)
+  })
+  deleteRepoWorker.on('failed', (job, err) => {
+    console.error(
+      `[worker:${QUEUE_NAMES.deleteRepo}] job ${job?.id ?? '<unknown>'} failed: ${err.message}`,
+    )
+  })
+
   const workers = [
     pingWorker,
     cloneRepoWorker,
     indexRepoWorker,
     generateWikiWorker,
+    deleteRepoWorker,
   ] as const
   const queues = [
     pingQueue,
     cloneRepoQueue,
     indexRepoQueue,
     generateWikiQueue,
+    deleteRepoQueue,
   ] as const
 
   await pingQueue.add(

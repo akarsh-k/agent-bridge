@@ -1,0 +1,1 @@
+ALTER TABLE "repos" ADD COLUMN "deletion_pending" boolean DEFAULT false NOT NULL;
