@@ -10,6 +10,8 @@ import { navigate } from '../../../../lib/router'
 import { Button } from '../../../../ui/button'
 import { Pill } from '../../../../ui/pill'
 import { BrandGlyph, type BrandKind } from '../../../../ui/brand-glyph'
+import { McpAuthBadge } from '../../../../features/library/mcp-auth-badge'
+import { SecretMapEditor } from '../../../../features/library/secret-map-editor'
 import { ApiError, discoverMcpTools, pollMcpTest } from '../../../../lib/rpc'
 import { toast } from '../../../../ui/toast-store'
 import { confirmDialog } from '../../../../ui/dialog-store'
@@ -228,6 +230,7 @@ export function McpDetailPage({ id }: { id: string }) {
           </h1>
           <div className="ab-detail-meta">
             <Pill kind="neutral">{conn.transport}</Pill>
+            <McpAuthBadge auth={conn.auth} />
             <span>·</span>
             <span className="ab-mono">{conn.commandOrUrl}</span>
           </div>
@@ -315,19 +318,88 @@ export function McpDetailPage({ id }: { id: string }) {
               </div>
             </>
           )}
-          <div className="ab-field">
-            <span className="ab-field-label">Env vars</span>
-            <Pill kind={conn.env.set ? 'success' : 'neutral'} dot>
-              {conn.env.set ? 'Set' : 'None'}
-            </Pill>
-          </div>
-          <div className="ab-field">
-            <span className="ab-field-label">Headers</span>
-            <Pill kind={conn.headers.set ? 'success' : 'neutral'} dot>
-              {conn.headers.set ? 'Set' : 'None'}
-            </Pill>
-          </div>
+          {isStdio && (
+            <div className="ab-field ab-field-col">
+              <span className="ab-field-label">Env vars</span>
+              <SecretMapEditor
+                label="Env vars"
+                present={conn.env.set}
+                keyPlaceholder="NOTION_TOKEN"
+                valuePlaceholder="secret_…"
+                helpText="Forwarded to the stdio subprocess on every spawn."
+                busy={busy}
+                onSave={(map) =>
+                  patchMcpConnection(conn.id, {
+                    env: { action: 'set', plaintext: map },
+                  }).then(() => {
+                    toast.success('Env vars updated')
+                  })
+                }
+                onClear={() =>
+                  patchMcpConnection(conn.id, {
+                    env: { action: 'clear' },
+                  }).then(() => {
+                    toast.success('Env vars cleared')
+                  })
+                }
+              />
+            </div>
+          )}
+          {!isStdio && (
+            <div className="ab-field ab-field-col">
+              <span className="ab-field-label">Headers</span>
+              <SecretMapEditor
+                label="Headers"
+                present={conn.headers.set}
+                keyPlaceholder="Authorization"
+                valuePlaceholder="Bearer abc123…"
+                helpText={
+                  conn.auth.kind === 'headers'
+                    ? "Static-token auth. Set 'Authorization: Bearer <token>' here."
+                    : 'Sent as request headers on every call to the MCP server.'
+                }
+                busy={busy}
+                onSave={(map) =>
+                  patchMcpConnection(conn.id, {
+                    headers: { action: 'set', plaintext: map },
+                  }).then(() => {
+                    toast.success('Headers updated')
+                  })
+                }
+                onClear={() =>
+                  patchMcpConnection(conn.id, {
+                    headers: { action: 'clear' },
+                  }).then(() => {
+                    toast.success('Headers cleared')
+                  })
+                }
+              />
+            </div>
+          )}
         </div>
+        {isStdio && (
+          // Honest about the boundary: stdio auth lives in the
+          // subprocess (env var, args, or a wrapper like `mcp-remote`'s
+          // own ~/.mcp-auth/ cache). Agent Bridge doesn't track expiry
+          // or run any refresh — operator owns the credential lifecycle.
+          // Calling this out here prevents the Notion-via-mcp-remote
+          // class of confusion ("I authorized once, why does it look
+          // like nothing's there?").
+          <div
+            className="ab-field-help"
+            style={{ marginTop: 8 }}
+          >
+            <strong>Note:</strong> stdio connections — auth is managed
+            by the subprocess itself (static env vars, CLI args, or a
+            wrapper like <code className="ab-mono">mcp-remote</code>{' '}
+            keeping its own token cache). Agent Bridge doesn't track
+            expiry or refresh tokens for stdio. For OAuth-protected
+            services with an HTTP MCP endpoint (Notion, Linear,
+            Atlassian, …), consider recreating this connection with{' '}
+            <code className="ab-mono">http</code> transport — Agent
+            Bridge will then handle the OAuth lifecycle for you.
+          </div>
+        )}
       </div>
 
       <div className="ab-card ab-card-pad ab-form-section">

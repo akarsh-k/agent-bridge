@@ -29,6 +29,7 @@
  */
 
 import { auth, MCPClient, MCPOAuthClientProvider } from '@mastra/mcp'
+import { FixedMCPOAuthClientProvider } from './oauth-provider-fix.js'
 import type { OAuthStorage } from '@mastra/mcp'
 import { buildSandboxedEnv } from '@agent-bridge/shared/spawn'
 import type { McpTransport } from '@agent-bridge/shared'
@@ -229,7 +230,7 @@ export async function discoverMcpToolsOAuth(
   const timeout = input.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
   let redirectedTo: URL | null = null
-  const provider = new MCPOAuthClientProvider({
+  const provider = new FixedMCPOAuthClientProvider({
     redirectUrl: input.redirectUrl,
     clientMetadata: input.clientMetadata,
     storage: input.storage,

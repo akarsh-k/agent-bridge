@@ -54,10 +54,13 @@ import type { AgentBridgeDb } from '@agent-bridge/db'
 import { schema } from '@agent-bridge/db'
 import { decryptSecret } from '@agent-bridge/shared/crypto'
 import { buildSandboxedEnv } from '@agent-bridge/shared/spawn'
-import type { McpTransport } from '@agent-bridge/shared'
+import type { McpAuthKind, McpTransport } from '@agent-bridge/shared'
 import type { Tool } from '@mastra/core/tools'
-import { MCPClient } from '@mastra/mcp'
+import { MCPClient, MCPOAuthClientProvider } from '@mastra/mcp'
+import { FixedMCPOAuthClientProvider } from './oauth-provider-fix.js'
 import { and, asc, eq } from 'drizzle-orm'
+
+import { DrizzleOAuthStorage } from './oauth-storage.js'
 import { createInterface, type Interface as ReadlineInterface } from 'node:readline'
 import type { Readable } from 'node:stream'
 
@@ -205,7 +208,7 @@ export async function mountExternalMcps(
 
   try {
     for (const group of grouped) {
-      const mounted = await mountOneConnection({ agentId, group, secrets })
+      const mounted = await mountOneConnection({ db, agentId, group, secrets })
       clients.push(mounted.client)
       perConnection.push(mounted.meta)
 
@@ -272,6 +275,10 @@ interface AllowlistRow {
   readonly envEnvelope: string | null
   readonly headersEnvelope: string | null
   readonly allowHostHome: boolean
+  /** Drives whether `mountOneConnection` wires an `MCPOAuthClientProvider`
+   *  (so access tokens auto-refresh against the upstream server) for
+   *  HTTP/SSE transports. `'none'` and `'headers'` skip the provider. */
+  readonly authKind: McpAuthKind
   readonly toolName: string
 }
 
@@ -284,6 +291,7 @@ interface ConnectionGroup {
   readonly envEnvelope: string | null
   readonly headersEnvelope: string | null
   readonly allowHostHome: boolean
+  readonly authKind: McpAuthKind
   readonly selectedTools: readonly string[]
 }
 
@@ -294,11 +302,12 @@ interface MountedConnection {
 }
 
 async function mountOneConnection(args: {
+  readonly db: AgentBridgeDb
   readonly agentId: string
   readonly group: ConnectionGroup
   readonly secrets: string[]
 }): Promise<MountedConnection> {
-  const { agentId, group, secrets } = args
+  const { db, agentId, group, secrets } = args
   const slug = slugifyConnectionName(group.connectionName)
 
   // Decrypt exactly what the transport needs. Keeping the decryption
@@ -320,6 +329,26 @@ async function mountOneConnection(args: {
   collectSecretsFromMap(decryptedEnv, secrets)
   collectSecretsFromMap(decryptedHeaders, secrets)
 
+  // OAuth provider for HTTP/SSE connections that the operator authorized
+  // via the discover/test flow. Without this, runtime calls send NO
+  // `Authorization` header (or send a stale token from `headers`) and
+  // the server 401s — the operator would have to re-run the test flow
+  // every time the access token expires (typically 1h on Notion / 24h
+  // on Atlassian). With it: Mastra's provider reads the access token
+  // from `mcp_oauth_state`, transparently refreshes via the persisted
+  // refresh-token when expired, and writes the new tokens back to the
+  // same scope_key. The operator only sees a re-auth prompt when the
+  // refresh-token itself dies (rare; most providers issue long-lived
+  // ones), and that surfaces here as a thrown error from the
+  // `onRedirectToAuthorization` hook.
+  const authProvider = buildOauthProviderIfNeeded({
+    db,
+    transport: group.transport,
+    authKind: group.authKind,
+    connectionId: group.connectionId,
+    connectionName: group.connectionName,
+  })
+
   const serverDef = buildServerDef({
     transport: group.transport,
     commandOrUrl: group.commandOrUrl,
@@ -327,6 +356,7 @@ async function mountOneConnection(args: {
     env: decryptedEnv,
     headers: decryptedHeaders,
     allowHostHome: group.allowHostHome,
+    authProvider,
   })
 
   // ID combines connection + agent: Mastra hashes config internally and
@@ -412,6 +442,7 @@ async function loadAllowlist(
       envEnvelope: schema.mcpConnections.envEnvelope,
       headersEnvelope: schema.mcpConnections.headersEnvelope,
       allowHostHome: schema.mcpConnections.allowHostHome,
+      authKind: schema.mcpConnections.authKind,
       toolName: schema.agentMcpTools.toolName,
       enabled: schema.agentMcpTools.enabled,
       createdAt: schema.agentMcpTools.createdAt,
@@ -441,6 +472,7 @@ async function loadAllowlist(
     envEnvelope: r.envEnvelope,
     headersEnvelope: r.headersEnvelope,
     allowHostHome: r.allowHostHome,
+    authKind: r.authKind,
     toolName: r.toolName,
   }))
 }
@@ -462,6 +494,7 @@ function groupByConnection(rows: AllowlistRow[]): ConnectionGroup[] {
       envEnvelope: row.envEnvelope,
       headersEnvelope: row.headersEnvelope,
       allowHostHome: row.allowHostHome,
+      authKind: row.authKind,
       selectedTools: [row.toolName],
     })
   }
@@ -484,6 +517,11 @@ function buildServerDef(input: {
   readonly env: Record<string, string> | null
   readonly headers: Record<string, string> | null
   readonly allowHostHome: boolean
+  /** When set (HTTP/SSE + OAuth-kind connection), Mastra owns auth-header
+   *  injection AND token refresh. Operator-supplied `headers` still
+   *  layer on top — useful for combining a persistent API key with an
+   *  OAuth access-token, though most servers won't accept both. */
+  readonly authProvider?: MCPOAuthClientProvider | null
 }): ServerDef {
   if (input.transport === 'http' || input.transport === 'sse') {
     let url: URL
@@ -503,6 +541,7 @@ function buildServerDef(input: {
       requestInit: {
         headers: input.headers ?? {},
       },
+      ...(input.authProvider ? { authProvider: input.authProvider } : {}),
       // `stderr` / `env` etc. are `never` on HttpServerDefinition — don't
       // set them here.
     }
@@ -536,6 +575,80 @@ function buildServerDef(input: {
 }
 
 type ServerDef = ConstructorParameters<typeof MCPClient>[0]['servers'][string]
+
+/**
+ * MCP OAuth callback URL — must match
+ * `apps/backend/src/routes/mcp-connections.ts:buildOauthCallbackUrl`
+ * byte-for-byte. Notion / Atlassian / etc. enforce strict
+ * `redirect_uri` matching, and the dynamic-client-registration record
+ * persisted on first authorize pinned this exact value. If you change
+ * the format here, change it there too AND have every operator
+ * re-authorize.
+ *
+ * Reads `PORT` from `process.env` (default 3001 — matches `.env.example`)
+ * so the agents package doesn't need to import backend env config.
+ */
+function mcpOauthCallbackUrl(connectionId: string): string {
+  const port = process.env['PORT'] || '3001'
+  return `http://localhost:${port}/oauth/mcp/${connectionId}/callback`
+}
+
+/**
+ * Build an `MCPOAuthClientProvider` for a connection that needs one,
+ * else return null. Centralised so `mountOneConnection` doesn't have to
+ * branch on transport + auth-kind inline.
+ *
+ * Skips when:
+ *   - transport is stdio (no HTTP auth surface)
+ *   - authKind is anything other than `'oauth'` (`'none'` and `'headers'`
+ *     don't talk to the OAuth state machine)
+ *
+ * The OAuth callback URL must match the test/discover path byte-for-byte
+ * — Notion / Atlassian / etc. enforce strict redirect-URI matching at
+ * the upstream authorization server, and the dynamic-client-registration
+ * payload pinned this exact value when the operator first authorized.
+ * Same shape as `apps/backend/src/routes/mcp-connections.ts:buildOauthCallbackUrl`.
+ */
+function buildOauthProviderIfNeeded(input: {
+  readonly db: AgentBridgeDb
+  readonly transport: McpTransport
+  readonly authKind: McpAuthKind
+  readonly connectionId: string
+  readonly connectionName: string
+}): MCPOAuthClientProvider | null {
+  const { db, transport, authKind, connectionId, connectionName } = input
+  if (transport === 'stdio') return null
+  if (authKind !== 'oauth') return null
+  const redirectUrl = mcpOauthCallbackUrl(connectionId)
+  return new FixedMCPOAuthClientProvider({
+    redirectUrl,
+    clientMetadata: {
+      // Identical metadata to the discover/test path so the persisted
+      // `client_info` row stays valid — if these drift, Mastra would
+      // re-register and the operator would lose their tokens.
+      client_name: 'Agent Bridge',
+      redirect_uris: [redirectUrl],
+      token_endpoint_auth_method: 'none',
+      grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'],
+    },
+    storage: new DrizzleOAuthStorage(db.db, connectionId),
+    onRedirectToAuthorization: (url) => {
+      // Refresh failed AND the access path can't be silently recovered
+      // (refresh-token died, scope changed, server rotated client). At
+      // runtime we have no UI to redirect the user to, so throw a clear
+      // error that the dispatcher's `classifyMessage` will mark as
+      // `auth` and the operator sees in /logs as a red Run error.
+      // The fix is for the operator to revisit the MCP detail page and
+      // re-run Discover to complete the OAuth popup again.
+      throw new Error(
+        `[external-mcps] connection "${connectionName}" needs re-authorization ` +
+          `(upstream OAuth refresh failed; got REDIRECT to ${url.toString().slice(0, 120)}…). ` +
+          `Open the MCP detail page in /library/mcp and click Discover to re-authorize.`,
+      )
+    },
+  })
+}
 
 // ─── Internal: crypto + env helpers ──────────────────────────────────────
 

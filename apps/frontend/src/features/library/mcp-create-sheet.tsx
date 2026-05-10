@@ -4,8 +4,10 @@
 
 import { useMemo, useState, type ClipboardEvent } from 'react'
 import {
+  mcpAuthKinds,
   mcpConnectionCreateInputSchema,
   mcpTransports,
+  type McpAuthKind,
   type McpConnectionResponse,
   type McpTransport,
 } from '@agent-bridge/shared'
@@ -22,6 +24,29 @@ const TRANSPORT_LABEL: Record<McpTransport, string> = {
   sse: 'sse (server-sent events)',
 }
 
+const AUTH_LABEL: Record<McpAuthKind, string> = {
+  oauth: 'OAuth (we manage the flow + token refresh)',
+  headers: 'Custom headers (you supply a static token)',
+  none: 'None (anonymous)',
+}
+
+const AUTH_SUB: Record<McpAuthKind, string> = {
+  oauth: 'managed',
+  headers: 'static token',
+  none: 'anonymous',
+}
+
+/**
+ * Sensible default per transport. Stdio uses env vars or wrapper-managed
+ * auth so 'none' from our perspective is correct. HTTP/SSE servers
+ * almost always require OAuth (Notion, Linear, Atlassian, GitHub MCP)
+ * — defaulting there means clicking Discover Just Works for the
+ * common case.
+ */
+function defaultAuthFor(transport: McpTransport): McpAuthKind {
+  return transport === 'stdio' ? 'none' : 'oauth'
+}
+
 function McpCreateForm({
   onClose,
   onCreated,
@@ -35,6 +60,13 @@ function McpCreateForm({
   const [commandOrUrl, setCommandOrUrl] = useState('')
   const [argsRaw, setArgsRaw] = useState('')
   const [allowHostHome, setAllowHostHome] = useState(false)
+  // Default to the right thing per transport. The transport-change
+  // handler keeps this in sync if the operator switches transports
+  // without manually touching the auth picker (most common path —
+  // operator picks transport, leaves auth at default).
+  const [authKind, setAuthKind] = useState<McpAuthKind>(
+    defaultAuthFor('stdio'),
+  )
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -48,13 +80,35 @@ function McpCreateForm({
     [],
   )
 
+  const authOpts: DropdownOption<McpAuthKind>[] = useMemo(
+    () =>
+      mcpAuthKinds.map((k) => ({
+        value: k,
+        label: AUTH_LABEL[k],
+        sub: AUTH_SUB[k],
+      })),
+    [],
+  )
+
   const isStdio = transport === 'stdio'
+
+  // Reset auth to the per-transport default when the operator switches
+  // transports — but only if they hadn't already overridden it. Tracking
+  // "did the user touch the auth picker" gets fiddly; cheaper heuristic
+  // is to always reset on transport change. Worst case: operator picks
+  // a non-default auth, switches transport, has to re-pick. Acceptable
+  // since transport changes are rare during a single create flow.
+  const handleTransportChange = (next: McpTransport): void => {
+    setTransport(next)
+    setAuthKind(defaultAuthFor(next))
+  }
 
   const dirty =
     name.length > 0 ||
     commandOrUrl.length > 0 ||
     argsRaw.length > 0 ||
     transport !== 'stdio' ||
+    authKind !== defaultAuthFor('stdio') ||
     allowHostHome
   const guardedClose = useDirtyClose(dirty && !busy, onClose)
 
@@ -78,6 +132,10 @@ function McpCreateForm({
       commandOrUrl: commandOrUrl.trim(),
       argsJson: isStdio && argsJson.length > 0 ? argsJson : undefined,
       allowHostHome: isStdio ? allowHostHome : undefined,
+      // Stdio always sends `none` — auth lives in the subprocess, not
+      // in our state machine. HTTP/SSE sends whatever the picker holds
+      // (defaults to `oauth` per `defaultAuthFor`).
+      auth: { kind: isStdio ? 'none' : authKind },
     })
     if (!parsed.success) {
       setErr(parsed.error.issues[0]?.message ?? 'Invalid MCP connection')
@@ -130,9 +188,12 @@ function McpCreateForm({
         <span className="ab-field-label">Transport</span>
         <Dropdown<McpTransport>
           value={transport}
-          onChange={setTransport}
+          onChange={handleTransportChange}
           options={transportOpts}
         />
+        <span className="ab-field-help">
+          {transportGuidanceFor(transport)}
+        </span>
       </div>
       <div className="ab-field">
         <label className="ab-field-label" htmlFor="mc-cmd">
@@ -144,10 +205,27 @@ function McpCreateForm({
           value={commandOrUrl}
           onChange={(e) => setCommandOrUrl(e.target.value)}
           placeholder={
-            isStdio ? 'npx -y @modelcontextprotocol/server-…' : 'https://api.example.com/mcp'
+            isStdio
+              ? 'npx -y @modelcontextprotocol/server-…'
+              : transport === 'sse'
+                ? 'https://api.example.com/sse'
+                : 'https://api.example.com/mcp'
           }
         />
       </div>
+      {!isStdio && (
+        <div className="ab-field">
+          <span className="ab-field-label">Auth</span>
+          <Dropdown<McpAuthKind>
+            value={authKind}
+            onChange={setAuthKind}
+            options={authOpts}
+          />
+          <span className="ab-field-help">
+            {authGuidanceFor(authKind)}
+          </span>
+        </div>
+      )}
       {isStdio && (
         <>
           <div className="ab-field">
@@ -242,6 +320,74 @@ export function McpCreateSheet({
   return (
     <McpCreateForm key={openCount} onClose={onClose} onCreated={onCreated} />
   )
+}
+
+/**
+ * Steer the operator to the right transport at the point of decision.
+ * Auth lifecycle differs sharply: HTTP/SSE OAuth gets full lifecycle
+ * management on our side (authorize once, auto-refresh, alive forever);
+ * stdio means whatever the subprocess does for itself, which Agent
+ * Bridge can't track. The Notion-via-mcp-remote class of confusion was
+ * a direct consequence of operators picking stdio for OAuth-protected
+ * services without realising what they were giving up.
+ */
+function transportGuidanceFor(transport: McpTransport): string {
+  switch (transport) {
+    case 'stdio':
+      return (
+        'Pick stdio for local tools (filesystem, sqlite, git, etc.) or ' +
+        'services using static API keys via env vars. ' +
+        'For OAuth-protected services with an HTTP MCP endpoint ' +
+        '(Notion, Linear, Atlassian, …), choose http instead — Agent ' +
+        "Bridge will handle the OAuth lifecycle (authorize once, " +
+        "auto-refresh tokens, you're done)."
+      )
+    case 'http':
+      return (
+        "We'll manage the OAuth flow and refresh tokens automatically. " +
+        'After saving, click Discover on the connection page to authorize ' +
+        "(opens a popup); you won't need to re-authorize until the upstream " +
+        'refresh token expires (rare).'
+      )
+    case 'sse':
+      return (
+        'Same managed-OAuth lifecycle as http — pick sse only if the ' +
+        'server explicitly requires the older Server-Sent-Events ' +
+        'transport. Most modern MCP servers prefer http (Streamable-HTTP).'
+      )
+  }
+}
+
+/**
+ * Per-auth-kind hint shown under the auth dropdown. Mirrors the
+ * transport-guidance pattern — the operator reads the consequence of
+ * their choice at the point of decision instead of finding out after
+ * the fact (the Notion-with-auth-none-and-no-tools situation).
+ */
+function authGuidanceFor(authKind: McpAuthKind): string {
+  switch (authKind) {
+    case 'oauth':
+      return (
+        "After saving, click Discover to authorize — a popup opens the " +
+        "upstream OAuth flow. Tokens are stored encrypted; Agent Bridge " +
+        "refreshes them automatically so the connection stays alive " +
+        "across IDE sessions without you returning here."
+      )
+    case 'headers':
+      return (
+        'Provide a static auth token via the headers field on the ' +
+        'connection page (e.g. ' +
+        "'Authorization: Bearer <token>'). Use this for personal access " +
+        "tokens / API keys that don't expire. We don't refresh anything."
+      )
+    case 'none':
+      return (
+        'Anonymous — no auth header sent. Only valid for MCP servers ' +
+        "that explicitly allow unauthenticated access (rare for hosted " +
+        "services). Discover will fail silently with 0 tools if the " +
+        "server actually requires auth."
+      )
+  }
 }
 
 /**

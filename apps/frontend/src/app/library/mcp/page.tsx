@@ -9,6 +9,7 @@ import { BrandGlyph, type BrandKind } from '../../../ui/brand-glyph'
 import { RowMenu } from '../../../ui/row-menu'
 import { ChevronRightIcon, McpIcon, PlusIcon } from '../../../ui/icons'
 import { McpCreateSheet } from '../../../features/library/mcp-create-sheet'
+import { McpAuthBadge } from '../../../features/library/mcp-auth-badge'
 import { confirmDialog } from '../../../ui/dialog-store'
 import { toast } from '../../../ui/toast-store'
 import { ApiError } from '../../../lib/rpc'
@@ -98,6 +99,7 @@ export function McpPage() {
               </div>
               <div className="ab-list-row-meta">
                 <Pill kind="neutral">{m.transport}</Pill>
+                <McpAuthBadge auth={m.auth} />
                 <RowMenu
                   items={[
                     {

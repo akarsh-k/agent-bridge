@@ -781,17 +781,43 @@ function mapChunk(
       }
     }
     case 'tool-result': {
+      // MCP tool servers return `{ isError: true, content: [...] }` on
+      // failure rather than throwing — Mastra surfaces those as a normal
+      // `tool-result` chunk, NOT a `tool-error`. Without this detection
+      // the operator sees a green "Tool: foo → ok" row in /logs while
+      // the model spins on a buried error envelope (the Notion
+      // `Invalid Data Source URL` case). Promote MCP error envelopes
+      // to the tool-error event path so the timeline + Errors filter
+      // catch them at scan speed.
+      const rawOutput = payload['result'] ?? payload['output'] ?? null
+      const mcpError = detectMcpErrorEnvelope(rawOutput)
+      const stepIdx =
+        stringOrNumberOrNull(payload['stepIndex']) ??
+        Math.max(0, state.currentStepIndex)
+      const toolCallId = stringOr(payload['toolCallId'], '')
+      const toolName = stringOr(payload['toolName'], '')
+      if (mcpError !== null) {
+        return {
+          kind: 'run.tool.result',
+          ts,
+          data: {
+            runId,
+            stepIndex: stepIdx,
+            toolCallId,
+            toolName,
+            error: mcpError,
+          } satisfies RunToolResultPayload,
+        }
+      }
       return {
         kind: 'run.tool.result',
         ts,
         data: {
           runId,
-          stepIndex:
-            stringOrNumberOrNull(payload['stepIndex']) ??
-            Math.max(0, state.currentStepIndex),
-          toolCallId: stringOr(payload['toolCallId'], ''),
-          toolName: stringOr(payload['toolName'], ''),
-          output: payload['result'] ?? payload['output'] ?? null,
+          stepIndex: stepIdx,
+          toolCallId,
+          toolName,
+          output: rawOutput,
         } satisfies RunToolResultPayload,
       }
     }
@@ -960,6 +986,42 @@ function stringOr<T>(value: unknown, fallback: T): string | T {
 
 function stringOrNumberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/**
+ * Detect the MCP "tool returned an error" envelope shape:
+ *
+ *   { isError: true, content: [{ type: 'text', text: '…' }, …] }
+ *
+ * Returns the extracted error message string when matched, or null
+ * when the value isn't an MCP error envelope. The message comes from
+ * the first `text` content part — for most MCP servers that's a JSON
+ * blob with the upstream API error inside, which is verbose but
+ * forwarded verbatim so operators can debug. Models also see it
+ * verbatim via Mastra's tool-result, so the diagnosis the model
+ * receives matches what /logs shows.
+ *
+ * Defensive — every shape mismatch returns null so a malformed
+ * envelope falls through to the success path. The previous behavior
+ * (always treating tool-result as success) is the safe fallback.
+ */
+function detectMcpErrorEnvelope(output: unknown): string | null {
+  if (!isRecord(output)) return null
+  if (output['isError'] !== true) return null
+  const content = output['content']
+  if (Array.isArray(content)) {
+    for (const part of content) {
+      if (
+        isRecord(part) &&
+        part['type'] === 'text' &&
+        typeof part['text'] === 'string' &&
+        part['text'].length > 0
+      ) {
+        return part['text']
+      }
+    }
+  }
+  return 'MCP tool returned isError: true (no text content)'
 }
 
 function errorMessageFromPayload(payload: Record<string, unknown>): string {

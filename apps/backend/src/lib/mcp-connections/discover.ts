@@ -306,10 +306,24 @@ export async function completeOauthCallback(args: {
       authorizationCode,
     })
   } catch (err) {
+    // Log loudly so the operator + dev see the actual exchange error
+    // in backend stderr. The polling frontend gets the message in the
+    // session result; the rendered callback page surfaces it too.
+    // Without this, OAuth failures looked like "popup says authorized,
+    // discover button still opens upstream" — opaque from every angle.
+    const message =
+      err instanceof Error
+        ? `${err.name}: ${err.message}`
+        : `unknown oauth error: ${String(err)}`
+    console.error(
+      `[mcp-oauth] completeOauthCallback failed for connection ${stored.id} ` +
+        `(transport=${stored.transport}, server=${stored.commandOrUrl}):`,
+      err,
+    )
     registry.finalize(sessionId, {
       status: 'failed',
       code: 'unknown',
-      message: err instanceof Error ? err.message : 'oauth callback failed',
+      message,
     })
     return
   }
@@ -332,17 +346,31 @@ export async function completeOauthCallback(args: {
   if (result.ok && result.kind === 'redirect') {
     // Strange case: user approved but provider still wants another
     // redirect. Treat as failure — we won't bounce the user through
-    // again automatically.
+    // again automatically. Log so the operator can see what the
+    // upstream re-redirect URL was (often points at the actual error
+    // — wrong scope, wrong client, etc.).
+    console.error(
+      `[mcp-oauth] connection ${stored.id} authorized but upstream asked ` +
+        `for ANOTHER redirect — token exchange likely failed. ` +
+        `Re-authorize URL: ${result.authorizeUrl}`,
+    )
     registry.finalize(sessionId, {
       status: 'failed',
       code: 'auth',
       message:
-        'upstream rejected the authorization code and asked to re-authorize',
+        'Upstream rejected the authorization code (or returned an invalid ' +
+        'token) and asked to re-authorize. Common causes: code already used ' +
+        '(double-callback), redirect_uri mismatch, scope rejection. Check ' +
+        'backend logs for the upstream error detail.',
     })
     return
   }
 
   const errorResult = result as Extract<DiscoverOAuthProbeResult, { ok: false }>
+  console.error(
+    `[mcp-oauth] connection ${stored.id} probe returned failure ` +
+      `(code=${errorResult.code}): ${errorResult.message}`,
+  )
   registry.finalize(sessionId, {
     status: 'failed',
     code: errorResult.code,

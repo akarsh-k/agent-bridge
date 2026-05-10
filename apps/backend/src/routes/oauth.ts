@@ -163,12 +163,35 @@ export const oauthRouter = new Hono()
         authorizationCode: query.code,
       })
 
+      // Render the callback page based on the TRUE outcome the
+      // exchange produced — not a hard-coded "complete." Without this,
+      // a token-exchange failure showed the user "Authorization
+      // complete" while the test session quietly transitioned to
+      // failed; their next Discover click then re-opened the upstream
+      // authorize page with no explanation.
+      const finalSnap = registry.getByConnection(connectionId)
+      if (finalSnap?.status === 'ok') {
+        return renderCallbackPage(c, {
+          title: 'Authorization complete',
+          body:
+            'You can close this tab. Agent Bridge is now fetching the ' +
+            'tool list.',
+          ok: true,
+        })
+      }
+      const failureMessage =
+        finalSnap && finalSnap.status === 'failed'
+          ? finalSnap.message
+          : 'The token exchange did not complete. Check the backend logs ' +
+            'for details (look for "[mcp-oauth]" entries).'
       return renderCallbackPage(c, {
-        title: 'Authorization complete',
+        title: 'Authorization failed',
         body:
-          'You can close this tab. Agent Bridge is now fetching the ' +
-          'tool list.',
-        ok: true,
+          `Authorization succeeded upstream, but Agent Bridge could not ` +
+          `complete the token exchange.\n\n${failureMessage}\n\n` +
+          `You can close this tab and try Discover again — but the same ` +
+          `error will repeat unless the underlying issue is fixed.`,
+        ok: false,
       })
     },
   )
@@ -230,6 +253,7 @@ function renderCallbackPage(
         margin: 1rem 0 0;
         line-height: 1.6;
         color: #475569;
+        white-space: pre-wrap;
       }
     </style>
   </head>
