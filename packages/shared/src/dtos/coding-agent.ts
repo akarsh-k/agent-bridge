@@ -76,10 +76,11 @@ export interface CodingAgentToolMetadata {
 }
 
 /**
- * @deprecated The V1 six-virtual model (plan_feature, plan_bugfix, …) was
- * replaced by the wrapper-tool architecture. The bridge now exposes ONE
- * MCP tool per agent (`<slug>__inspect_codebase`) plus operator-authored
- * `bridge_tools` rows. New code should consume {@link INSPECT_CODEBASE_METADATA}.
+ * @deprecated The earlier six-virtual model (plan_feature, plan_bugfix,
+ * …) was replaced by the wrapper-tool architecture. The bridge now
+ * exposes ONE MCP tool per agent (`<slug>__inspect_codebase`) plus
+ * operator-authored `bridge_tools` rows. New code should consume
+ * {@link INSPECT_CODEBASE_METADATA}.
  *
  * Left in place because event types in `events.ts` still reference the
  * underlying name union; ripping them out is a separate cleanup.

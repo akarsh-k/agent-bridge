@@ -1,5 +1,5 @@
 /**
- * Phase 3b/3c smoke test. Intentionally dev-only — this does NOT get
+ * Smoke test. Intentionally dev-only — this does NOT get
  * exported from the package and the HTTP layer never imports it.
  *
  * What it does:
@@ -7,7 +7,7 @@
  *   2. Opens the shared Postgres pool.
  *   3. Looks up an agent by slug OR uuid (slug is friendlier for CLI use).
  *   4. Runs `buildAgent(...)` to produce a real Mastra Agent, which
- *      (Phase 3c) also spawns `gitnexus mcp` if the agent has indexed
+ *      also spawns `gitnexus mcp` if the agent has indexed
  *      repos attached. Prints the merged tool list so you can confirm.
  *   5. Streams a minimal prompt through `agent.stream(...)`, piping the
  *      text stream straight to stdout.
@@ -16,7 +16,7 @@
  *      on an idle child or Postgres connection.
  *
  * Why this lives as a standalone script instead of a jest/vitest file:
- *   - It talks to a real LLM over the wire AND (Phase 3c) a real
+ *   - It talks to a real LLM over the wire AND a real
  *     `gitnexus mcp` child process over stdio. That's integration, not
  *     unit; mocking the Mastra or gitnexus surface defeats the point.
  *   - We want a single clear command a contributor can run to verify
@@ -39,7 +39,7 @@
  *   #   --no-external-mcps
  *   #                  skip mounting any allowlisted external MCP
  *   #                  connections. Same intent as --no-gitnexus but
- *   #                  for the Phase 4 mount path.
+ *   #                  for the external MCP mount path.
  *   #   --trace-mcp-logs
  *   #                  subscribe to stdio MCP stderr and echo every
  *   #                  scrubbed line to the smoke script's stdout as
@@ -130,8 +130,8 @@ if (values.help) {
       'buildAgent(...), and runs a single prompt through the LLM. When',
       'the agent has status=ready repos attached, a sandboxed',
       '`gitnexus mcp` subprocess is also spawned and its tools become',
-      'available to the LLM. When the agent has allowlisted MCP tools',
-      '(Phase 4), the relevant MCP connections are spawned too. Pass',
+      'available to the LLM. When the agent has allowlisted MCP tools,',
+      'the relevant MCP connections are spawned too. Pass',
       '--no-gitnexus or --no-external-mcps to skip the respective mount.',
     ].join('\n'),
   )
@@ -194,7 +194,7 @@ async function main(): Promise<void> {
       })
     }
 
-    // Phase 3c: dump the merged tools dict so the operator can confirm
+    // Dump the merged tools dict so the operator can confirm
     // the `gitnexus_*` tools surfaced. `agent.getTools?.()` is preferred
     // when available; fall back to a sentinel when not, so the script
     // keeps working across Mastra minor versions.

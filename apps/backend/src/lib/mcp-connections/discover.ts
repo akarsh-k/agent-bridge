@@ -118,7 +118,7 @@ export async function testMcpConnection(
   })
 }
 
-// ─── OAuth probe (Phase 4H) ──────────────────────────────────────────────
+// ─── OAuth probe ─────────────────────────────────────────────────────────
 
 /**
  * OAuth probe entry. Creates a fresh test session, runs the provider

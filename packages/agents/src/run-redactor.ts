@@ -1,8 +1,8 @@
 /**
  * Per-run secret scrubber.
  *
- * Binds a list of plaintext secrets (today: the LLM provider apiKey;
- * Phase 4 adds MCP credentials) to `redactSecrets` / `redactMany` from
+ * Binds a list of plaintext secrets (LLM provider apiKey + MCP
+ * credentials) to `redactSecrets` / `redactMany` from
  * `@agent-bridge/shared`. Returned helpers are pure — callers invoke
  * them right before `eventBus.publish(event)` and
  * `runsRepo.appendEvent(...)` so no plaintext ever crosses the publish
@@ -13,7 +13,7 @@
  *     helpers. Keeping the generic ones pure + browser-safe is more
  *     valuable than deduplicating three lines here.
  *   - Future per-run wiring (e.g. redacting BullMQ job payloads for
- *     external MCP calls in Phase 4) will live alongside the dispatcher
+ *     external MCP calls) will live alongside the dispatcher
  *     anyway — this is its natural home.
  *
  * Mask string and threshold (min 4 chars) match the upstream helpers

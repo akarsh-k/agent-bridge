@@ -156,7 +156,7 @@ function AboutCard() {
         }}
       >
         <a
-          href="https://github.com/anthropics/agent-bridge/issues"
+          href="https://github.com/akarsh-k/agent-bridge/issues"
           target="_blank"
           rel="noreferrer"
           className="ab-btn ab-btn-secondary"

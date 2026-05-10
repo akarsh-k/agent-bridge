@@ -31,7 +31,7 @@ const MASTRA_IMPORT_PATTERNS = [
     message:
       'Mastra imports are only allowed inside `packages/agents/**`. ' +
       'Call into `@agent-bridge/agents` from apps/routes instead. ' +
-      'See docs/PLAN.md → Phase 3 → 3a-lint for rationale.',
+      'See docs/ARCHITECTURE.md §3 (monorepo conventions) for rationale.',
   },
   {
     // Bare `mastra` specifier, in case an unscoped variant is ever

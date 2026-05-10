@@ -19,7 +19,7 @@
  * Copy from the previous viewer was rarely useful (operators paste the
  * whole event when filing a bug).
  *
- * Phase 1 — added but not yet consumed. Phase 2 wires this into the
+ * Added but not yet consumed. A follow-up wires this into the
  * `EventRow` expansion in `run-detail-sheet.tsx`.
  */
 

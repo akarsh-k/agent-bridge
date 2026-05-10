@@ -1,11 +1,10 @@
 /**
  * Runs one agent invocation end-to-end:
  *
- *   1. `buildAgent(...)`               — constructs the Mastra Agent
- *                                        (Phase 3b), spawning a
- *                                        per-run `gitnexus mcp`
- *                                        subprocess if the agent has
- *                                        indexed repos (Phase 3c).
+ *   1. `buildAgent(...)`               — constructs the Mastra Agent,
+ *                                        spawning a per-run
+ *                                        `gitnexus mcp` subprocess if
+ *                                        the agent has indexed repos.
  *   2. `markRunning` + `run.started`   — flips the `runs` row, emits
  *                                        the SSE `run.started` frame,
  *                                        and records the same shape in
@@ -34,10 +33,10 @@
  *     perspective — it logs its own failures but NEVER re-throws.
  *     The POST route has already returned 202 by the time we start.
  *
- * Secrets handling (Phase 3f):
+ * Secrets handling:
  *   - `BuiltAgent.secrets` lists every decrypted plaintext the agent
- *     construction produced (today: LLM apiKey; Phase 4 adds MCP
- *     credentials). We bind them into a `RunRedactor` the moment the
+ *     construction produced (LLM apiKey + MCP credentials). We bind them
+ *     into a `RunRedactor` the moment the
  *     agent is built, then route EVERY outgoing event, every
  *     `run_events` row, and every terminal string (`runs.error_message`
  *     / `runs.output_summary`) through it. Scrubbing happens at the
@@ -56,11 +55,11 @@
  *     follow-up. For now, each run = one subprocess = one teardown.
  *   - Persisting `memory.thread`/`memory.resource` to the `runs` row.
  *     The thread id is derived at dispatch time (default: runId)
- *     and lives only in memory. Phase 3g adds the DB columns.
+ *     and lives only in memory.
  */
 
 // This file moved from `apps/backend/src/lib/run-dispatcher.ts` to
-// `packages/agents/` in Phase 5 so the IDE-facing MCP bridge
+// `packages/agents/` so the IDE-facing MCP bridge
 // (`apps/mcp-bridge`) can dispatch runs without a cross-app import.
 // Both backend route + bridge consume `dispatchRun` from
 // `@agent-bridge/agents`. Behaviour unchanged from the prior location.
@@ -100,7 +99,7 @@ import { runWithInspectorContext } from './inspector/run-context.js'
  * reconnecting mid-run gets a fresh batch within one UI frame, but
  * long enough that a typical run (8 s at ~80 tokens/s) produces ~40
  * `run_events` rows rather than ~640. Tune by measuring `run_events`
- * table growth after Phase 3e is wired up.
+ * table growth.
  */
 const TOKEN_BATCH_FLUSH_MS = 200
 
@@ -365,7 +364,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
     }
 
     // Wrap the entire stream-iteration block in the inspector run
-    // context (`docs/ARCHITECTURE.md §10` Phase C C4). Mastra's tool-execute
+    // context (`docs/ARCHITECTURE.md §10`). Mastra's tool-execute
     // context exposes `agent.toolCallId` but not our app-level `runId`,
     // so wrapper tools read `{db, eventBus, redactor, runId, …}` from
     // AsyncLocalStorage instead. The dispatcher initiates the stream
@@ -1057,8 +1056,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  *     across turns (see `apps/frontend/src/lib/use-chat`).
  *   - `resourceId` falls back to `agent:<agentId>` so every run of
  *     one agent shares a resource — the scope Mastra uses for
- *     semantic recall / cross-thread summaries. Phase 5 multi-user
- *     auth replaces this with real user ids.
+ *     semantic recall / cross-thread summaries. Future multi-user
+ *     auth will replace this with real user ids.
  */
 function resolveMemoryIds(
   built: BuiltAgent,
@@ -1194,8 +1193,8 @@ function extractStatusCode(err: unknown): number | null {
 /**
  * Coarse classifier. Kept intentionally pattern-based (no SDK
  * coupling) so we don't rot when the OpenAI-compatible provider
- * changes its error shape. Phase 3f replaces this with a proper
- * structured-error pipeline that can also drive UI icons.
+ * changes its error shape. A proper structured-error pipeline that
+ * can also drive UI icons would replace this.
  */
 function classifyMessage(message: string): RunErrorPayload['kind'] {
   if (

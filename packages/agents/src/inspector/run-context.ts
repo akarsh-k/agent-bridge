@@ -1,6 +1,6 @@
 /**
- * Run-scoped context for inspector wrapper tools (`docs/ARCHITECTURE.md §10`
- * Phase C C4).
+ * Run-scoped context for inspector wrapper tools
+ * (`docs/ARCHITECTURE.md §10`).
  *
  * Mastra's tool-execute context exposes `agent.toolCallId` but not our
  * app-level `runId`, so the dispatcher threads runtime state via

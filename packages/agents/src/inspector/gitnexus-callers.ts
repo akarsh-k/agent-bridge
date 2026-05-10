@@ -1,8 +1,8 @@
 /**
  * Thin async wrappers around the gitnexus MCP tool dict
- * (`docs/ARCHITECTURE.md §10` Phase B B3).
+ * (`docs/ARCHITECTURE.md §10`).
  *
- * The wrapper-tool architecture (D1) keeps the gitnexus subprocess + its
+ * The wrapper-tool architecture keeps the gitnexus subprocess + its
  * `tools` dict alive, but the LLM never sees the `gitnexus_*` tools
  * directly. Instead our deterministic workflows call them through the
  * functions below. Each function:

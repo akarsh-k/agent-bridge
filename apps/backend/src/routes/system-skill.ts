@@ -13,7 +13,7 @@
  *
  * URL kept as `/coding-agent` for frontend backwards compatibility —
  * the v1 coding-agent toolkit was replaced by the wrapper-tool
- * architecture (`docs/ARCHITECTURE.md §10` Phase B6/F1) but the route name
+ * architecture (`docs/ARCHITECTURE.md §10`) but the route name
  * still describes what the panel shows: "the auto-attached chunk".
  *
  * On read failure (e.g. dev mode where the .md hasn't been copied
@@ -26,7 +26,7 @@
  *   gitnexus library skills (the LLM doesn't see `gitnexus_*` tools
  *   directly anymore — wrappers wrap them). Endpoint kept so the
  *   frontend's library-skills card renders as "no skills attached"
- *   instead of erroring. Phase H+1 can drop the endpoint and the
+ *   instead of erroring. A future cleanup can drop the endpoint and the
  *   card together.
  */
 

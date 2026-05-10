@@ -55,7 +55,7 @@ async function agentExists(agentId: string): Promise<boolean> {
 }
 
 /**
- * Per-agent skill body budget enforcement (`docs/ARCHITECTURE.md §10` Phase F4).
+ * Per-agent skill body budget enforcement (`docs/ARCHITECTURE.md §10`).
  *
  * Sums `markdownBody.length` across the agent's existing skills,
  * optionally excluding one skill id (the one being PATCHed — its old
@@ -143,7 +143,7 @@ export const skillsRouter = new Hono()
         })
       }
 
-      // Phase F4: per-agent total skill body cap. Sum the existing
+      // Per-agent total skill body cap. Sum the existing
       // skills' bytes against the incoming body. exceeding the cap
       // returns 422 with a clear message rather than letting it land
       // and pollute the system prompt of every chat turn.
@@ -245,7 +245,7 @@ export const skillsRouter = new Hono()
       if ('markdownBody' in body) patch.markdownBody = body.markdownBody
       if ('position' in body) patch.position = body.position
 
-      // Phase F4: per-agent total cap on PATCH too. We exclude the
+      // Per-agent total cap on PATCH too. We exclude the
       // skill being updated from the existing-bytes sum (its old body
       // is being replaced). PATCHes that don't touch markdownBody skip
       // the check entirely.

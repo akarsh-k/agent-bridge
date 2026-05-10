@@ -1,6 +1,6 @@
 /**
  * Resolve a single-string `repo_hint` against the agent's attached repos
- * (`docs/ARCHITECTURE.md §10` Phase B). Simpler than the IDE-side
+ * (`docs/ARCHITECTURE.md §10`). Simpler than the IDE-side
  * `coding-agent/repo-resolver.ts`. inputs are a string, not a multi-signal
  * object; outputs are a single repo or a clear "ambiguous"/"miss" reason
  * the workflow can surface to the LLM.

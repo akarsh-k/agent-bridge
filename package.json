@@ -2,7 +2,7 @@
   "name": "agent-bridge",
   "version": "1.0.0",
   "private": true,
-  "description": "Agent Bridge monorepo",
+  "description": "Agent Bridge — multi-repo grounding for IDE coding agents via MCP.",
   "scripts": {
     "preflight": "node scripts/dev.mjs --preflight-only",
     "dev": "node scripts/dev.mjs",
@@ -25,9 +25,24 @@
     "test:fixture:skill": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-blank-agent-skill.ts",
     "secret:generate": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\""
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": [
+    "mcp",
+    "ide",
+    "coding-agent",
+    "monorepo",
+    "code-grounding",
+    "agent"
+  ],
+  "author": "Akarsh K (https://github.com/akarsh-k)",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akarsh-k/agent-bridge.git"
+  },
+  "homepage": "https://github.com/akarsh-k/agent-bridge#readme",
+  "bugs": {
+    "url": "https://github.com/akarsh-k/agent-bridge/issues"
+  },
   "packageManager": "pnpm@10.33.0",
   "engines": {
     "node": ">=24.15.0"

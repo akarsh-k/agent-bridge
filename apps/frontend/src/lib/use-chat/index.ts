@@ -15,7 +15,7 @@
  *   - Rendering (that's `<ChatPanel />` and friends).
  *   - Persistence. Messages are in-memory per agent. When the user
  *     switches agents we swap the whole state; nothing is pushed to
- *     localStorage in this phase. Phase 3g adds DB-backed replay once
+ *     localStorage in this phase. DB-backed replay will be added once
  *     `runs.mastra_thread_id` columns exist.
  *
  * SSE plumbing notes:

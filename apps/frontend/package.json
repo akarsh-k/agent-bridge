@@ -2,7 +2,15 @@
   "name": "frontend",
   "private": true,
   "version": "0.0.0",
+  "description": "React + Vite UI for Agent Bridge — manages agents, repos, MCP connections, and the run/log timeline.",
   "type": "module",
+  "author": "Akarsh K (https://github.com/akarsh-k)",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akarsh-k/agent-bridge.git",
+    "directory": "apps/frontend"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",

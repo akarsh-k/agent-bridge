@@ -4,10 +4,9 @@
  * makes the Skill-vs-Working-memory distinction tangible by showing
  * what the LLM has actually written into its notebook over time.
  *
- * Read-only on purpose for v1. Resetting/editing the scratchpad
- * server-side requires routing through Mastra's
- * `updateWorkingMemory` API — straightforward but out of scope for
- * the viewer pass.
+ * Read-only on purpose. Resetting/editing the scratchpad server-side
+ * requires routing through Mastra's `updateWorkingMemory` API —
+ * straightforward but out of scope for the viewer pass.
  *
  * Storage backend: Mastra's PostgresStore reads from the `mastra`
  * schema. We construct a minimal Memory instance (storage only — no

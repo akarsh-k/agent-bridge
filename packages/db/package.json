@@ -34,6 +34,13 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio"
   },
+  "author": "Akarsh K (https://github.com/akarsh-k)",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akarsh-k/agent-bridge.git",
+    "directory": "packages/db"
+  },
   "packageManager": "pnpm@10.33.0",
   "dependencies": {
     "@agent-bridge/shared": "workspace:*",

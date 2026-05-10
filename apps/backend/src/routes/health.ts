@@ -6,8 +6,8 @@ import { getDb } from '../db.js'
 /**
  * `GET /api/health`     — liveness probe. Cheap, no dependencies.
  * `GET /api/health/db`  — readiness probe. Verifies Drizzle can reach Postgres
- *                         and returns a row count per table. Used by Phase 1A
- *                         as the smoke-test target and, later, by any process
+ *                         and returns a row count per table. Used by smoke
+ *                         tests and, later, by any process
  *                         manager that wants to know the DB is reachable.
  *
  * The row-count query is one round-trip *per table* (executed in parallel).

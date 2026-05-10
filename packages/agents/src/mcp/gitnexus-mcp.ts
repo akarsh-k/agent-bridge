@@ -1,5 +1,5 @@
 /**
- * GitNexus MCP adapter — Phase 3c.
+ * GitNexus MCP adapter.
  *
  * Spawns a single sandboxed `gitnexus mcp` subprocess per agent and hands
  * Mastra a tool dict keyed by `gitnexus_*` names (`gitnexus_list_repos`,
@@ -38,7 +38,7 @@
  *     `assertExpectedGitnexusVersion(...)` — a drifted CLI never gets to
  *     talk to a Mastra agent.
  *   - No `@mastra/*` imports leak outside this package (enforced by the
- *     root ESLint guard rail from Phase 3a-lint).
+ *     root ESLint guard rail).
  */
 
 import type { AgentBridgeDb } from '@agent-bridge/db'

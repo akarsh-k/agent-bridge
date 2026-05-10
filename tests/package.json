@@ -7,6 +7,13 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p ."
   },
+  "author": "Akarsh K (https://github.com/akarsh-k)",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akarsh-k/agent-bridge.git",
+    "directory": "tests"
+  },
   "dependencies": {
     "@agent-bridge/db": "workspace:*",
     "@agent-bridge/shared": "workspace:*",

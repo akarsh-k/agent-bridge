@@ -1,5 +1,5 @@
 /**
- * Wrapper-tool type surface (`docs/ARCHITECTURE.md §10` Phase B).
+ * Wrapper-tool type surface (`docs/ARCHITECTURE.md §10`).
  *
  * `MiniRepo` is the structured payload every wrapper tool returns. It's
  * what the bridge accumulates onto `runs.minirepo_json` (D17 envelope's
@@ -13,7 +13,7 @@
  * free so the frontend's tool-call card can `import type` from it.
  */
 
-/** Inferred high-level intent of the user query. Phase B sets this to the wrapper's name; Phase C lets the LLM expand it. */
+/** Inferred high-level intent of the user query. Set to the wrapper's name; LLM expansion can override. */
 export type InspectorIntent =
   | 'find'
   | 'trace'

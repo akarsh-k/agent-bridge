@@ -2,7 +2,7 @@
   "name": "backend",
   "version": "1.0.0",
   "private": true,
-  "description": "",
+  "description": "Hono backend for Agent Bridge — agent control plane, run dispatcher, and bridge endpoints.",
   "type": "module",
   "main": "./dist/server.js",
   "types": "./src/app.ts",
@@ -20,9 +20,13 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Akarsh K (https://github.com/akarsh-k)",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akarsh-k/agent-bridge.git",
+    "directory": "apps/backend"
+  },
   "packageManager": "pnpm@10.33.0",
   "dependencies": {
     "@agent-bridge/agents": "workspace:*",

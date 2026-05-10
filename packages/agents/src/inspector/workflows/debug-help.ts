@@ -1,5 +1,5 @@
 /**
- * `debug_help` wrapper (`docs/ARCHITECTURE.md §10` Phase E E3).
+ * `debug_help` wrapper (`docs/ARCHITECTURE.md §10`).
  *
  * Inputs are an `error_text` (stack trace, log line, exception message)
  * plus an optional `query` (developer's free-form description of what
@@ -8,13 +8,13 @@
  * for each, fetching gitnexus_context for the top hits as suspect
  * call sites.
  *
- * No LLM call from inside this wrapper for now — Phase C's
+ * No LLM call from inside this wrapper for now —
  * `classifyAndExpand` is wired into `find_in_codebase` first; debug
  * scenarios benefit from a dedicated symbol-extractor pass that LLM
  * expansion would over-generalise (a stack frame at `cart.compute()`
  * deserves the literal `compute` more than a fanned-out list of
- * synonyms). If empirical results say otherwise, Phase F can layer
- * expansion in.
+ * synonyms). If empirical results say otherwise, expansion can be
+ * layered in.
  *
  * Recent commits / git-log integration is deferred. gitnexus's
  * `cypher` tool exposes commit nodes, but the schema isn't pinned;
@@ -149,7 +149,7 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
     }
   }
 
-  // Phase I: in parallel with the gitnexus loop above, fan out one
+  // In parallel with the gitnexus loop above, fan out one
   // ripgrep spawn per repo with all stack-trace-extracted candidates
   // OR'd together. Stack traces are exactly the case where literal
   // identifier matching dominates (`cart.compute`, `Cart.tsx`); the

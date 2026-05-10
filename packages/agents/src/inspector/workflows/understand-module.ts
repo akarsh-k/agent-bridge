@@ -1,5 +1,5 @@
 /**
- * `understand_module` wrapper (`docs/ARCHITECTURE.md §10` Phase E E4).
+ * `understand_module` wrapper (`docs/ARCHITECTURE.md §10`).
  *
  * Takes a single anchor (file path OR symbol) and returns enough
  * mini-repo content for the LLM to explain what it does:
@@ -10,8 +10,8 @@
  *     the explanation in dependencies, not just the entry point.
  *   - Optionally enriched with the wiki page when `repos.wikiStatus`
  *     reports `'ready'` and a page slug matches the anchor's basename.
- *     Wiki integration deferred until Phase F because the wiki tools
- *     were dropped from the agent in B6 — we'd be re-implementing
+ *     Wiki integration deferred because the wiki tools
+ *     were dropped from the agent — we'd be re-implementing
  *     the path-traversal-safe slug lookup here. For now, surface the
  *     structural data only.
  */

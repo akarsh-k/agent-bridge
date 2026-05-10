@@ -11,7 +11,7 @@ coverage
 .pnpm-store
 *.pem
 *.tsbuildinfo
-settings.local.json
+**/settings.local.json
 
 # Runtime-only data root. Contains cloned repos, GitNexus knowledge graphs,
 # generated wikis, the secrets master key (secret.key). Never commit.

@@ -27,6 +27,13 @@
     "smoke:gitnexus-query": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke-gitnexus-query.ts",
     "smoke:keyword-search": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke-keyword-search.ts"
   },
+  "author": "Akarsh K (https://github.com/akarsh-k)",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akarsh-k/agent-bridge.git",
+    "directory": "packages/agents"
+  },
   "packageManager": "pnpm@10.33.0",
   "dependencies": {
     "@agent-bridge/db": "workspace:*",

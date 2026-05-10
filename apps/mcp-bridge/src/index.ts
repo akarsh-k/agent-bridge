@@ -1,12 +1,12 @@
 /**
  * IDE-facing MCP bridge — wrapper-tool architecture
- * (`docs/ARCHITECTURE.md §10` Phase G).
+ * (`docs/ARCHITECTURE.md §10`).
  *
  * Spawned by the IDE (Cursor / Claude Code) over stdio. Each agent
  * exposes ONE MCP tool named `<slug>__inspect_codebase` (replaces the
- * Phase-5 `query_<slug>` AND the v1 coding-agent toolkit's six
+ * `query_<slug>` AND the v1 coding-agent toolkit's six
  * virtuals — `<slug>__plan_feature`, `__plan_bugfix`, etc.). Operator-
- * authored Phase 7 `bridge_tools` rows continue to register alongside
+ * authored `bridge_tools` rows continue to register alongside
  * with their authored names.
  *
  * Tool execution per call:
@@ -23,7 +23,7 @@
  * from the bridge surface — the agent's wrapper toolkit subsumes
  * them. Old `runs.bridge_tool_name` rows from past calls remain
  * intact; new runs leave it NULL for inspect_codebase calls and
- * stamp the operator-chosen name for Phase 7 calls.
+ * stamp the operator-chosen name for explicit `bridge_tools` calls.
  *
  * Source tagging via the `bridge:` streamId prefix (vs `run:` for
  * UI chat) is unchanged.
@@ -150,7 +150,7 @@ async function listExposableAgents(db: AgentBridgeDb): Promise<AgentRow[]> {
  *     (Coding-helper template). Description: operator's
  *     `agents.description` + a system note about the structured envelope.
  *   - Zero or more operator-authored `bridge_tools` rows are registered
- *     verbatim (Phase 7) for both kinds. Operator picks the name,
+ *     verbatim for both kinds. Operator picks the name,
  *     description, schema, and prompt template.
  *
  * Build-your-own (blank) agents have NO built-in tool — when an agent
@@ -198,7 +198,7 @@ async function buildToolRegistry(
       baseMode = 'inspect'
     }
 
-    // 2) Phase 7 explicit operator-authored rows — both kinds.
+    // 2) Explicit operator-authored rows — both kinds.
     //    For blank agents, this is where their auto-created
     //    `<slug>__ask_agent` row lands.
     const explicit = await db.db
@@ -290,7 +290,7 @@ async function main(): Promise<void> {
   }
 
   // Lower-level Server API (not McpServer) so we can ship arbitrary
-  // JSON Schema verbatim on `tools/list` — operator-authored Phase 7
+  // JSON Schema verbatim on `tools/list` — operator-authored
   // input schemas pass through unchanged.
   const server = new Server(
     { name: 'agent-bridge', version: '1.0.0' },

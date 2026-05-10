@@ -2,7 +2,7 @@
  * `/api/agents/:agentId/mcp-tools` — per-agent MCP tool allowlist.
  *
  * Only mutating verb is `PUT`: full set-replace. No granular POST/PATCH/DELETE
- * per tool. Rationale (also in `PLAN.md` §1C.3):
+ * per tool. Rationale:
  *
  *   - Matches the schema invariant: "Users must explicitly opt in —
  *     never 'everything on by default'." A single write is the simplest

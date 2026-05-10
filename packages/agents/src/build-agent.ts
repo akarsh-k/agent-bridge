@@ -37,7 +37,7 @@
  *     envelope comes from `llm_providers.api_key_envelope`; decryption
  *     uses `@agent-bridge/shared`'s AES-256-GCM helper which errors on
  *     tamper/wrong-key so a corrupted envelope fails loudly.
- *   - Phase 3c — GitNexus MCP mount: when the agent has at least one
+ *   - GitNexus MCP mount: when the agent has at least one
  *     `status='ready'` repo attached, we spawn ONE sandboxed
  *     `gitnexus mcp` subprocess (via `@mastra/mcp`'s `MCPClient`) and pass
  *     the resulting tools into the `Agent` constructor. The subprocess
@@ -45,7 +45,7 @@
  *     tool — there is deliberately NOT one subprocess per repo. Callers
  *     tear the subprocess down via `BuiltAgent.disconnect()`.
  *   - Semantic recall / vector store / arbitrary MCPs remain out of scope
- *     here (Phase 3+ and Phase 4).
+ *     here.
  *
  * Failure modes are explicit:
  *
@@ -111,7 +111,7 @@ export interface BuildAgentInput {
   /**
    * Skip spawning the `gitnexus mcp` subprocess even if ready repos are
    * attached. Useful for the smoke script (LLM-only sanity check) and
-   * for the imminent Phase 3d HTTP edge when we want to construct the
+   * for the HTTP edge when we want to construct the
    * Agent on one request and serve many runs without paying the spawn
    * cost per call.
    */
@@ -138,7 +138,7 @@ export interface BuiltAgent {
    * Callers MUST pass these through `redactSecrets` / `redactMany`
    * before publishing any event or persisting any string that may have
    * been echoed by the LLM or a tool. Today this holds at most the
-   * provider apiKey; Phase 4 adds per-MCP credentials here. Empty when
+   * provider apiKey and per-MCP credentials. Empty when
    * the agent uses only no-auth local endpoints.
    *
    * Kept on the built agent (not re-derived by the dispatcher) so we
@@ -183,7 +183,7 @@ export interface BuiltAgentMeta {
   readonly skillCount: number
   readonly memoryEnabled: boolean
   /**
-   * Memory mount status (Phase 6a). `enabled: false` means the agent's
+   * Memory mount status. `enabled: false` means the agent's
    * `memory_enabled` column is off — Mastra is not constructed and
    * thread/recall don't apply. When `enabled: true`, `vectorReady`
    * tells the UI whether semantic recall is actually wired up:
@@ -212,7 +212,7 @@ export interface BuiltAgentMeta {
    */
   readonly externalMcps: ExternalMcpsMountMeta
   /**
-   * Inspector wrapper-tool mount (`docs/ARCHITECTURE.md §10` Phase B). Replaces
+   * Inspector wrapper-tool mount (`docs/ARCHITECTURE.md §10`). Replaces
    * the "all gitnexus tools attached" model. Always present — even for
    * LLM-only agents `list_repos` registers, so the LLM has at least
    * one tool affordance.
@@ -364,7 +364,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
   // Embedding provider — the (singleton) row with `role='embedding'`.
   // Used by:
   //   - Memory's vector arm (`buildMemory`) when `memory_enabled=true`.
-  //   - The wrapper-tool architecture (`docs/ARCHITECTURE.md §10` Phase D D1):
+  //   - The wrapper-tool architecture (`docs/ARCHITECTURE.md §10`):
   //     when ANY repo is attached to the agent, the embedding provider
   //     is required so the worker can configure gitnexus's `--embeddings`
   //     pipeline. Boot-fail with a clear message if missing.
@@ -447,7 +447,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     throw err
   }
 
-  // Inspector wrapper-tool mount (`docs/ARCHITECTURE.md §10` Phase B B6).
+  // Inspector wrapper-tool mount (`docs/ARCHITECTURE.md §10`).
   // For Inspector-enabled agents the Mastra agent's tool dict is:
   // inspector wrappers + external MCPs. GitNexus's tools live ONLY
   // inside the inspector closure — the LLM never picks them by name.
@@ -464,7 +464,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
         gitnexusTools: mountedGitnexus ? mountedGitnexus.tools : null,
         // Hand the agent's model down so the inspector wrappers can run
         // their internal term-expansion LLM call against the same provider
-        // (Phase C). Sibling tools-less Agent reuses the base URL + key
+        // Sibling tools-less Agent reuses the base URL + key
         // we already decrypted above.
         modelConfig,
       })
@@ -487,8 +487,8 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
   // gitnexus library skills blocks have all been removed
   // (`docs/ARCHITECTURE.md §10` D9, D12, F5). Repo inventory now travels
   // inside `list_repos` mini-repo responses; edges will return inside
-  // `assess_change_impact` (Phase E). Operators keep their authored
-  // prompt + skills (Phase F adds size caps, F2/F3/F4).
+  // `assess_change_impact`. Operators keep their authored
+  // prompt + skills.
   const attachedRepoCount = mountedGitnexus
     ? mountedGitnexus.meta.repoCount
     : await countReadyRepos(db, agentId)
@@ -523,7 +523,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
   const disconnect = buildDisconnect(mountedGitnexus, mountedExternal)
 
   // Provider apiKey + every decrypted MCP env/header value feed the
-  // Phase 3f run-redactor. `mountExternalMcps` already applied the
+  // run-redactor. `mountExternalMcps` already applied the
   // ≥4-char gate, so we can concat verbatim. `redactMany` additionally
   // no-ops on short strings; the gate here just keeps the returned
   // list meaningful for log lines like "N secrets bound".
@@ -566,20 +566,20 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
 
 /**
  * Assemble the final `instructions` string passed to Mastra
- * (`docs/ARCHITECTURE.md §10` Phase B B6).
+ * (`docs/ARCHITECTURE.md §10`).
  *
  * Operator's `system_prompt` is the anchor; each operator-authored skill
  * contributes a markdown section underneath. Empty bodies are dropped.
  *
- * Auto-attached blocks REMOVED in B6:
+ * Auto-attached blocks REMOVED:
  *   - The 860-line coding-agent `system-skill.md` (D9).
  *   - The gitnexus library skills (D12).
  *   - The repo inventory + repo-edges blocks (D12).
  *
  * Repo inventory now travels inside `list_repos` mini-repo responses;
- * edges will return inside `assess_change_impact` (Phase E). Phase F2
- * adds size caps on operator skills (≤ 4KB / 200 lines per skill,
- * ≤ 12KB total) and Phase F1 adds the new ≤80-line system prompt.
+ * edges will return inside `assess_change_impact`. Size caps on
+ * operator skills (≤ 4KB / 200 lines per skill, ≤ 12KB total) and the
+ * ≤80-line system prompt are enforced separately.
  */
 async function composeInstructions(
   basePrompt: string,
@@ -681,19 +681,19 @@ interface BuiltMemory {
  * type at the boundary. If Mastra's shape ever drifts, that cast is the
  * single failure point — TypeScript will flag everything around it.
  *
- * Phase 6a — semantic recall:
+ * Semantic recall:
  *   - When the agent's provider has `default_embedding_model` set, we
  *     mount a process-level `PgVector` singleton + a
  *     `ModelRouterEmbeddingModel` that reuses the SAME `baseUrl` +
  *     `apiKey` already decrypted for the language model. This means
  *     enabling semantic recall does not require a second provider key
- *     on file — the local-first stance from Phase 6's design notes.
+ *     on file — the local-first stance from the design notes.
  *   - When the provider lacks an embedding model, working memory +
  *     thread history still work; only `semanticRecall` from the agent's
  *     `memory_config` is unavailable. Mastra surfaces this at the first
  *     vector-write attempt as a clear error; we don't try to fall back
  *     to a different embedder silently — that would mix vector spaces
- *     across runs and corrupt recall quality (Phase 6 design decision
+ *     across runs and corrupt recall quality (design decision
  *     "openai_compatible caveat is the operator's problem").
  */
 function buildMemory(args: {
@@ -728,7 +728,7 @@ function buildMemory(args: {
   // Strip `semanticRecall` from the runtime memory options when there's
   // no vector store wired up. Mastra throws "Semantic recall requires a
   // vector store to be configured" on the first turn otherwise — and
-  // since Phase 6b auto-seeds `semanticRecall` whenever an operator
+  // since we auto-seed `semanticRecall` whenever an operator
   // flips `memoryEnabled` on, every memory-on agent without an embedder
   // would hit this.
   const runtimeConfig = config && !vectorArm
@@ -779,7 +779,7 @@ function buildVectorArm(args: {
   // Process-level singleton — Mastra's PgVector is namespaced internally
   // by the Memory instance's resource/thread ids, so cross-agent leakage
   // is not possible from sharing it. Saves one connection pool + one
-  // constructor per `buildAgent` call (Phase 6 design decision).
+  // constructor per `buildAgent` call (design decision).
   const vector = getProcessPgVector(db.connectionString)
 
   // Resolve the embedding provider's own credentials. It may be a
@@ -837,8 +837,8 @@ async function countReadyRepos(
 }
 
 /**
- * Count every repo attached to the agent regardless of status (`docs/ARCHITECTURE.md §10`
- * Phase D D1). Used for the "embedding provider required when any repo
+ * Count every repo attached to the agent regardless of status (`docs/ARCHITECTURE.md §10`).
+ * Used for the "embedding provider required when any repo
  * attached" boot-fail check — we want operators to see the gap as soon
  * as they attach the first repo, not after the clone+index pipeline
  * finishes minutes later.
@@ -904,7 +904,7 @@ function buildDisconnect(
 
 /**
  * Merge inspector wrapper tools with any external MCP tools the
- * operator allowlisted (`docs/ARCHITECTURE.md §10` Phase B B6). Returns
+ * operator allowlisted (`docs/ARCHITECTURE.md §10`). Returns
  * `undefined` when both produce empty dicts so the caller can omit
  * the `tools` key on `new Agent(...)` (a `{}` dict is semantically
  * different from "no tools" on some Mastra minor versions).

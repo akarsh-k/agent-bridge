@@ -1,6 +1,6 @@
 /**
- * Local keyword retrieval for the inspector wrappers (`docs/ARCHITECTURE.md §10`
- * Phase I). Stand-in for gitnexus_query's BM25 arm, which is broken
+ * Local keyword retrieval for the inspector wrappers
+ * (`docs/ARCHITECTURE.md §10`). Stand-in for gitnexus_query's BM25 arm, which is broken
  * upstream while [GitNexus#1287] keeps the FTS-index-on-read-only-DB
  * issue open.
  *

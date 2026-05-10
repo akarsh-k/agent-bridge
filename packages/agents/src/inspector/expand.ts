@@ -1,18 +1,18 @@
 /**
- * Term expansion + intent classification (`docs/ARCHITECTURE.md §10` Phase C).
+ * Term expansion + intent classification (`docs/ARCHITECTURE.md §10`).
  *
  * One small LLM call per wrapper invocation. Takes the user's free-form
  * query, returns:
  *
  *   - `intent`: best-guess high-level shape (`find` / `trace` / `impact`
  *     / `debug` / `understand`). Today only `find_in_codebase` consumes
- *     this; Phase E wrappers will use it to gate their behaviour.
+ *     this; future wrappers will use it to gate their behaviour.
  *   - `expansions`: codebase-specific synonyms / variants. "translation"
  *     → `["translation", "i18n", "locale", "intl", "t()"]`. The wrapper
  *     fans out one `gitnexus_query` per expansion and unions the hits.
  *   - `anchors`: file-paths or symbol names the LLM thinks the answer
- *     anchors on. Phase B doesn't consume these yet; held for Phase E
- *     when `trace_flow` / `understand_module` need a starting point.
+ *     anchors on. Not consumed yet; held for when
+ *     `trace_flow` / `understand_module` need a starting point.
  *
  * Hard fallback (D5): any failure → `{ intent: 'find', expansions: [query], anchors: [] }`.
  * The wrapper tool continues with raw query as the only term. The run
@@ -24,10 +24,10 @@
  * no tools and no memory so it can't recurse into the inspector or
  * carry chat history into the expansion call.
  *
- * Output format is intentionally **prose with flat keys** (`§5.5`,
- * lesson_learned 5.5). Models emit prose reliably; structured output
- * across providers drifts. We parse leniently — the regex tolerates
- * extra commentary, blank lines, and the model wrapping in code fences.
+ * Output format is intentionally **prose with flat keys**. Models emit
+ * prose reliably; structured output across providers drifts. We parse
+ * leniently — the regex tolerates extra commentary, blank lines, and
+ * the model wrapping in code fences.
  */
 
 import { Agent } from '@mastra/core/agent'

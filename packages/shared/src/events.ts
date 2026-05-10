@@ -102,7 +102,7 @@ export const runEventKinds = [
   'coding-agent.repo.clarification_requested',
   'coding-agent.tool.completed',
   /**
-   * Repo-embedding lifecycle (`docs/ARCHITECTURE.md §10` Phase D). Emitted by the
+   * Repo-embedding lifecycle (`docs/ARCHITECTURE.md §10`). Emitted by the
    * worker around the `gitnexus analyze --embeddings` segment so the
    * Logs UI can show embedding progress alongside clone/index/wiki on
    * the same `repo:<id>` stream. Kept separate from `repo.index.*` even
@@ -154,7 +154,7 @@ export const runEventKinds = [
   'inspector.gitnexus.called',
   'inspector.gitnexus.result',
   /**
-   * Local keyword retrieval (`docs/ARCHITECTURE.md §10` Phase I). Emitted around
+   * Local keyword retrieval (`docs/ARCHITECTURE.md §10`). Emitted around
    * each `keywordSearch` invocation alongside the gitnexus calls — one
    * pair per wrapper invocation, per repo. Stand-in for gitnexus's
    * broken BM25 arm (gitnexus#1287); deletable when upstream lands a
@@ -326,7 +326,7 @@ export function repoStreamId(repoId: string): string {
   return `repo:${repoId}`
 }
 
-// ─── `run.*` payload shapes (Phase 3d) ───────────────────────────────────
+// ─── `run.*` payload shapes ──────────────────────────────────────────────
 //
 // Typed payloads for every `run.*` event the `POST /agents/:id/runs`
 // dispatcher can emit. Like the `repo.*` payloads above, these are NOT
@@ -361,7 +361,7 @@ export interface RunStartedPayload {
    * Mastra thread id this run writes to — mirrors the value persisted
    * on `runs.mastra_thread_id`. `null` when the agent has
    * `memoryEnabled=false`, in which case Mastra never creates a
-   * thread and there is nothing to link to. Populated in Phase 3g.
+   * thread and there is nothing to link to.
    */
   readonly mastraThreadId: string | null
   /**
@@ -609,7 +609,7 @@ export function runStreamId(runId: string): string {
 
 /**
  * Build the SSE `streamId` for a run started by the IDE-facing MCP
- * bridge. Phase 5 uses `bridge:` instead of `run:` so the runs tab
+ * bridge. Uses `bridge:` instead of `run:` so the runs tab
  * (and any future filter) can distinguish IDE-originated runs from
  * UI-chat runs without a schema column. The persisted
  * `runs.stream_id` carries the same prefix; the dispatcher just
@@ -809,7 +809,7 @@ export interface CodingAgentToolCompletedPayload {
   readonly schema_unmatched?: boolean
 }
 
-// ─── `repo.embed.*` payload shapes (Phase D) ─────────────────────────────
+// ─── `repo.embed.*` payload shapes ───────────────────────────────────────
 //
 // Lifecycle around the embedding leg of `gitnexus analyze --embeddings`.
 // The worker emits these on the same `repo:<id>` stream as clone / index
@@ -844,7 +844,7 @@ export interface RepoEmbedFailPayload {
   readonly exitCode?: number
 }
 
-// ─── `inspector.*` payload shapes (Phase D Phase A4) ─────────────────────
+// ─── `inspector.*` payload shapes ────────────────────────────────────────
 //
 // Wrapper-tool path telemetry. Every payload carries `runId` + `wrapperName`
 // so the UI can group events under a single wrapper invocation. Previews
@@ -944,7 +944,7 @@ export interface InspectorGitnexusResultPayload {
 }
 
 /**
- * Local keyword retrieval (Phase I). Stand-in for gitnexus's broken
+ * Local keyword retrieval. Stand-in for gitnexus's broken
  * BM25 arm. The wrapper-tool emits a `.called` frame before each
  * `keywordSearch` spawn and a `.result` frame after, with a redacted
  * preview of the queries + hit count. Deletable when gitnexus#1287

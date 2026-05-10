@@ -1,5 +1,5 @@
 /**
- * Quick smoke for the Phase 3f redactor binding.
+ * Quick smoke for the redactor binding.
  *
  * Runs in-process (no DB / Redis / LLM needed) and checks that:
  *   1. An empty plaintexts list returns identity helpers.

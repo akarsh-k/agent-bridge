@@ -6,7 +6,7 @@
  * configured inline per agent. The database stores `config_json` as opaque
  * `jsonb`; this file validates only shape/size at the API boundary —
  * kind-specific narrowing happens at execution time inside the agents
- * workspace (Phase 3), as the schema comment in `packages/db` documents.
+ * workspace, as the schema comment in `packages/db` documents.
  *
  * Contract invariants:
  *   - `name` is unique per agent (DB `(agent_id, name)` unique index).

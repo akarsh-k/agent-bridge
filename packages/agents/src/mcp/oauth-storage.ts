@@ -1,5 +1,5 @@
 /**
- * Drizzle-backed `OAuthStorage` adapter — Phase 4H.
+ * Drizzle-backed `OAuthStorage` adapter.
  *
  * Plugs into Mastra's `MCPOAuthClientProvider`. Mastra writes a small set
  * of string key/value pairs during the OAuth dance (`tokens`,

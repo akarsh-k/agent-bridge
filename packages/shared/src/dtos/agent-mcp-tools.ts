@@ -13,8 +13,9 @@
  * by default'."
  *
  * The only mutating verb is `PUT` (set-replace). No POST/PATCH/DELETE per
- * tool — the frontend builds the full list then sends one write. Rationale
- * in `PLAN.md` §1C.3.
+ * tool — the frontend builds the full list then sends one write. A
+ * transactional replace avoids the race where a granular PATCH leaves the
+ * agent half-configured.
  *
  * MCP tool names are validated with a conservative charset: upstream MCP
  * servers name tools as JS identifiers in practice, and this subset also

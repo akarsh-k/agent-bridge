@@ -7,7 +7,7 @@ import * as schema from './schema.js'
  * Mastra's `PostgresStore` (agent memory, vector search) expects a
  * `pg.Pool`. Standardizing on one driver means the Mastra storage layer
  * can reuse this exact pool — no double-pooling, no query-level driver
- * translation — which is what the plan calls for in Phase 3b.
+ * translation.
  *
  * Connection pool size defaults to 10; tune per deployment via
  * `DATABASE_POOL_SIZE`. Mastra's memory workload is modest (one INSERT
@@ -39,7 +39,7 @@ export interface AgentBridgeDb {
   /**
    * The connection string the pool was constructed with. Surfaced so
    * adapters that don't accept a `pg.Pool` directly (notably Mastra's
-   * `PgVector` — see Phase 6a wiring) can spin up their own pool against
+   * `PgVector`) can spin up their own pool against
    * the same DB without re-reading `process.env.DATABASE_URL`.
    */
   readonly connectionString: string

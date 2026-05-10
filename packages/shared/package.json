@@ -66,6 +66,13 @@
     "clean": "rm -rf dist",
     "typecheck": "tsc --noEmit"
   },
+  "author": "Akarsh K (https://github.com/akarsh-k)",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akarsh-k/agent-bridge.git",
+    "directory": "packages/shared"
+  },
   "dependencies": {
     "dotenv": "^17.4.2",
     "ioredis": "^5.10.1",

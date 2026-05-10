@@ -53,12 +53,11 @@ const requestLogger: MiddlewareHandler = env.isProd
     }
   : logger()
 
-// Default body-limit for the API group. Phase 6e's `/agents/import`
-// endpoint legitimately accepts larger bundles (skill markdown +
-// configJson can reach hundreds of KB across many rows), so we route
-// the larger cap through that one path and keep the conservative
-// 64 KiB cap for everything else. See `1c-skills-tools` lesson in
-// `docs/ARCHITECTURE.md` — the cap is set defensively so per-field Zod errors
+// Default body-limit for the API group. The `/agents/import` endpoint
+// legitimately accepts larger bundles (skill markdown + configJson can
+// reach hundreds of KB across many rows), so we route the larger cap
+// through that one path and keep the conservative 64 KiB cap for
+// everything else. The cap is set defensively so per-field Zod errors
 // surface before the global 413 ever fires.
 const SMALL_BODY_LIMIT = 64 * 1024
 const IMPORT_BODY_LIMIT = 4 * 1024 * 1024

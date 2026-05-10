@@ -7,14 +7,14 @@
  * useful fields out of `payload` (typed in `@agent-bridge/shared/events`)
  * and returns a row-ready descriptor: short title, optional summary line,
  * pill tone, and a coarse group used by the in-timeline filter chips
- * (Phase 2 — All / Tool / Model / Errors).
+ * (All / Tool / Model / Errors).
  *
  * Defensive: payloads pass through `RunRedactor` and historical rows can
  * pre-date a payload-shape change, so every accessor handles `unknown`
  * without throwing. When a field is missing or the wrong type, that line
  * is just omitted from the summary — never a crash, never a "[object Object]".
  *
- * Phase 1 — added but not yet consumed. Phase 2 wires this into
+ * Added but not yet consumed. A follow-up wires this into
  * `EventTimeline` in `run-detail-sheet.tsx`.
  */
 

@@ -21,7 +21,7 @@
  * failures LEAVE `localPath` intact — the source tree is still on disk,
  * we just couldn't analyze it this time.
  *
- * Wiki lifecycle (orthogonal — Phase 2C):
+ * Wiki lifecycle (orthogonal):
  *
  *   wiki_status: none ─► generating ─┬─► ready
  *                                    └─► error

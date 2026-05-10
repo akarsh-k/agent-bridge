@@ -37,7 +37,7 @@ export async function getForWorker(
 /**
  * Read the workspace embedding provider — the (singleton) row with
  * `role='embedding'`. The schema enforces uniqueness via a partial unique
- * index, so at most one row ever exists. `docs/ARCHITECTURE.md §10` Phase D D2
+ * index, so at most one row ever exists. `docs/ARCHITECTURE.md §10`
  * uses this in the worker's index-repo job to route gitnexus's
  * `--embeddings` pipeline to the workspace's chosen embedder via the
  * `GITNEXUS_EMBEDDING_*` env vars.

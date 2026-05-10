@@ -1,6 +1,6 @@
 /**
- * Boilerplate emits for inspector wrapper tools (`docs/ARCHITECTURE.md §10`
- * Phase E). Every wrapper emits the same opening (`inspector.tool.called`),
+ * Boilerplate emits for inspector wrapper tools
+ * (`docs/ARCHITECTURE.md §10`). Every wrapper emits the same opening (`inspector.tool.called`),
  * the same per-gitnexus-call pair (`inspector.gitnexus.called` /
  * `.gitnexus.result`), and the same closing
  * (`inspector.minirepo.built` + `inspector.tool.result`). Inlined in
@@ -92,7 +92,7 @@ export async function emitMinirepoBuilt(
     truncated: miniRepo.warnings.some((w) => w.includes('to fit under')),
   } satisfies InspectorMinirepoBuiltPayload)
 
-  // Persist to `runs.minirepo_json` (`docs/ARCHITECTURE.md §10` Phase G G3).
+  // Persist to `runs.minirepo_json` (`docs/ARCHITECTURE.md §10`).
   // Runs unconditionally — chat-tab tool-call cards consume the same
   // column, and the IDE bridge reads it directly. Append handles the
   // 14 KiB total cap with oldest-eviction. Failure is logged but
@@ -177,7 +177,7 @@ export async function withGitnexusCall<T>(
   }
 }
 
-// ─── Per-keyword-search wrapper (Phase I) ────────────────────────────────
+// ─── Per-keyword-search wrapper ──────────────────────────────────────────
 
 /**
  * Wrap a single `keywordSearch` invocation in a

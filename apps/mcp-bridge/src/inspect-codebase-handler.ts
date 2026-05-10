@@ -1,5 +1,5 @@
 /**
- * `inspect_codebase` MCP tool handler (`docs/ARCHITECTURE.md §10` Phase G G1+G4).
+ * `inspect_codebase` MCP tool handler (`docs/ARCHITECTURE.md §10`).
  *
  * Replaces the v1 coding-agent toolkit's six virtual tools + 920-line
  * handler with one entry point. The IDE LLM calls `inspect_codebase`
@@ -19,10 +19,10 @@
  * which case we surface a 1KB summary so chit-chat / clarifications
  * still produce something useful.
  *
- * Phase 7 explicit `bridge_tools` rows wrap their `output_summary` at
+ * Explicit `bridge_tools` rows wrap their `output_summary` at
  * an 8KB cap (operators authored prose on purpose). Same envelope
- * shape, larger prose budget; mini-repos still ride along when a
- * Phase 7 prompt template causes the agent to call wrappers internally.
+ * shape, larger prose budget; mini-repos still ride along when an
+ * explicit prompt template causes the agent to call wrappers internally.
  */
 
 import { randomUUID } from 'node:crypto'
@@ -99,7 +99,7 @@ export type ToolEntry = InspectCodebaseEntry | BridgeToolEntry
 
 /**
  * Maximum prose payload per envelope kind. Inspect-codebase fallback
- * (when no wrapper ran) gets 1 KiB; Phase 7 explicit tools that author
+ * (when no wrapper ran) gets 1 KiB; explicit tools that author
  * prose on purpose get 8 KiB. mini-repos themselves are bounded by
  * `runsRepo.appendMinirepo`'s 14 KiB cap.
  */
@@ -211,7 +211,7 @@ export async function executeInspectCodebase(
   return jsonEnvelope(envelope)
 }
 
-// ─── Phase 7 explicit bridge tool ────────────────────────────────────────
+// ─── Explicit bridge tool ────────────────────────────────────────────────
 
 /**
  * Render an operator-authored prompt template against the IDE's args.
@@ -239,7 +239,7 @@ function renderPromptTemplate(
 }
 
 /**
- * Phase 7 explicit `bridge_tools` rows continue to work under D17′
+ * Explicit `bridge_tools` rows continue to work under D17′
  * (`docs/ARCHITECTURE.md §10` G5). The bridge dispatches the rendered template
  * and wraps the result in the same envelope shape — operator-authored
  * prose gets an 8 KiB cap; any mini-repos the agent's wrappers

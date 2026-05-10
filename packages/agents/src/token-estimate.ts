@@ -279,13 +279,14 @@ export async function estimateAgentTokens(
     }))
   const skillsTotal = skills.reduce((sum, s) => sum + s.tokens, 0)
 
-  // Inspector toolkit's auto-appended system prompt (`docs/ARCHITECTURE.md §10`
-  // F1/F5). The Phase-B6 wrapper-tool architecture replaced the v1
-  // 860-line coding-agent skill with this ~70-line guide. Same fail-
-  // silent contract: a load failure (missing .md in
-  // `dist/src/inspector/`) gives a null entry, which the budget card
-  // surfaces as a config gap. The shared `TokenEstimateSystemSkill`
-  // type is kept for backwards-compat with the frontend's budget card.
+  // Inspector toolkit's auto-appended system prompt
+  // (`docs/ARCHITECTURE.md §10`). The wrapper-tool architecture
+  // replaced the previous 860-line coding-agent skill with this
+  // ~70-line guide. Fail-silent contract: a load failure (missing .md
+  // in `dist/src/inspector/`) gives a null entry, which the budget
+  // card surfaces as a config gap. The shared
+  // `TokenEstimateSystemSkill` type is kept so the frontend's budget
+  // card doesn't have to re-shape on this change.
   //
   // Build-your-own-agent (`inspectorEnabled === false`) skips the
   // attach in `composeInstructions`, so the budget should reflect zero
@@ -305,14 +306,14 @@ export async function estimateAgentTokens(
     }
   }
 
-  // The v1 auto-attached blocks (gitnexus library skills, attached-
-  // repos inventory, repo-edges) are gone from the prompt under the
-  // wrapper-tool architecture (B6). Repos + edges now travel inside
-  // wrapper responses (`list_repos`, `assess_change_impact`) where
-  // they're actionable; library skills are dead weight without the
-  // direct gitnexus_* tool surface. Fields kept on the response shape
-  // for backwards-compat with the budget card; values stay `null`/`0`
-  // permanently (unused in the new prompt).
+  // Previously auto-attached blocks (gitnexus library skills,
+  // attached-repos inventory, repo-edges) are gone from the prompt
+  // under the wrapper-tool architecture. Repos + edges now travel
+  // inside wrapper responses (`list_repos`, `assess_change_impact`)
+  // where they're actionable; library skills are dead weight without
+  // the direct gitnexus_* tool surface. Fields kept on the response
+  // shape so the frontend's budget card doesn't have to re-shape;
+  // values stay `null`/`0` permanently (unused in the new prompt).
   const gitnexusLibrarySkills: TokenEstimateGitnexusLibrarySkills | null = null
   const attachedReposHint = 0
   const repoEdgesHint = 0
@@ -322,9 +323,8 @@ export async function estimateAgentTokens(
   // agent (five when no repos are attached → only `list_repos`).
   // We don't have access to the wrappers' Zod input schemas here
   // without going through `mountInspectorTools`, so we approximate
-  // with name + a one-line description + the same 60-token wrapper
-  // overhead used in the v1 estimator. Slight undercount; the budget
-  // card flags this in the help text.
+  // with name + a one-line description + a 60-token wrapper overhead.
+  // Slight undercount; the budget card flags this in the help text.
   //
   // Build-your-own-agent skips the toolkit entirely, so the budget
   // shows zero tool tokens for those agents.

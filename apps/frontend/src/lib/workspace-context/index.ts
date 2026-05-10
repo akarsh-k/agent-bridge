@@ -80,7 +80,7 @@ export interface WorkspaceContextValue {
   removeAgent: (id: string) => Promise<void>
   getAgent: (id: string) => AgentResponse | undefined
 
-  // Per-agent resource mutations (Phase 1H quick-add menu)
+  // Per-agent resource mutations (quick-add menu)
   createSkill: (
     agentId: string,
     input: SkillCreateInput,

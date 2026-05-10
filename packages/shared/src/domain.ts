@@ -176,7 +176,7 @@ export type RunStatus = (typeof runStatuses)[number]
 
 // ─── Agent memory ─────────────────────────────────────────────────────────
 
-// ─── Bridge tools (Phase 5 / Phase 7) ─────────────────────────────────────
+// ─── Bridge tools ─────────────────────────────────────────────────────────
 
 /**
  * One bridge tool — what an agent exposes outbound to an IDE (Cursor,
@@ -184,12 +184,12 @@ export type RunStatus = (typeof runStatuses)[number]
  * Distinct from "agent tools" (inbound tools the agent itself uses),
  * which live on `agent_mcp_tools` etc. See `docs/ARCHITECTURE.md` §8.
  *
- * **Phase 5 (1:1, default):** every agent that has NO `bridge_tools`
+ * **1:1 default:** every agent that has NO `bridge_tools`
  * rows auto-exposes a single tool — `query_<agent.slug>` derived at
  * runtime, no DB row. The `query_` prefix is reserved (see
  * `BRIDGE_TOOL_RESERVED_PREFIX`).
  *
- * **Phase 7 (1:N, opt-in):** rows in `bridge_tools` (one row → one
+ * **1:N (opt-in):** rows in `bridge_tools` (one row → one
  * outbound MCP tool) override the 1:1 default for that agent. Each row
  * has its own `inputSchema` (JSON Schema draft-07) and
  * `promptTemplate` (mustache-ish, `{{ argName }}` placeholders).
@@ -219,7 +219,7 @@ export type BridgeToolInputSchema = Record<string, unknown>
 
 /**
  * Reserved tool-name prefix for the auto-derived 1:1 default bridge
- * tools (`query_<agent.slug>`). Phase 7 `bridge_tools.name` rows must
+ * tools (`query_<agent.slug>`). Explicit `bridge_tools.name` rows must
  * NOT start with this string — enforced by a CHECK constraint when
  * the table lands.
  */
@@ -270,7 +270,7 @@ export interface AgentMemoryConfig {
 
   /**
    * Retrieves semantically similar historical messages. Requires a vector
-   * store to be configured at the Memory instance level (Phase 3 wiring).
+   * store to be configured at the Memory instance level.
    */
   semanticRecall?: {
     /** Default: `4`. */
@@ -299,7 +299,7 @@ export interface AgentMemoryConfig {
  * https://mastra.ai/reference/memory) so a memory-on agent works end to
  * end without forcing the operator to author a config blob.
  *
- * Phase 6b decision: returned as a fresh object every call. Two agents
+ * Returned as a fresh object every call. Two agents
  * sharing one frozen reference would surface as a confusing "edit one,
  * see it everywhere" bug if either side ever mutates the blob (Drizzle
  * jsonb does not — but the inspector form might pre-fill from this).

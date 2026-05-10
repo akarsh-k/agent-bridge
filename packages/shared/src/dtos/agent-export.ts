@@ -1,5 +1,5 @@
 /**
- * Agent export / import DTOs (Phase 6e).
+ * Agent export / import DTOs.
  *
  * The export bundle is a self-contained snapshot of one agent and the
  * resources owned by it: its row, its skills, its native tools, the
@@ -75,7 +75,7 @@ const toolKindSchema = z.enum(toolKinds)
 export const AGENT_EXPORT_LATEST_VERSION = 2 as const
 
 /**
- * Bundles produced before Phase 7 used `version: 1` and didn't have the
+ * Older bundles used `version: 1` and didn't have the
  * `bridgeTools` field. We accept both versions on import so older
  * exports keep working — the importer treats a missing `bridgeTools`
  * key as an empty array.
@@ -143,7 +143,7 @@ const exportedMcpAllowlistEntrySchema = z
   .strict()
 
 /**
- * Phase 7: an exported `bridge_tools` row. The DB CHECK constraints
+ * An exported `bridge_tools` row. The DB CHECK constraints
  * (reserved-prefix and identifier format) ARE re-applied at the import
  * boundary by the route's INSERT — but we also re-validate here so a
  * bundle hand-edited on disk fails parsing before the DB sees it.
@@ -195,8 +195,8 @@ export const agentExportBundleSchema = z
     repoEdges: z.array(exportedRepoEdgeSchema).max(10_000),
     mcpAllowlist: z.array(exportedMcpAllowlistEntrySchema).max(1_000),
     /**
-     * Phase 7 — outbound bridge tools. Optional in the schema so v1
-     * bundles still parse; importer treats absence as an empty array.
+     * Outbound bridge tools. Optional in the schema so older bundles
+     * still parse; importer treats absence as an empty array.
      */
     bridgeTools: z.array(exportedBridgeToolSchema).max(1_000).optional(),
   })

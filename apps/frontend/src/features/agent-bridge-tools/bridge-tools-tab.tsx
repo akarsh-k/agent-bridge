@@ -1,6 +1,6 @@
 /**
  * Bridge tools tab — outbound MCP tools the agent EXPOSES to the
- * IDE (Phase 7). Distinct from the "Tools" tab which shows the
+ * IDE. Distinct from the "Tools" tab which shows the
  * agent's INTERNAL run-time tools.
  *
  * Each bridge tool has:

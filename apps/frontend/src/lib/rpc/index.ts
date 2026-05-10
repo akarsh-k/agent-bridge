@@ -282,7 +282,7 @@ export async function importAgentBundle(
   )
 }
 
-// ─── Bridge tools (Phase 7) ──────────────────────────────────────────────
+// ─── Bridge tools ────────────────────────────────────────────────────────
 
 export async function listBridgeTools(
   agentId: string,

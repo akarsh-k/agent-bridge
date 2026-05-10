@@ -1,12 +1,11 @@
 /**
- * Inspector wrapper-tool mount (`docs/ARCHITECTURE.md §10` Phase B B1, B6).
+ * Inspector wrapper-tool mount (`docs/ARCHITECTURE.md §10`).
  *
  * The agent's tool dict for the wrapper-tool architecture:
  *   - `find_in_codebase(query, repo_hint?)`: hybrid search via gitnexus_query.
  *   - `list_repos()`: synchronous inventory read.
- *
- * Phase E adds `trace_flow`, `assess_change_impact`, `debug_help`,
- * `understand_module` — they slot into the same `tools` dict.
+ *   - `trace_flow`, `assess_change_impact`, `debug_help`,
+ *     `understand_module` — same `tools` dict.
  *
  * Lifecycle:
  *   - `mountInspectorTools(...)` is called inside `buildAgent`.
@@ -62,7 +61,7 @@ export interface MountInspectorToolsInput {
   readonly gitnexusTools: ToolDict | null
   /**
    * Agent's model config. drives the in-wrapper LLM term-expansion
-   * call (Phase C). When omitted, wrappers run in deterministic mode
+   * call. When omitted, wrappers run in deterministic mode
    * (raw query as the only expansion). Useful for tests + smoke
    * scripts that want to isolate gitnexus behaviour.
    */
@@ -219,7 +218,7 @@ function buildListReposTool(
   })
 }
 
-// ─── trace_flow (Phase E E1) ─────────────────────────────────────────────
+// ─── trace_flow ──────────────────────────────────────────────────────────
 
 const traceFlowInputSchema = z
   .object({
@@ -280,7 +279,7 @@ function buildTraceFlowTool(
   })
 }
 
-// ─── assess_change_impact (Phase E E2) ───────────────────────────────────
+// ─── assess_change_impact ────────────────────────────────────────────────
 
 const assessChangeImpactInputSchema = z
   .object({
@@ -329,7 +328,7 @@ function buildAssessChangeImpactTool(
   })
 }
 
-// ─── debug_help (Phase E E3) ─────────────────────────────────────────────
+// ─── debug_help ──────────────────────────────────────────────────────────
 
 const debugHelpInputSchema = z
   .object({
@@ -378,7 +377,7 @@ function buildDebugHelpTool(
   })
 }
 
-// ─── understand_module (Phase E E4) ──────────────────────────────────────
+// ─── understand_module ───────────────────────────────────────────────────
 
 const understandModuleInputSchema = z
   .object({

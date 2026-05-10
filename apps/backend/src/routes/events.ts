@@ -9,7 +9,7 @@ import { getEventBus } from '../event-bus.js'
  * `GET  /api/events/:streamId`                 — SSE tail of a stream.
  * `POST /api/events/:streamId/publish`         — emit a RunEvent (dev helper;
  *                                                 the worker will be the
- *                                                 normal producer in Phase 1+).
+ *                                                 normal producer).
  *
  * Stream IDs are validated as URL-safe slugs so they round-trip cleanly
  * through the Redis channel name.

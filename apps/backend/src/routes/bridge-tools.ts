@@ -1,6 +1,6 @@
 /**
  * `/api/agents/:agentId/bridge-tools` — nested CRUD for the outbound
- * MCP tools an agent exposes to IDEs (Phase 7).
+ * MCP tools an agent exposes to IDEs.
  *
  * Agent-scoping invariant (same rule as skills/tools/repos):
  *   Every per-item query filters by BOTH `agentId` (URL) AND `id` (URL).

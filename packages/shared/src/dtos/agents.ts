@@ -3,7 +3,7 @@
  * and backend (`apps/backend`).
  *
  * Design notes:
- *   - `slug` is user-visible (it becomes part of the Phase 5 MCP tool name
+ *   - `slug` is user-visible (it becomes part of the MCP tool name
  *     `query_<slug>`). We constrain it tightly: lowercase alnum + dashes.
  *   - `id`, `createdAt`, `updatedAt` are server-owned and never appear in
  *     input DTOs. They only come back in responses.

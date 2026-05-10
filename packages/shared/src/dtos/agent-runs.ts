@@ -1,6 +1,6 @@
 /**
  * Agent-run DTOs. Browser-safe; the SSE-tail and dispatcher code shares
- * these shapes with the frontend chat window (Phase 3e).
+ * these shapes with the frontend chat window.
  *
  * Design notes:
  *   - `POST /api/agents/:agentId/runs` is 202-then-SSE, same pattern as
@@ -10,10 +10,9 @@
  *   - `threadId` + `resourceId` are optional so the backend can default
  *     to `threadId = runId` and `resourceId = agent:<agentId>` for
  *     one-shot runs. When a chat client wants conversation continuity
- *     (Phase 3e) it passes the thread it was using previously.
+ *     it passes the thread it was using previously.
  *   - We do NOT expose Mastra's thread id column on `runs` in this
- *     phase — the DB schema change ships with Phase 3g. Until then the
- *     values live only for the duration of the in-memory run.
+ *     phase — the values live only for the duration of the in-memory run.
  *   - `prompt` max is deliberately small (16 KB). A chat turn that
  *     large is almost always an accidental paste; a real "analyze this
  *     50 KB file" flow belongs behind a file-upload or a repo-scoped

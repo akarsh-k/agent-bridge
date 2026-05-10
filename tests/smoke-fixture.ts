@@ -5,7 +5,7 @@
  * Assumes `pnpm test:fixture:setup` ran first (test DB seeded, fixture
  * repos cloned + indexed under `.agent-bridge-data-test/`).
  *
- * What this asserts (deterministic Phase B mode — no LLM calls;
+ * What this asserts (deterministic mode — no LLM calls;
  * `find_in_codebase` skips term expansion when `modelConfig` is omitted):
  *
  *   - list_repos              returns the three fixture repos

@@ -101,7 +101,7 @@ export function matchAgentDetail(
 
 /**
  * Match the IDE bridge view route. Static path; no params.
- * Phase 5 surfaces the MCP discovery + runs feed under `/bridge`.
+ * Surfaces the MCP discovery + runs feed under `/bridge`.
  */
 export function matchBridge(path: string): boolean {
   const parts = path.split('/').filter(Boolean)

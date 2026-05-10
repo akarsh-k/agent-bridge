@@ -1,5 +1,5 @@
 /**
- * One-shot MCP tool-discovery probe — Phase 4b.
+ * One-shot MCP tool-discovery probe.
  *
  * Mastra-facing helper that backs `POST /api/mcp-connections/:id/test`.
  * Spawns a throwaway `@mastra/mcp` `MCPClient`, calls `listTools()` on

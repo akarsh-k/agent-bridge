@@ -25,7 +25,7 @@
  * "tokens flowed here" anchor.
  *
  * Used by `run-detail-sheet.tsx` for both run and worker job sheets;
- * Phase 3 will reuse the same component from the chat tab.
+ * Future iterations will reuse the same component from the chat tab.
  */
 
 import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'

@@ -1,5 +1,5 @@
 /**
- * Bridge-tool CRUD DTOs (Phase 7).
+ * Bridge-tool CRUD DTOs.
  *
  * One row in `bridge_tools` ↔ one outbound MCP tool the IDE sees.
  * Every field is operator-authored — there's no auto-generation —
@@ -7,7 +7,7 @@
  * DB CHECK constraints back-stop:
  *
  *   - `name` must be a valid MCP identifier and must NOT start with
- *     `query_` (reserved by Phase 5 for the auto-derived 1:1 default
+ *     `query_` (reserved for the auto-derived 1:1 default
  *     tool — `BRIDGE_TOOL_RESERVED_PREFIX`). Two layers of defence:
  *     this DTO rejects with a friendly message, the DB CHECK rejects
  *     with `23514` if a future caller bypasses validation.

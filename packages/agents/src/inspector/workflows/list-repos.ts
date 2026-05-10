@@ -1,6 +1,6 @@
 /**
  * `list_repos` wrapper. deterministic, no LLM, no gitnexus calls.
- * (`docs/ARCHITECTURE.md §10` Phase B B5).
+ * (`docs/ARCHITECTURE.md §10`).
  *
  * Reads from the agent's `attached repos` slice that the inspector
  * mount already loaded. Returns a mini-repo with zero `files` (this
@@ -35,7 +35,7 @@ export interface ListReposInput {
 }
 
 /**
- * Phase B's pure-function `runListRepos` is now async because it emits
+ * The pure-function `runListRepos` is now async because it emits
  * inspector telemetry events through the run-context AsyncLocalStorage.
  * The work itself is still synchronous; await is only there to
  * sequence event publishes.
@@ -92,7 +92,7 @@ function buildListReposMiniRepo(repos: readonly AttachedRepo[]): MiniRepo {
   // Render the inventory inline in `summary` so the LLM picks it up
   // even from a heavily-truncated mini-repo. `cross_repo_edges` is
   // left empty here. `assess_change_impact` is responsible for
-  // that data when it actually lands in Phase E.
+  // that data when it actually lands.
   const lines = repos.map((r) => {
     const role = r.role ? ` [${r.role}]` : ''
     const status = r.status === 'ready' ? '' : ` (${r.status})`

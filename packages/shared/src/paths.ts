@@ -87,8 +87,8 @@ export function ensureDataDirs(): DataDirs {
 //   - `source.tmp/`  — in-progress clone destination; atomically renamed
 //                      onto `source/` on git-exit=0. Never observable as
 //                      a partial `source/`.
-//   - `index/`       — (Phase 2B) GitNexus analyze output.
-//   - `wiki/`        — (Phase 2C) GitNexus wiki output.
+//   - `index/`       — GitNexus analyze output.
+//   - `wiki/`        — GitNexus wiki output.
 
 /**
  * Minimal shape the path helpers need. Accepts a full `RepoResponse` row

@@ -4,7 +4,7 @@
  * - Responses always use the `{ ok: true, ... }` / `{ ok: false, error }`
  *   envelope from `@agent-bridge/shared`.
  * - Secrets never appear on this resource (agents have no secret fields).
- *   Phase 1C routes for `llm-providers`, `repos`, `mcp-connections` will be
+ *   Routes for `llm-providers`, `repos`, `mcp-connections` will be
  *   where `SecretInput` / `SecretSentinel` actually enter the picture.
  * - Slug uniqueness is enforced by the DB (`agents_slug_uq`). We catch the
  *   Postgres `23505` SQLSTATE and return a friendly `conflict` error.
@@ -239,7 +239,7 @@ export const agentsRouter = new Hono()
       if ('memoryConfig' in body) patch.memoryConfig = body.memoryConfig ?? null
       if ('inspectorEnabled' in body) patch.inspectorEnabled = body.inspectorEnabled
 
-      // Phase 6b — when the operator flips `memoryEnabled` true without
+      // When the operator flips `memoryEnabled` true without
       // simultaneously authoring a `memoryConfig`, seed Mastra's
       // documented defaults so the agent works on the next turn without
       // a second PATCH. We re-read the current row to confirm the
@@ -284,7 +284,7 @@ export const agentsRouter = new Hono()
         // Activity feed: which fields changed? List the keys the
         // operator actually edited so the card reads "name, model"
         // not "Untitled agent". Skip the auto-seeded `memoryConfig`
-        // (Phase 6b) since the human edit is `memoryEnabled`, not
+        // since the human edit is `memoryEnabled`, not
         // the seeded blob.
         const changedFields = Object.keys(body)
         if (changedFields.length > 0) {

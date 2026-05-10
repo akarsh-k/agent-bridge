@@ -2,13 +2,13 @@
  * Global runs-list DTOs. Browser-safe.
  *
  * `GET /api/runs?source=bridge|ui&limit=50` powers two surfaces:
- *   - The Phase 5 IDE-bridge view (filters `source=bridge`)
+ *   - The IDE-bridge view (filters `source=bridge`)
  *   - A future "all runs" UI view that the per-agent activity tab
  *     can promote to a global feed.
  *
  * Source is **derived from the `stream_id` prefix** at response time —
  * `'run:'` → `'ui'`, `'bridge:'` → `'bridge'`. We don't store source
- * as a column because the prefix already encodes it (Phase 5 design
+ * as a column because the prefix already encodes it (design
  * decision in `docs/ARCHITECTURE.md`).
  *
  * The list-row shape deliberately TRUNCATES `inputPrompt` and

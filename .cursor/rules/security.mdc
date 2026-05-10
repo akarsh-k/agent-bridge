@@ -96,7 +96,7 @@ Compare secrets (API keys, HMAC signatures, tokens) with
 ## 9. Dependency hygiene
 
 - Security-critical deps pinned to exact versions (no `^`) — currently
-  `gitnexus@1.6.3`, mirrored in root `pnpm.overrides`.
+  `gitnexus@1.6.4`, mirrored in root `pnpm.overrides`.
 - Never `npx <pkg>@latest`. Resolve via `createRequire` from `node_modules`.
 - `engine-strict=true` in `.npmrc` + `engines.node` in root `package.json`
   must be kept in sync with `.nvmrc`.

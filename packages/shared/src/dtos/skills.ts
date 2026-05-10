@@ -20,14 +20,13 @@ import { z } from 'zod'
 const SKILL_NAME_MAX = 120
 
 /**
- * Per-skill body size caps (`docs/ARCHITECTURE.md §10` Phase F F2/F3).
+ * Per-skill body size caps (see `docs/ARCHITECTURE.md §10`).
  *
  * The wrapper-tool architecture intentionally keeps the system prompt
- * tiny (Phase F1's `system-prompt.md` is ~70 lines). Operator-authored
+ * tiny (`inspector/system-prompt.md` is ~70 lines). Operator-authored
  * skills augment that prompt and ride into every chat turn, so they
- * need their own ceiling — historically the v1 toolkit shipped one
- * 860-line skill in every prompt and called it the worst failure mode
- * (`lesson_learned.md` §5.6).
+ * need their own ceiling — without one, a single oversized skill can
+ * dominate every prompt and crowd out actual reasoning context.
  *
  * 4 KiB is enough for ~80 lines of markdown — about the same budget
  * the inspector system prompt itself uses. 200 lines is a hard line
@@ -55,11 +54,11 @@ const markdownBodySchema = z
   .string()
   .max(
     SKILL_BODY_MAX_BYTES,
-    `markdownBody exceeds ${SKILL_BODY_MAX_BYTES}-byte limit (Phase F2; per-skill cap)`,
+    `markdownBody exceeds ${SKILL_BODY_MAX_BYTES}-byte limit (per-skill cap)`,
   )
   .refine(
     (v) => v.split('\n').length <= SKILL_BODY_MAX_LINES,
-    `markdownBody exceeds ${SKILL_BODY_MAX_LINES}-line limit (Phase F2; per-skill cap)`,
+    `markdownBody exceeds ${SKILL_BODY_MAX_LINES}-line limit (per-skill cap)`,
   )
 
 const positionSchema = z.number().int().nonnegative().max(1_000_000)

@@ -9,8 +9,8 @@
  *   - CI environments without Redis can still exercise the read-only routes.
  *   - Boots that miss the queue-owning route path pay no socket cost.
  *
- * `enqueueCloneRepo` is the only enqueue function for Phase 2A; other jobs
- * (index, wiki) land in 2B+ and will slot in here next to it.
+ * `enqueueCloneRepo` is the only enqueue function today; other jobs
+ * (index, wiki) will slot in here next to it.
  */
 
 import { Queue } from 'bullmq'

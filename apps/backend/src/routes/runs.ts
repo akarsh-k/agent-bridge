@@ -2,14 +2,14 @@
  * `GET /api/runs?source=bridge|ui&limit=50&agentId=<uuid>` — global
  * runs feed.
  *
- * Phase 5 introduces this endpoint to power the IDE bridge view's
+ * Powers the IDE bridge view's
  * "live IDE invocations" feed (filters `source=bridge`). Built generic
- * (not bridge-specific) so a future Phase 6 "all runs" UI view can
+ * (not bridge-specific) so a future "all runs" UI view can
  * reuse the same shape with `source=ui`.
  *
  * Source-by-prefix:
  *   `runs.stream_id` carries `'run:<uuid>'` for UI-chat runs and
- *   `'bridge:<uuid>'` for IDE-bridge runs (Phase 5 source-tagging
+ *   `'bridge:<uuid>'` for IDE-bridge runs (source-tagging
  *   decision — no `runs.source` column needed). The query translates
  *   `source=ui` → `LIKE 'run:%'` and `source=bridge` → `LIKE 'bridge:%'`.
  *   `unknown` is reserved for forward-compat and isn't a valid filter.

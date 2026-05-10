@@ -1,7 +1,7 @@
 /**
  * `GET /api/bridge/config` — paste-ready MCP server config block.
  *
- * Phase 5b. The IDE (Cursor / Claude Code / etc.) needs a JSON shape it
+ * The IDE (Cursor / Claude Code / etc.) needs a JSON shape it
  * can drop straight into its `mcpServers` config. Hand-crafting the
  * absolute path to `apps/mcp-bridge` is annoying and error-prone — this
  * endpoint resolves it from the running backend's filesystem so the

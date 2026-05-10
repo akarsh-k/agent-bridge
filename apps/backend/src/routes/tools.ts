@@ -8,7 +8,7 @@
  * parent agent cascades via FK.
  *
  * `configJson` is NOT narrowed by `kind` at this layer — shape validation
- * at execution time lives in `packages/agents` (Phase 3). Here we only
+ * at execution time lives in `packages/agents`. Here we only
  * enforce the byte-size cap so a rogue caller can't write an enormous blob.
  */
 

@@ -2,10 +2,10 @@ import type { Job } from 'bullmq'
 import { z } from 'zod'
 
 /**
- * Phase 0 smoke-test job. Proves the whole pipe is wired:
+ * Smoke-test job. Proves the whole pipe is wired:
  *   backend/worker boot → Redis → BullMQ Queue → BullMQ Worker → handler runs.
  *
- * No GitNexus / DB / LLM dependency here. Those jobs land in Phase 1.
+ * No GitNexus / DB / LLM dependency here.
  */
 
 export const pingJobSchema = z.object({

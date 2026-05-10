@@ -1,5 +1,5 @@
 /**
- * External MCP adapter — Phase 4a.
+ * External MCP adapter.
  *
  * For every `agent_mcp_tools` row pointing at a `mcp_connections` the agent
  * opted into, this module:
@@ -137,7 +137,7 @@ export interface MountedExternalMcps {
   /**
    * Every decrypted env value + header value (≥4 chars) across all
    * mounted connections. `buildAgent` folds this into
-   * `BuiltAgent.secrets` so the Phase 3f run-redactor scrubs them from
+   * `BuiltAgent.secrets` so the run-redactor scrubs them from
    * every SSE frame and `run_events` row.
    */
   readonly secrets: readonly string[]
@@ -313,7 +313,7 @@ async function mountOneConnection(args: {
   // Decrypt exactly what the transport needs. Keeping the decryption
   // transport-conditional avoids building a bag of plaintext for http
   // rows (which have no `env`) or stdio rows (which have no `headers`),
-  // which in turn keeps the `secrets` list minimal per phase 3f.
+  // which in turn keeps the `secrets` list minimal.
   const isHttp = group.transport === 'http' || group.transport === 'sse'
 
   const decryptedEnv = !isHttp

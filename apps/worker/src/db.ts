@@ -2,8 +2,8 @@ import { createDb, type AgentBridgeDb } from '@agent-bridge/db'
 import { env } from './env.js'
 
 /**
- * Worker-owned Postgres pool. Lazy so a boot without DB (e.g. Phase 0
- * smoke) doesn't open a dangling pool, and closed from `index.ts` during
+ * Worker-owned Postgres pool. Lazy so a boot without DB (e.g. smoke)
+ * doesn't open a dangling pool, and closed from `index.ts` during
  * shutdown so the process exits cleanly.
  *
  * Kept small by default: clone/index jobs hold a connection for the job's

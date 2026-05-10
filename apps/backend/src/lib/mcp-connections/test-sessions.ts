@@ -1,5 +1,5 @@
 /**
- * In-memory test-session registry — Phase 4H.
+ * In-memory test-session registry.
  *
  * A "test session" owns the state of a single
  * `POST /api/mcp-connections/:id/test` that hasn't terminated yet. Its

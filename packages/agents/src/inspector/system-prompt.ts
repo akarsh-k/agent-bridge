@@ -1,9 +1,9 @@
 /**
  * Loader for the inspector toolkit's auto-attached system prompt
- * (`docs/ARCHITECTURE.md §10` Phase F F1).
+ * (`docs/ARCHITECTURE.md §10`).
  *
- * Replaces the v1 `coding-agent/system-skill.md` (860 lines) with a
- * focused ≤80-line guide. Composed into every agent's instructions by
+ * Replaces a previous 860-line coding-agent system skill with a focused
+ * ≤80-line guide. Composed into every agent's instructions by
  * `build-agent.ts:composeInstructions`, AFTER the operator's base
  * system prompt and BEFORE operator-authored skills — so skills get
  * the last-word position and can override wrapper-call defaults.

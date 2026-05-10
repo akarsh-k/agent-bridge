@@ -1,5 +1,5 @@
 /**
- * `trace_flow` wrapper (`docs/ARCHITECTURE.md §10` Phase E E1).
+ * `trace_flow` wrapper (`docs/ARCHITECTURE.md §10`).
  *
  * Walks the call/import graph from a starting anchor (file path or
  * symbol name) toward a goal. Returns a mini-repo whose `graph_subset`
@@ -24,7 +24,7 @@
  * Cypher would let us write a more precise query (e.g. "follow CALLS
  * edges only, ignore IMPORTS") but the contract for `gitnexus_cypher`'s
  * schema isn't pinned across versions. impact-driven trace is good
- * enough for now and Phase F can add a cypher refinement when
+ * enough for now and a cypher refinement can land when
  * gitnexus pins its schema.
  */
 

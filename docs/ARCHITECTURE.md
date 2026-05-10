@@ -1,5 +1,26 @@
 # Agent Bridge — Architecture
 
+> **A note on terminology.** This document was written incrementally
+> alongside the codebase, and earlier sections occasionally reference
+> internal milestone identifiers ("Phase 3f", "Phase B6", "Phase F1",
+> etc.). These were build-order tags from a now-deleted planning
+> document and have no semantic meaning — they're safe to ignore. The
+> surrounding technical content is what matters; treat any "Phase X"
+> tag as if it weren't there.
+
+## Contents
+
+- [1. High-level map](#1-high-level-map)
+- [2. Components](#2-components)
+- [3. Isolation guarantees (must not regress)](#3-isolation-guarantees-must-not-regress)
+- [4. Secrets at rest](#4-secrets-at-rest)
+- [5. Event bus + SSE pipeline](#5-event-bus--sse-pipeline)
+- [6. Process + deployment topology](#6-process--deployment-topology)
+- [7. Mastra ownership model](#7-mastra-ownership-model)
+- [8. Tools — two directions](#8-tools--two-directions)
+- [9. Frontend architecture (`apps/frontend`)](#9-frontend-architecture-appsfrontend)
+- [10. Wrapper-tool architecture (inspector toolkit)](#10-wrapper-tool-architecture-inspector-toolkit)
+
 ## 1. High-level map
 
 ```mermaid

@@ -1,7 +1,7 @@
 /**
  * Drizzle schema for Agent Bridge.
  *
- * Design decisions (see `docs/ARCHITECTURE.md` § Phase 1):
+ * Design decisions (see `docs/ARCHITECTURE.md`):
  *   - UUIDs via `gen_random_uuid()` on user-facing tables; `bigserial` on the
  *     append-only audit log (`run_events`).
  *   - `text`-backed "enums" (status columns) validated by Zod at the edges,
@@ -103,7 +103,7 @@ export const llmProviders = pgTable(
      */
     modelsJson: jsonb('models_json').$type<LlmProviderModelsCache>(),
     /**
-     * Embedding vector dimension count (`docs/ARCHITECTURE.md §10` Phase D D3).
+     * Embedding vector dimension count (`docs/ARCHITECTURE.md §10`).
      * Only meaningful for `role='embedding'` rows; chat-role rows
      * leave this NULL. The worker forwards it to gitnexus via the
      * `GITNEXUS_EMBEDDING_DIMS` env var so gitnexus's local embedder
@@ -134,7 +134,7 @@ export const agents = pgTable(
   'agents',
   {
     id: uuid('id').primaryKey().defaultRandom(),
-    /** URL-safe slug; used to derive MCP tool names in Phase 5. */
+    /** URL-safe slug; used to derive MCP tool names. */
     slug: text('slug').notNull(),
     name: text('name').notNull(),
     description: text('description'),
@@ -235,7 +235,7 @@ export const repos = pgTable(
     /** AES-256-GCM envelope. Nullable for public repos. */
     gitPatEnvelope: text('git_pat_envelope'),
     /**
-     * Wiki state — orthogonal to `status` (Phase 2C). A repo stays `ready`
+     * Wiki state — orthogonal to `status`. A repo stays `ready`
      * for agents while its wiki regenerates. `wiki_status` drives the
      * inspector dot + button enablement; the worker owns every transition
      * out of `generating`. The four sibling columns mirror the `last_*` /
@@ -260,7 +260,7 @@ export const repos = pgTable(
 
 // ─── index summary (file-backed, no table) ───────────────────────────────
 //
-// Historical note: an earlier iteration (Phase 2B as initially landed)
+// Historical note: an earlier iteration
 // duplicated `gitnexus analyze` counts into a `repo_index_summary` table.
 // We dropped it in favour of reading `<source>/.gitnexus/meta.json` lazily
 // on repo-read endpoints — gitnexus already persists the same data there,
@@ -423,7 +423,7 @@ export const agentMcpTools = pgTable(
   ],
 )
 
-// ─── bridge_tools (Phase 7) ──────────────────────────────────────────────
+// ─── bridge_tools ────────────────────────────────────────────────────────
 // Outbound MCP tools an agent exposes to IDEs (Cursor, Claude Code) via
 // `apps/mcp-bridge`. Distinct from `agent_mcp_tools` (which is the
 // INBOUND allowlist of MCP tools the agent itself can invoke). See
@@ -432,11 +432,11 @@ export const agentMcpTools = pgTable(
 // Resolution at MCP-bridge boot (per agent):
 //   1. If the agent has ≥1 row in `bridge_tools` with `enabled = true`,
 //      expose those tools verbatim (one MCP tool per row).
-//   2. Otherwise, fall back to the Phase 5 1:1 default (`query_<slug>`).
+//   2. Otherwise, fall back to the 1:1 default (`query_<slug>`).
 //
 // `name` is GLOBALLY unique (MCP spec requires per-server tool-name
 // uniqueness; one bridge process = one MCP server). The `query_` prefix
-// is reserved for the Phase 5 auto-derived defaults, enforced by a CHECK
+// is reserved for the auto-derived defaults, enforced by a CHECK
 // constraint so an explicit row can't shadow the implicit default.
 //
 // `input_schema` stores a JSON Schema draft-07 object — the format MCP
@@ -453,7 +453,7 @@ export const bridgeTools = pgTable(
     /**
      * MCP tool identifier as the IDE sees it. Must satisfy
      * `^[a-zA-Z][a-zA-Z0-9_]{0,63}$` and must NOT start with `query_`
-     * (reserved for Phase 5 fallback). Both rules are enforced at the
+     * (reserved for the fallback). Both rules are enforced at the
      * DB layer via CHECK constraints — the application catches them
      * earlier with a friendlier error, but the DB is the last line.
      */
@@ -523,14 +523,14 @@ export const runs = pgTable(
      * Soft link to `mastra.resources(id)`. Same story as
      * `mastra_thread_id`; populated only when memory is enabled.
      * Defaults to `agent:<agentId>` so multiple users aren't needed to
-     * scope things in the single-operator local-first MVP — Phase 5
+     * scope things in the single-operator local-first MVP — future
      * multi-user auth will stamp real user ids here.
      */
     mastraResourceId: text('mastra_resource_id'),
     /**
-     * Phase 7: which bridge tool the IDE invoked, when this run was
+     * Which bridge tool the IDE invoked, when this run was
      * started by `apps/mcp-bridge` AND the agent had ≥1 explicit
-     * `bridge_tools` row. Phase 5 (1:1 default) runs leave this NULL —
+     * `bridge_tools` row. 1:1 default runs leave this NULL —
      * the auto-derived `query_<slug>` tool isn't a row in
      * `bridge_tools`, and giving it a synthetic name here would muddle
      * the "explicit vs default" filter. Soft column (no FK): bridge
@@ -561,7 +561,7 @@ export const runs = pgTable(
     completionTokens: integer('completion_tokens'),
     /**
      * Mini-repos accumulated across this run's wrapper invocations
-     * (`docs/ARCHITECTURE.md §10` Phase G G2/G3). Each inspector wrapper appends
+     * (`docs/ARCHITECTURE.md §10`). Each inspector wrapper appends
      * its `MiniRepo` payload as one element of this array. The IDE
      * bridge ships this verbatim under D17's `mini_repos[]` field;
      * chat-only runs that never invoke a wrapper leave it NULL.
@@ -604,7 +604,7 @@ export const runs = pgTable(
     index('runs_mastra_thread_idx')
       .on(t.mastraThreadId, t.startedAt)
       .where(sql`${t.mastraThreadId} IS NOT NULL`),
-    // "Runs of bridge tool X for this agent" filter for Phase 7 UI.
+    // "Runs of bridge tool X for this agent" filter for the bridge tools UI.
     // Partial index drops the NULL rows from chat / 1:1 default runs
     // so it stays small even after years of usage.
     index('runs_agent_bridge_tool_idx')

@@ -1,6 +1,6 @@
 /**
  * Read operator-curated cross-repo edges for an agent
- * (`docs/ARCHITECTURE.md §10` Phase E E2).
+ * (`docs/ARCHITECTURE.md §10`).
  *
  * Used by `assess_change_impact` to fan blast-radius analysis from a
  * change's primary repo into related repos. Edges are agent-scoped —

@@ -75,7 +75,7 @@ async function main(): Promise<void> {
 
   // ── clone-repo ────────────────────────────────────────────────────────
   // Concurrency 1 on purpose: clones are disk/network heavy and indexing
-  // (Phase 2B) will want its own queue with its own limits. Running two
+  // will want its own queue with its own limits. Running two
   // clones in parallel thrashes both resources for no wall-clock win on
   // a single-user local setup.
   const cloneRepoQueue = new Queue(QUEUE_NAMES.cloneRepo, {

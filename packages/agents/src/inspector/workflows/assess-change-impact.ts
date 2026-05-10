@@ -1,5 +1,5 @@
 /**
- * `assess_change_impact` wrapper (`docs/ARCHITECTURE.md §10` Phase E E2).
+ * `assess_change_impact` wrapper (`docs/ARCHITECTURE.md §10`).
  *
  * Computes blast radius for a proposed change. Inputs are the changed
  * file(s) or symbol(s) plus a `change_kind` (rename / remove / modify /
@@ -10,8 +10,8 @@
  *   - `direct (depth=1, downstream)` — code the change reaches directly
  *   - `transitive (depth=N)`          — N hops away
  *
- * Cross-repo expansion (the v1-system-skill §10.5 "always-explain-bounds"
- * rule, baked into code now): for every operator-curated `repo_edges`
+ * Cross-repo expansion ("always-explain-bounds" rule, baked into code):
+ * for every operator-curated `repo_edges`
  * row originating from the resolved repo, run gitnexus_impact upstream
  * on each anchor against the target repo too. Hits are added to
  * `mini_repo.cross_repo_edges` AND folded into `files` with the
@@ -335,8 +335,8 @@ export async function runAssessChangeImpact(
       } satisfies MiniRepoFile
     })
 
-  // Summary explicitly names the cross-repo dimension (the v1 skill's
-  // "always-say-what-you-DID-NOT-check" rule, made deterministic).
+  // Summary explicitly names the cross-repo dimension
+  // ("always-say-what-you-DID-NOT-check" rule, made deterministic).
   const sameRepoCount = files.filter((f) => f.repo_id === target.repo_id).length
   const crossCount = files.length - sameRepoCount
   const crossSummary =

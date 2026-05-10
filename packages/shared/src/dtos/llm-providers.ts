@@ -50,7 +50,7 @@ const baseFields = {
   defaultModel: z.string().trim().min(1).max(200).nullable().optional(),
   apiKey: secretInputSchema.optional(),
   /**
-   * Embedding vector dimension count (`docs/ARCHITECTURE.md §10` Phase D D3).
+   * Embedding vector dimension count (`docs/ARCHITECTURE.md §10`).
    * Only meaningful for `role='embedding'` rows; the backend rejects
    * the field on chat-role rows. Forwarded to gitnexus as
    * `GITNEXUS_EMBEDDING_DIMS` so its embedder sizing matches the

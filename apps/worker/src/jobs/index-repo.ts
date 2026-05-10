@@ -192,10 +192,10 @@ export async function handleIndexRepoJob(
     } satisfies RepoIndexStartedPayload,
   })
 
-  // Phase D D2: resolve the workspace embedding provider so gitnexus's
+  // Resolve the workspace embedding provider so gitnexus's
   // `--embeddings` pipeline routes to the configured embedder. Missing
   // provider is non-fatal here — gitnexus falls back to its own local
-  // embedder. The agent-side build (D1) is what enforces "must have an
+  // embedder. The agent-side build is what enforces "must have an
   // embedding provider when repos are attached"; the worker's indexing
   // is a workspace-level operation that can run before any agent owns
   // the repo.
@@ -390,7 +390,7 @@ interface RunAnalyzeArgs {
   readonly force: boolean
   /**
    * `true` → pass `--embeddings` so gitnexus generates semantic vectors
-   * alongside the graph (`docs/ARCHITECTURE.md §10` Phase D D2). The
+   * alongside the graph (`docs/ARCHITECTURE.md §10`). The
    * `inspector/find_in_codebase` wrapper relies on `gitnexus_query`'s
    * hybrid BM25 + semantic + RRF retrieval, which only does the semantic
    * arm when embeddings are populated. Combined with `env` below, this
@@ -552,7 +552,7 @@ function errMsg(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
 }
 
-// ─── Embedding env builder (Phase D D2) ──────────────────────────────────
+// ─── Embedding env builder ───────────────────────────────────────────────
 
 /**
  * Vendor base URL fallbacks for `role='embedding'` providers. Same

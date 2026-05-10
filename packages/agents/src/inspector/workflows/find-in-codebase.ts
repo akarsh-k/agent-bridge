@@ -1,13 +1,13 @@
 /**
  * `find_in_codebase` wrapper. first deterministic workflow
- * (`docs/ARCHITECTURE.md §10` Phase B B4).
+ * (`docs/ARCHITECTURE.md §10`).
  *
  * Inputs:
  *   - `query`: free-form search string.
  *   - `repo_hint?`: friendly label of an attached repo. omit to use all
  *     when the agent has multiple repos AND the wrapper allows it.
  *
- * Behaviour for Phase B (deterministic only — no LLM expansion yet):
+ * Behaviour in deterministic mode (no LLM expansion):
  *   1. Resolve the hint to a single repo, an "all" fan-out, or a
  *      "needs clarification" message.
  *   2. Call `gitnexus_query` per resolved repo with the raw query.
@@ -15,15 +15,13 @@
  *      lifting — we don't need a separate vector path here (`§3a`).
  *   3. Take the top-N hits, fold them into mini-repo `files`, using
  *      gitnexus's snippet as a single chunk per hit.
- *   4. `expansions: [query]` (Phase C will replace this with the LLM
- *      expansion).
+ *   4. `expansions: [query]` (LLM expansion replaces this when wired).
  *
- * Skipped on purpose for B (will land in later phases):
- *   - LLM term expansion (Phase C).
- *   - `gitnexus_context` round-trip for full file slices (Phase E
- *     extends mini-repo with bigger chunks once more wrappers land).
- *   - `graph_subset` (Phase E `trace_flow`).
- *   - `cross_repo_edges` (Phase E `assess_change_impact`).
+ * Skipped on purpose for now (will land in later iterations):
+ *   - LLM term expansion.
+ *   - `gitnexus_context` round-trip for full file slices.
+ *   - `graph_subset` (`trace_flow`).
+ *   - `cross_repo_edges` (`assess_change_impact`).
  */
 
 import type { MastraModelConfig } from '@mastra/core/llm'
@@ -84,8 +82,8 @@ export interface FindInCodebaseInput {
   readonly maxFiles?: number
   /**
    * Agent's model config — drives the in-wrapper LLM term-expansion call
-   * (Phase C). When omitted, the wrapper falls back to the raw query as
-   * the only expansion (deterministic, same as Phase B behaviour).
+   * When omitted, the wrapper falls back to the raw query as
+   * the only expansion (deterministic mode).
    */
   readonly modelConfig?: MastraModelConfig
 }
@@ -154,9 +152,9 @@ export async function runFindInCodebase(
   const targets: readonly AttachedRepo[] =
     resolution.ok === true ? [resolution.repo] : resolution.repos
 
-  // Phase C: term expansion + intent classification. Hard fallback to
+  // Term expansion + intent classification. Hard fallback to
   // raw query keeps the run alive on any LLM hiccup. Skipped entirely
-  // when no `modelConfig` is supplied (Phase B-style deterministic mode,
+  // when no `modelConfig` is supplied (deterministic mode,
   // useful for tests).
   const warnings: string[] = []
   let expansions: readonly string[] = [trimmed]
@@ -226,13 +224,13 @@ export async function runFindInCodebase(
     }
   }
 
-  // Phase I: in parallel, run our local keyword retrieval (ripgrep)
+  // In parallel, run our local keyword retrieval (ripgrep)
   // alongside gitnexus. Stand-in for gitnexus's broken BM25 arm
   // (gitnexus#1287). One ripgrep spawn per repo with all expansions
   // OR'd via `-e PATTERN1 -e PATTERN2 …`. Failures fold into
   // `warnings` and don't block the gitnexus path. Deletable when
-  // upstream lands a fix: drop these lines + the imports + Phase I
-  // event kinds.
+  // upstream lands a fix: drop these lines + the imports + the
+  // keyword event kinds.
   const keywordTasks: Array<Promise<{ repo: AttachedRepo; hits: readonly KeywordHit[] }>> =
     targets.map(async (r) => {
       const sourceDir = repoSourceDir({
@@ -393,7 +391,7 @@ export async function runFindInCodebase(
     warnings,
   })
 
-  // Phase G G3: shared `emitMinirepoBuilt` also persists the mini-repo
+  // The shared `emitMinirepoBuilt` also persists the mini-repo
   // to `runs.minirepo_json`. Replaces the inline event emit so the
   // chat-tab tool-call cards + the IDE bridge envelope both see this
   // wrapper's output.
@@ -430,7 +428,7 @@ async function emitToolResult(args: ToolResultArgs): Promise<void> {
 /**
  * Best-effort languages-hint for the expand call. Pulls top-level
  * extension counts from the matched repos' `description` (a quick
- * proxy until Phase E adds a real language-detection pass on
+ * proxy until a real language-detection pass on
  * `gitnexus_context` results).
  *
  * For now we just hand the repo labels — the LLM uses them as a hint

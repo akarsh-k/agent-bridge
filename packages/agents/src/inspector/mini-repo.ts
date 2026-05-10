@@ -1,5 +1,5 @@
 /**
- * Mini-repo assembler (`docs/ARCHITECTURE.md §10` Phase B B2 + §5 truncation rules).
+ * Mini-repo assembler (`docs/ARCHITECTURE.md §10` + §5 truncation rules).
  *
  * Pure functions only — no I/O, no side effects. Wrapper tools build a
  * draft `MiniRepo` from gitnexus + disk reads, hand it to `finalizeMiniRepo`
@@ -95,8 +95,8 @@ export function finalizeMiniRepo(
   }
 
   // Pass 2: drop graph nodes/edges. Currently we don't track per-node
-  // depth (Phase E will when `trace_flow` exists), so for B we just
-  // drop the second half of each array as the "past depth 2" proxy.
+  // depth, so for now we just drop the second half of each
+  // array as the "past depth 2" proxy.
   if (tokens > cap && (nodes.length > 0 || edges.length > 0)) {
     const cutNodes = Math.floor(nodes.length / 2)
     const cutEdges = Math.floor(edges.length / 2)

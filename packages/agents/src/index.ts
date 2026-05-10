@@ -93,12 +93,12 @@ export {
   INSPECTOR_SYSTEM_PROMPT_VERSION,
   loadInspectorSystemPrompt,
 } from './inspector/system-prompt.js'
-// Removed in Phase H cleanup:
+// Removed in cleanup:
 //   - `CODING_AGENT_SYSTEM_SKILL_*` + `loadCodingAgentSystemSkill` (replaced by inspector prompt above).
 //   - `CODING_AGENT_VIRTUAL_BRIDGE_TOOLS` + `VirtualBridgeToolDefinition` (replaced by inspector wrappers).
 //   - `loadGitnexusLibrarySkills` + `GitnexusLibrarySkill*` (no longer auto-attached).
 //   - `mountWikiTools` + `MountedWikiTools` + `MountWikiToolsInput` + `WikiRepoLabel` (wiki tools no longer in agent dict).
 //   - `resolveRepoHint` + helpers (the IDE bridge no longer needs the multi-signal resolver; `inspector/repo-resolve.ts` covers wrapper-internal use).
-// Removed in Phase H+1 (this commit):
+// Removed later (this commit):
 //   - `emptyWikiMountMeta` + `WikiMountMeta` (the always-empty stub left over from
-//     B6's backwards-compat). `BuiltAgentMeta.wiki` was removed at the same time.
+//     backwards-compat). `BuiltAgentMeta.wiki` was removed at the same time.

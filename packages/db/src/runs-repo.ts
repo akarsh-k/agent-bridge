@@ -1,5 +1,5 @@
 /**
- * Run-table mutation helpers for Phase 3d (`POST /api/agents/:id/runs` +
+ * Run-table mutation helpers (`POST /api/agents/:id/runs` +
  * SSE event bus). Same pattern as `repos-repo.ts`: every status
  * transition lives behind a single function so the invariants
  * (setting `started_at` exactly once, writing `finished_at` only on
@@ -55,11 +55,11 @@ import { runEvents, runs, type RunEventRow, type RunRow } from './schema.js'
  * `gen_random_uuid()`; collision probability is indistinguishable
  * from zero) lets both values be written atomically.
  *
- * Phase 5 bridge MCP runs reuse this helper with a `bridge:<uuid>`
+ * Bridge MCP runs reuse this helper with a `bridge:<uuid>`
  * prefix; keeping the prefix caller-controlled avoids a second helper.
  */
 /**
- * Fetch a run row by id. Used by the Phase 5 MCP bridge after
+ * Fetch a run row by id. Used by the MCP bridge after
  * `dispatchRun` resolves: the dispatcher writes the final accumulated
  * text to `runs.output_summary`, and the bridge surfaces that as the
  * MCP tool's text content. Returns `null` when the row was deleted
@@ -85,9 +85,9 @@ export async function createRun(
     readonly inputPrompt: string
     readonly streamId: string
     /**
-     * Phase 7: bridge tool name when this run was started by
+     * Bridge tool name when this run was started by
      * `apps/mcp-bridge` AND the agent had ≥1 explicit `bridge_tools`
-     * row. Phase 5 (1:1 default) and UI-chat runs leave this null.
+     * row. 1:1 default and UI-chat runs leave this null.
      */
     readonly bridgeToolName?: string | null
     /**
@@ -128,7 +128,7 @@ export async function createRun(
   return row
 }
 
-// ─── Mastra thread linkage (Phase 3g) ─────────────────────────────────
+// ─── Mastra thread linkage ─────────────────────────────────
 
 export interface SetMastraThreadInput {
   readonly mastraThreadId: string

@@ -123,8 +123,8 @@ export interface RunGitnexusOptions {
   readonly stdio?: 'inherit' | 'pipe' | 'ignore'
   readonly signal?: AbortSignal
   /**
-   * Extra env vars layered on top of the sandbox baseline (`docs/ARCHITECTURE.md §10`
-   * Phase D D2). Used to forward `GITNEXUS_EMBEDDING_*` so gitnexus's
+   * Extra env vars layered on top of the sandbox baseline
+   * (`docs/ARCHITECTURE.md §10`). Used to forward `GITNEXUS_EMBEDDING_*` so gitnexus's
    * embedder routes to the workspace's chosen embedding provider instead
    * of the default local embedder. Caller is responsible for redacting
    * any secret env values from logs (the shared `RunRedactor` pattern).
@@ -207,7 +207,7 @@ export function repoMetaJsonPath(sourceDir: string): string {
 
 /**
  * Absolute path to the wiki output directory written by `gitnexus wiki`.
- * Phase 2C plan note: gitnexus's `--storage-path` defaults to
+ * Plan note: gitnexus's `--storage-path` defaults to
  * `<sourceDir>/.gitnexus/`, and the wiki command always nests its output
  * under `<storagePath>/wiki/`. The original Plan.md said
  * `.agent-bridge-data/workspace/<agent>/<repo>/wiki/`, but per-agent doesn't
