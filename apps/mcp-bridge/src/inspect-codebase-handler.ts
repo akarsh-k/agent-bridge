@@ -30,10 +30,26 @@ import { eq } from 'drizzle-orm'
 
 import { dispatchRun } from '@agent-bridge/agents'
 import { runsRepo, schema, type AgentBridgeDb } from '@agent-bridge/db'
-import { bridgeStreamId } from '@agent-bridge/shared'
+import {
+  bridgeStreamId,
+  formatCallsiteBlock,
+  type Callsite,
+} from '@agent-bridge/shared'
 import type { EventBus } from '@agent-bridge/shared/event-bus'
 
 // ─── Public surface ──────────────────────────────────────────────────────
+
+/**
+ * Negotiated `clientInfo` from the MCP `initialize` handshake, captured
+ * once at session start by the bridge process. Surfaced through
+ * `BridgeContext.getClientInfo()` so each handler can stamp the
+ * captured identity onto its `Callsite` without the SDK reaching into
+ * its internals from multiple files.
+ */
+export interface IdeClientInfo {
+  readonly name: string
+  readonly version: string | null
+}
 
 export interface BridgeContext {
   readonly db: AgentBridgeDb
@@ -44,6 +60,12 @@ export interface BridgeContext {
    * entrypoint.
    */
   readonly threadId: string
+  /**
+   * Returns the IDE's negotiated MCP `clientInfo` (name + version) or
+   * `null` if the handshake hasn't completed yet. Read lazily so
+   * late-binding works if the IDE re-initializes mid-session.
+   */
+  readonly getClientInfo: () => IdeClientInfo | null
 }
 
 export interface AgentRecord {
@@ -120,16 +142,30 @@ export async function executeInspectCodebase(
   // hint to the prompt so the agent's LLM picks the right repo on the
   // first try without round-tripping through `list_repos`.
   const hintLine = formatHintLine(rawArgs)
-  const prompt = hintLine.length > 0 ? `${hintLine}\n\n${query}` : query
+  const userPrompt = hintLine.length > 0 ? `${hintLine}\n\n${query}` : query
 
   const runId = randomUUID()
   const streamId = bridgeStreamId(runId)
+
+  const callsite = buildCallsite({
+    clientInfo: ctx.getClientInfo(),
+    agent,
+    toolName: 'inspect_codebase',
+    rawArgs,
+  })
+
+  // Prepend the `## Callsite` block here (not in the dispatcher) so
+  // the persisted `runs.input_prompt` matches what the LLM actually
+  // sees. The dispatcher is a dumb transport — it forwards `prompt`
+  // verbatim to Mastra.
+  const prompt = formatCallsiteBlock(callsite) + userPrompt
 
   await runsRepo.createRun(ctx.db, {
     id: runId,
     agentId: agent.id,
     inputPrompt: prompt,
     streamId,
+    callsite,
   })
 
   try {
@@ -225,8 +261,8 @@ export async function executePhase7Tool(
     )
   }
 
-  const prompt = renderPromptTemplate(bridgeTool.promptTemplate, rawArgs).trim()
-  if (prompt.length === 0) {
+  const renderedPrompt = renderPromptTemplate(bridgeTool.promptTemplate, rawArgs).trim()
+  if (renderedPrompt.length === 0) {
     return mcpError(
       'Rendered prompt was empty — check that your bridge tool template references args correctly.',
     )
@@ -235,12 +271,24 @@ export async function executePhase7Tool(
   const runId = randomUUID()
   const streamId = bridgeStreamId(runId)
 
+  const callsite = buildCallsite({
+    clientInfo: ctx.getClientInfo(),
+    agent,
+    toolName: bridgeTool.name,
+    rawArgs,
+  })
+
+  // Same callsite-prepend convention as `executeInspectCodebase` —
+  // the persisted prompt matches what the LLM saw.
+  const prompt = formatCallsiteBlock(callsite) + renderedPrompt
+
   await runsRepo.createRun(ctx.db, {
     id: runId,
     agentId: agent.id,
     inputPrompt: prompt,
     streamId,
     bridgeToolName: bridgeTool.name,
+    callsite,
   })
 
   try {
@@ -289,6 +337,63 @@ interface WireEnvelope {
   readonly mini_repos: readonly unknown[]
   readonly prose_summary?: string
   readonly warnings: readonly string[]
+}
+
+/**
+ * Assemble a `Callsite` from the bridge's per-call inputs. Used by both
+ * `executeInspectCodebase` and `executePhase7Tool` so every bridge-
+ * originated run carries identical provenance.
+ *
+ * `repo` is populated only when at least one repo hint was in `rawArgs`
+ * — for chat-style tools that don't supply hints this returns `null`,
+ * which is honest about the tool not being repo-aware.
+ */
+export function buildCallsite(input: {
+  readonly clientInfo: IdeClientInfo | null
+  readonly agent: AgentRecord
+  readonly toolName: string
+  readonly rawArgs: Record<string, unknown>
+}): Callsite {
+  const { clientInfo, agent, toolName, rawArgs } = input
+  const repo = extractRepoCallsite(rawArgs)
+  return {
+    client: clientInfo
+      ? {
+          name: clientInfo.name,
+          ...(clientInfo.version ? { version: clientInfo.version } : {}),
+        }
+      : { name: 'unknown-mcp-client' },
+    agent: { slug: agent.slug, name: agent.name },
+    tool: { name: toolName },
+    ...(repo ? { repo } : {}),
+    started_at: new Date().toISOString(),
+  }
+}
+
+function extractRepoCallsite(
+  rawArgs: Record<string, unknown>,
+): NonNullable<Callsite['repo']> | null {
+  const label = stringArg(rawArgs, 'repo_hint')
+  const remote_url = stringArg(rawArgs, 'remote_url')
+  const branch = stringArg(rawArgs, 'branch')
+  const local_folder = stringArg(rawArgs, 'local_folder')
+  if (!label && !remote_url && !branch && !local_folder) return null
+  return {
+    ...(label ? { label } : {}),
+    ...(remote_url ? { remote_url } : {}),
+    ...(branch ? { branch } : {}),
+    ...(local_folder ? { local_folder } : {}),
+  }
+}
+
+function stringArg(
+  rawArgs: Record<string, unknown>,
+  key: string,
+): string | null {
+  const v = rawArgs[key]
+  if (typeof v !== 'string') return null
+  const trimmed = v.trim()
+  return trimmed.length > 0 ? trimmed : null
 }
 
 function formatHintLine(rawArgs: Record<string, unknown>): string {

@@ -16,6 +16,7 @@ import { createPortal } from 'react-dom'
 import { useWorkspace } from '../../lib/workspace-context'
 import { useChat, type ChatMessage } from '../../lib/use-chat'
 import { Markdown } from '../../ui/markdown'
+import { ChatRunTimeline } from './chat-run-timeline'
 import {
   ArrowRightIcon,
   PlusIcon,
@@ -597,6 +598,9 @@ function MessageRow({
             </>
           )}
         </div>
+        {msg.role === 'assistant' && msg.runId && (
+          <ChatRunTimeline runId={msg.runId} status={msg.status} />
+        )}
       </div>
     </div>
   )

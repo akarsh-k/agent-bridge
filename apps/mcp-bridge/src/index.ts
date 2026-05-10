@@ -56,6 +56,7 @@ import {
   executePhase7Tool,
   type AgentRecord,
   type BridgeContext,
+  type IdeClientInfo,
   type ToolEntry,
 } from './inspect-codebase-handler.js'
 
@@ -296,10 +297,25 @@ async function main(): Promise<void> {
     { capabilities: { tools: {} } },
   )
 
+  // The MCP SDK exposes the negotiated `clientInfo` from the
+  // `initialize` handshake via `server.getClientVersion()` once the
+  // handshake completes. We read it lazily on every tool call so
+  // late-binding works even if the IDE re-initializes the session.
+  // Returns `null` for the brief window before initialize lands (no
+  // tool call is allowed before handshake completes anyway, so this
+  // path is mostly defensive).
   const ctx: BridgeContext = {
     db,
     eventBus,
     threadId: BRIDGE_THREAD_ID,
+    getClientInfo: (): IdeClientInfo | null => {
+      const v = server.getClientVersion()
+      if (!v || typeof v.name !== 'string' || v.name.length === 0) return null
+      return {
+        name: v.name,
+        version: typeof v.version === 'string' ? v.version : null,
+      }
+    },
   }
 
   server.setRequestHandler(ListToolsRequestSchema, () => {

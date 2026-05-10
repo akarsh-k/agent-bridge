@@ -146,18 +146,59 @@ export async function listAgentThreads(
   const ids = threads.map((t) => t.id)
   const previews = await loadThreadPreviews(db, ids)
 
-  return threads.map((t) => {
-    const preview = previews.get(t.id)
-    const title = (t.title?.trim() || preview?.title || null) ?? null
-    return {
-      threadId: t.id,
-      title,
-      resourceId: t.resourceId,
-      createdAt: t.createdAt,
-      updatedAt: t.updatedAt,
-      messageCount: preview?.count ?? 0,
-    }
-  })
+  // Bridge-originated runs (IDE) share the same Mastra resource as
+  // chat-tab runs (`agent:<agentId>` by default), so a naive return
+  // here would surface IDE threads in the chat-tab list — which makes
+  // no UX sense (those are tool invocations, not conversations).
+  // Keep only threads that have at least one CHAT-source run; bridge-
+  // only threads stay accessible via /logs but stop polluting the
+  // chat thread list.
+  const chatThreadIds = await loadChatThreadIds(db, agentId, ids)
+
+  return threads
+    .filter((t) => chatThreadIds.has(t.id))
+    .map((t) => {
+      const preview = previews.get(t.id)
+      const title = (t.title?.trim() || preview?.title || null) ?? null
+      return {
+        threadId: t.id,
+        title,
+        resourceId: t.resourceId,
+        createdAt: t.createdAt,
+        updatedAt: t.updatedAt,
+        messageCount: preview?.count ?? 0,
+      }
+    })
+}
+
+/**
+ * Subset of `threadIds` that have at least one chat-tab run
+ * (`runs.stream_id LIKE 'run:%'`). Used by `listAgentThreads` to drop
+ * bridge-only threads from the chat surface. Single round-trip;
+ * `runs.mastra_thread_id` carries an indexed partial-index for the
+ * thread-history-replay query so the lookup is cheap.
+ */
+async function loadChatThreadIds(
+  db: AgentBridgeDb,
+  agentId: string,
+  threadIds: ReadonlyArray<string>,
+): Promise<Set<string>> {
+  const out = new Set<string>()
+  if (threadIds.length === 0) return out
+  const result = await db.pool.query<{ mastra_thread_id: string }>(
+    `
+    SELECT DISTINCT mastra_thread_id
+    FROM runs
+    WHERE agent_id = $1
+      AND mastra_thread_id = ANY($2::text[])
+      AND stream_id LIKE 'run:%'
+    `,
+    [agentId, threadIds.slice()],
+  )
+  for (const row of result.rows) {
+    if (row.mastra_thread_id) out.add(row.mastra_thread_id)
+  }
+  return out
 }
 
 interface ThreadPreview {

@@ -41,6 +41,120 @@ export type RunListSourceFilter = (typeof runListSourceFilters)[number]
  */
 export const RUN_LIST_PREVIEW_CHARS = 500
 
+// ─── Callsite (always-on, per-run) ──────────────────────────────────────
+//
+// Captured at run dispatch time — never user-supplied via chat or tool
+// args. Composition order:
+//   - bridge handlers build it from the MCP `initialize` clientInfo +
+//     the dispatch-time agent record + the tool args the caller passed
+//     (repo hints)
+//   - the chat backend builds a synthetic `{client: {name: 'web-chat'},
+//     tool: {name: 'chat'}, …}` shape so web-chat runs carry the same
+//     wire shape as bridge runs
+//
+// Persisted to `runs.callsite_json` and prepended to the dispatched
+// prompt as a `## Callsite` markdown block so operator skills can
+// reference it (e.g. "if callsite.client.name is 'web-chat', format X").
+//
+// Deliberately platform-agnostic. `client + agent + tool + repo +
+// started_at` are concepts every MCP caller has — code editor, CLI, CI
+// hook, future non-editor client. Caller-specific concepts (editor
+// cursor, build context, request id, …) belong in tool args or in a
+// separately discriminated context object so this audit shape stays
+// uniform across every kind of caller.
+
+const callsiteClientSchema = z
+  .object({
+    /** Free-form client identifier — whatever the MCP caller advertises
+     *  in its `initialize` handshake. Web-chat synthesises `'web-chat'`. */
+    name: z.string().trim().min(1).max(120),
+    version: z.string().trim().max(120).nullable().optional(),
+  })
+  .strict()
+
+const callsiteAgentSchema = z
+  .object({
+    slug: z.string().trim().min(1).max(120),
+    name: z.string().trim().min(1).max(120),
+  })
+  .strict()
+
+const callsiteToolSchema = z
+  .object({
+    /** `'inspect_codebase'` / a `bridge_tools.name` value / `'chat'`
+     *  for web-chat runs. */
+    name: z.string().trim().min(1).max(120),
+  })
+  .strict()
+
+const callsiteRepoSchema = z
+  .object({
+    /** Operator-friendly repo label (`agent_repos.role` or URL tail). */
+    label: z.string().trim().max(200).nullable().optional(),
+    remote_url: z.string().trim().max(2_000).nullable().optional(),
+    branch: z.string().trim().max(200).nullable().optional(),
+    /** Caller-supplied workspace folder name. */
+    local_folder: z.string().trim().max(200).nullable().optional(),
+  })
+  .strict()
+
+export const callsiteSchema = z
+  .object({
+    client: callsiteClientSchema,
+    agent: callsiteAgentSchema,
+    tool: callsiteToolSchema,
+    /** Populated for inspect_codebase + custom bridge_tools that pass
+     *  repo hints; null for web-chat or runs that don't supply one. */
+    repo: callsiteRepoSchema.nullable().optional(),
+    /** ISO-8601 of when dispatch fired. */
+    started_at: z.iso.datetime(),
+  })
+  .strict()
+
+export type Callsite = z.infer<typeof callsiteSchema>
+
+/**
+ * Render the per-run `Callsite` as a `## Callsite` markdown block to
+ * prepend to the user prompt. Returns the empty string when no callsite
+ * was supplied so callers can `formatCallsiteBlock(...) + prompt`
+ * unconditionally.
+ *
+ * Lives in shared (not the dispatcher) so the bridge handler and the
+ * web-chat backend route can both prepend the block BEFORE persisting
+ * `runs.input_prompt`. The dispatcher is then a dumb transport — it
+ * forwards whatever `prompt` it receives to Mastra, no rewriting. This
+ * keeps `runs.input_prompt` faithful to what the LLM actually saw.
+ *
+ * Markdown rather than XML tags or JSON: the original convention.
+ * Models may echo it; operators have explicitly accepted that trade-off
+ * in exchange for skills being able to text-match against the rendered
+ * output ("if 'client: cursor' appears in the message, …").
+ */
+export function formatCallsiteBlock(callsite: Callsite | null): string {
+  if (!callsite) return ''
+  const lines: string[] = ['## Callsite', '']
+  const clientLine = callsite.client.version
+    ? `${callsite.client.name} v${callsite.client.version}`
+    : callsite.client.name
+  lines.push(`- client: ${clientLine}`)
+  lines.push(`- agent: ${callsite.agent.slug} (${callsite.agent.name})`)
+  lines.push(`- tool: ${callsite.tool.name}`)
+  if (callsite.repo) {
+    const repoParts: string[] = []
+    if (callsite.repo.label) repoParts.push(callsite.repo.label)
+    if (callsite.repo.remote_url) repoParts.push(callsite.repo.remote_url)
+    if (callsite.repo.branch) repoParts.push(`branch=${callsite.repo.branch}`)
+    if (callsite.repo.local_folder)
+      repoParts.push(`folder=${callsite.repo.local_folder}`)
+    if (repoParts.length > 0) lines.push(`- repo: ${repoParts.join(' · ')}`)
+  }
+  lines.push(`- started_at: ${callsite.started_at}`)
+  lines.push('')
+  lines.push('---')
+  lines.push('')
+  return lines.join('\n')
+}
+
 export const runListRowSchema = z.object({
   id: z.uuid(),
   agentId: z.uuid(),
@@ -65,6 +179,12 @@ export const runListRowSchema = z.object({
    */
   promptTokens: z.number().int().nonnegative().nullable(),
   completionTokens: z.number().int().nonnegative().nullable(),
+  /**
+   * Always-on per-run provenance (`client + agent + tool + repo? +
+   * cursor? + started_at`). Null only on legacy rows that pre-date
+   * the column. Surfaced as a badge on the run row in `/logs`.
+   */
+  callsite: callsiteSchema.nullable(),
 })
 
 export type RunListRow = z.infer<typeof runListRowSchema>

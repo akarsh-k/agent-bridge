@@ -146,6 +146,12 @@ export interface DispatchRunInput {
  */
 export async function dispatchRun(input: DispatchRunInput): Promise<void> {
   const { db, eventBus, agentId, runId, prompt, streamId } = input
+  // Note: the dispatcher does NOT prepend the `## Callsite` block here.
+  // Callers (bridge handler, web-chat backend) build the enriched
+  // prompt via `formatCallsiteBlock` from `@agent-bridge/shared` and
+  // persist it to `runs.input_prompt` BEFORE calling us. That way
+  // `runs.input_prompt` faithfully reflects what the LLM actually saw,
+  // and the dispatcher stays a dumb transport.
   // Per-agent fan-out channel for the right-rail Activity panel. Every
   // event we publish onto the per-run `streamId` is mirrored here so
   // the operator sees one continuous timeline for the focused agent
@@ -309,14 +315,25 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
     })
     batcher.start()
 
+    // `maxSteps` caps how many model→tool→model loops Mastra runs before
+    // terminating. Mastra's default is 5; that's too tight for an
+    // inspector-enabled agent that may legitimately need 4-6 wrapper
+    // calls before the synthesis turn (a 5-tool-call run hit the cap
+    // before getting a chance to write its answer — 0 tokens emitted,
+    // empty `output_summary`). 10 covers the typical case
+    // (list_repos + 2-3 wrappers + synthesis = ~5) with headroom for
+    // the multi-wrapper IDE queries; if a run regularly hits 10, the
+    // model is over-searching and the prompt or tool routing needs
+    // tightening rather than a bigger budget.
     const streamOptions = memoryIds
       ? {
           memory: {
             thread: memoryIds.mastraThreadId,
             resource: memoryIds.mastraResourceId,
           },
+          maxSteps: 10,
         }
-      : {}
+      : { maxSteps: 10 }
 
     // Mastra 1.28 returns `ReadableStream<ChunkType>` for
     // `.fullStream`. It implements async iteration natively.

@@ -34,6 +34,7 @@
  */
 
 import { and, eq, inArray, sql } from 'drizzle-orm'
+import type { Callsite } from '@agent-bridge/shared'
 import type { AgentBridgeDb } from './client.js'
 import { runEvents, runs, type RunEventRow, type RunRow } from './schema.js'
 
@@ -89,6 +90,15 @@ export async function createRun(
      * row. Phase 5 (1:1 default) and UI-chat runs leave this null.
      */
     readonly bridgeToolName?: string | null
+    /**
+     * Always-on per-run provenance (`client + agent + tool + repo? +
+     * cursor? + started_at`). Bridge handlers stamp the captured IDE
+     * clientInfo + tool args; the chat backend synthesises the
+     * `web-chat` shape. Persisted on `runs.callsite_json` so /logs can
+     * render a per-row badge AND so the dispatcher can prepend a
+     * `## Callsite` markdown block to the prompt.
+     */
+    readonly callsite?: Callsite | null
   },
 ): Promise<RunRow> {
   const [row] = await handle.db
@@ -101,6 +111,9 @@ export async function createRun(
       status: 'pending',
       ...(params.bridgeToolName !== undefined
         ? { bridgeToolName: params.bridgeToolName }
+        : {}),
+      ...(params.callsite !== undefined
+        ? { callsiteJson: params.callsite }
         : {}),
     })
     .returning()

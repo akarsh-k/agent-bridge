@@ -138,7 +138,14 @@ export function RunDetailSheet({ target, onClose }: RunDetailSheetProps) {
 function RunSubtitle({ run }: { run: RunDetailResponse['run'] }) {
   const status = statusPill(run.status)
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 8,
+        flexWrap: 'wrap',
+      }}
+    >
       <Pill kind={status.kind} dot>
         {status.label}
       </Pill>
@@ -146,6 +153,95 @@ function RunSubtitle({ run }: { run: RunDetailResponse['run'] }) {
       <span className="ab-mono" style={{ fontSize: 11 }}>
         {run.agentSlug}
       </span>
+      {run.callsite && <CallsiteBadge callsite={run.callsite} />}
+    </span>
+  )
+}
+
+/**
+ * Compact provenance badge surfaced on the run-detail header. Reads
+ * left-to-right: client → tool → repo. Omits any segment that has no
+ * data so web-chat runs render as a small chip and bridge runs grow
+ * naturally with whatever metadata they carried. Stays platform-
+ * agnostic — no special-casing for any specific MCP client.
+ */
+function CallsiteBadge({
+  callsite,
+}: {
+  callsite: NonNullable<RunDetailResponse['run']['callsite']>
+}) {
+  const clientLabel = callsite.client.version
+    ? `${callsite.client.name} v${callsite.client.version}`
+    : callsite.client.name
+  const repoLabel =
+    callsite.repo?.label ||
+    (callsite.repo?.remote_url
+      ? callsite.repo.remote_url.replace(/^https?:\/\/[^/]+\//, '')
+      : null) ||
+    callsite.repo?.local_folder ||
+    null
+
+  const tooltipParts: string[] = [
+    `client: ${clientLabel}`,
+    `tool: ${callsite.tool.name}`,
+  ]
+  if (repoLabel) tooltipParts.push(`repo: ${repoLabel}`)
+
+  return (
+    <span
+      title={tooltipParts.join(' · ')}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+        padding: '3px 9px',
+        borderRadius: 'var(--radius-pill)',
+        background: 'var(--accent-bg)',
+        border: '1px solid var(--accent-border)',
+        color: 'var(--accent-300)',
+        fontSize: 11,
+        fontWeight: 500,
+        maxWidth: 420,
+      }}
+    >
+      <span
+        className="ab-mono"
+        style={{
+          fontSize: 11,
+          color: 'var(--accent-300)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        {clientLabel}
+      </span>
+      <span
+        className="ab-mono"
+        style={{
+          fontSize: 11,
+          color: 'var(--text-dim)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        · {callsite.tool.name}
+      </span>
+      {repoLabel && (
+        <span
+          className="ab-mono"
+          style={{
+            fontSize: 11,
+            color: 'var(--text-dim)',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          · {repoLabel}
+        </span>
+      )}
     </span>
   )
 }

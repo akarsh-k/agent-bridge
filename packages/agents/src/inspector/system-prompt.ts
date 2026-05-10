@@ -23,7 +23,7 @@
 
 import { readFile } from 'node:fs/promises'
 
-export const INSPECTOR_SYSTEM_PROMPT_VERSION = '0.3.0' as const
+export const INSPECTOR_SYSTEM_PROMPT_VERSION = '0.5.1' as const
 
 export const INSPECTOR_SYSTEM_PROMPT_HEADING = '# Inspector toolkit' as const
 

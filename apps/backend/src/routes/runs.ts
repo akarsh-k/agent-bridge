@@ -33,8 +33,10 @@ import { Hono } from 'hono'
 import { and, asc, desc, eq, like } from 'drizzle-orm'
 import { z } from 'zod'
 import {
+  callsiteSchema,
   RUN_LIST_PREVIEW_CHARS,
   runListQuerySchema,
+  type Callsite,
   type RunDetailEvent,
   type RunDetailResponse,
   type RunDetailRow,
@@ -76,6 +78,20 @@ function preview(value: string | null): string | null {
   if (value === null) return null
   if (value.length <= RUN_LIST_PREVIEW_CHARS) return value
   return value.slice(0, RUN_LIST_PREVIEW_CHARS - 1) + '…'
+}
+
+/**
+ * Coerce the raw `runs.callsite_json` JSONB cell into a typed Callsite,
+ * defending against legacy rows that pre-date the column or older
+ * shapes (the original Callsite was schema-compatible with this version
+ * minus the `cursor` field, which is optional). Bad shapes return
+ * `null` rather than 500-ing the route — the column is provenance
+ * metadata, not load-bearing for the run's behaviour.
+ */
+function parseCallsite(raw: unknown): Callsite | null {
+  if (raw === null || raw === undefined) return null
+  const result = callsiteSchema.safeParse(raw)
+  return result.success ? result.data : null
 }
 
 export const runsRouter = new Hono().get(
@@ -120,6 +136,7 @@ export const runsRouter = new Hono().get(
         finishedAt: schema.runs.finishedAt,
         promptTokens: schema.runs.promptTokens,
         completionTokens: schema.runs.completionTokens,
+        callsiteJson: schema.runs.callsiteJson,
         agentSlug: schema.agents.slug,
         agentName: schema.agents.name,
       })
@@ -154,6 +171,7 @@ export const runsRouter = new Hono().get(
         durationMs,
         promptTokens: r.promptTokens,
         completionTokens: r.completionTokens,
+        callsite: parseCallsite(r.callsiteJson),
       }
     })
 
@@ -189,6 +207,7 @@ export const runsRouter = new Hono().get(
         finishedAt: schema.runs.finishedAt,
         promptTokens: schema.runs.promptTokens,
         completionTokens: schema.runs.completionTokens,
+        callsiteJson: schema.runs.callsiteJson,
         agentSlug: schema.agents.slug,
         agentName: schema.agents.name,
       })
@@ -237,6 +256,7 @@ export const runsRouter = new Hono().get(
       durationMs,
       promptTokens: row.promptTokens,
       completionTokens: row.completionTokens,
+      callsite: parseCallsite(row.callsiteJson),
     }
 
     const events: RunDetailEvent[] = eventRows.map((e) => ({

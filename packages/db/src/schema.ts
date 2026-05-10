@@ -572,6 +572,25 @@ export const runs = pgTable(
      * semantics for IDE consumers.
      */
     minirepoJson: jsonb('minirepo_json'),
+    /**
+     * Always-on per-run provenance + editor context. Populated at
+     * dispatch time:
+     *   - bridge handlers stamp the IDE clientInfo (cursor / claude-code
+     *     / codex / …), the calling agent + tool, repo hints, and any
+     *     cursor coordinates the IDE LLM passed
+     *   - the chat backend synthesises `{client: {name: 'web-chat'},
+     *     tool: {name: 'chat'}, …}` so web-chat runs carry the same
+     *     shape and operator skills can branch on `client.name`
+     *
+     * The dispatcher prepends a `## Callsite` markdown block to the user
+     * prompt when this is set, so the LLM sees provenance before the
+     * question. NOT injected as a system message (that path tripped the
+     * Mastra working-memory + Jinja issue on local templates).
+     *
+     * Wire shape: `Callsite` in `@agent-bridge/shared/dtos/runs`. Null
+     * only on legacy callers that predate the column.
+     */
+    callsiteJson: jsonb('callsite_json'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

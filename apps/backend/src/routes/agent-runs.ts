@@ -39,7 +39,9 @@ import { Hono } from 'hono'
 import {
   agentRunCreateInputSchema,
   agentRunsAgentIdParamSchema,
+  formatCallsiteBlock,
   runStreamId,
+  type Callsite,
 } from '@agent-bridge/shared'
 import { runsRepo, schema } from '@agent-bridge/db'
 import { eq } from 'drizzle-orm'
@@ -71,6 +73,8 @@ export const agentRunsRouter = new Hono().post(
     const [agent] = await db.db
       .select({
         id: schema.agents.id,
+        slug: schema.agents.slug,
+        name: schema.agents.name,
         llmProviderId: schema.agents.llmProviderId,
       })
       .from(schema.agents)
@@ -102,11 +106,24 @@ export const agentRunsRouter = new Hono().post(
     const runId = randomUUID()
     const streamId = runStreamId(runId)
 
+    // Synthesise a `web-chat` callsite so chat-tab runs carry the same
+    // wire shape as IDE-bridge runs. Persisted on the row + prepended
+    // to the prompt right here so `runs.input_prompt` matches what the
+    // LLM saw. Lets operator skills branch on `client.name`.
+    const callsite: Callsite = {
+      client: { name: 'web-chat' },
+      agent: { slug: agent.slug, name: agent.name },
+      tool: { name: 'chat' },
+      started_at: new Date().toISOString(),
+    }
+    const prompt = formatCallsiteBlock(callsite) + body.prompt
+
     const run = await runsRepo.createRun(db, {
       id: runId,
       agentId,
-      inputPrompt: body.prompt,
+      inputPrompt: prompt,
       streamId,
+      callsite,
     })
 
     // Fire-and-forget. Dispatcher owns its own lifecycle + cleanup.
@@ -116,7 +133,7 @@ export const agentRunsRouter = new Hono().post(
       agentId,
       runId: run.id,
       streamId,
-      prompt: body.prompt,
+      prompt,
       ...(body.threadId ? { threadId: body.threadId } : {}),
       ...(body.resourceId ? { resourceId: body.resourceId } : {}),
     }).catch((err) => {
