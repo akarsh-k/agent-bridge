@@ -34,7 +34,7 @@
   },
   "pnpm": {
     "overrides": {
-      "gitnexus": "1.6.3"
+      "gitnexus": "1.6.4"
     },
     "onlyBuiltDependencies": [
       "@ladybugdb/core"

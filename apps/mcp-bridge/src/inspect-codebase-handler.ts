@@ -154,10 +154,12 @@ export async function executeInspectCodebase(
     rawArgs,
   })
 
-  // Prepend the `## Callsite` block here (not in the dispatcher) so
-  // the persisted `runs.input_prompt` matches what the LLM actually
-  // sees. The dispatcher is a dumb transport — it forwards `prompt`
-  // verbatim to Mastra.
+  // Prepend the `_Request origin: …_` metadata line here (not in the
+  // dispatcher) so the persisted `runs.input_prompt` matches what the
+  // LLM actually sees. The dispatcher is a dumb transport — it
+  // forwards `prompt` verbatim to Mastra. Format intentionally subtle
+  // (one italic line, no headings, no `tool:` field) to avoid weak
+  // local models misreading it as "tool already invoked, just answer."
   const prompt = formatCallsiteBlock(callsite) + userPrompt
 
   await runsRepo.createRun(ctx.db, {

@@ -17,7 +17,7 @@ import type { RepoIndexSummary } from './domain.js'
  * This module is Node-only.
  */
 
-export const EXPECTED_GITNEXUS_VERSION = '1.6.3'
+export const EXPECTED_GITNEXUS_VERSION = '1.6.4'
 
 export interface ResolvedGitnexusCli {
   readonly nodeBin: string

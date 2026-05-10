@@ -582,10 +582,11 @@ export const runs = pgTable(
      *     tool: {name: 'chat'}, …}` so web-chat runs carry the same
      *     shape and operator skills can branch on `client.name`
      *
-     * The dispatcher prepends a `## Callsite` markdown block to the user
-     * prompt when this is set, so the LLM sees provenance before the
-     * question. NOT injected as a system message (that path tripped the
-     * Mastra working-memory + Jinja issue on local templates).
+     * Callers (bridge handler, web-chat backend) prepend a single
+     * italic `_Request origin: …_` metadata line to the user prompt
+     * when this is set, so the LLM sees provenance before the question.
+     * NOT injected as a system message (that path tripped the Mastra
+     * working-memory + Jinja issue on local templates).
      *
      * Wire shape: `Callsite` in `@agent-bridge/shared/dtos/runs`. Null
      * only on legacy callers that predate the column.

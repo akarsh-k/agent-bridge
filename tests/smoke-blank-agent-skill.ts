@@ -13,8 +13,8 @@
  *      and the LLM honoured it.
  *   5. The bridge captured a Callsite for the run: client.name from the
  *      MCP `initialize` handshake, agent identity, tool name, valid
- *      timestamp; AND the dispatcher prepended a `## Callsite` block
- *      to `runs.input_prompt` so the LLM saw provenance.
+ *      timestamp; AND the caller prepended a `_Request origin: …_`
+ *      metadata line to `runs.input_prompt` so the LLM saw provenance.
  *   6. The bridge-originated thread is filtered OUT of
  *      `listAgentThreads` — bridge runs belong in /logs, not in the
  *      chat-tab thread list.
@@ -301,9 +301,9 @@ async function runDbBackedChecks(expectedToolName: string): Promise<void> {
     }
 
     check(
-      'dispatcher prepended ## Callsite to input_prompt',
-      runRow.inputPrompt.trimStart().startsWith('## Callsite'),
-      `input_prompt[0..40]="${runRow.inputPrompt.slice(0, 40).replace(/\n/g, '\\n')}"`,
+      'caller prepended Request-origin metadata to input_prompt',
+      runRow.inputPrompt.trimStart().startsWith('_Request origin:'),
+      `input_prompt[0..60]="${runRow.inputPrompt.slice(0, 60).replace(/\n/g, '\\n')}"`,
     )
 
     // ── Check 6: bridge thread filtered out of chat-tab list ────────

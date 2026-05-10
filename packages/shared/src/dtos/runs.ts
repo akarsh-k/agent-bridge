@@ -53,8 +53,9 @@ export const RUN_LIST_PREVIEW_CHARS = 500
 //     wire shape as bridge runs
 //
 // Persisted to `runs.callsite_json` and prepended to the dispatched
-// prompt as a `## Callsite` markdown block so operator skills can
-// reference it (e.g. "if callsite.client.name is 'web-chat', format X").
+// prompt as a single italic `_Request origin: …_` metadata line (see
+// `formatCallsiteBlock` below) so operator skills can text-match
+// origin / agent ("if origin contains 'web-chat', format X").
 //
 // Deliberately platform-agnostic. `client + agent + tool + repo +
 // started_at` are concepts every MCP caller has — code editor, CLI, CI
@@ -114,45 +115,43 @@ export const callsiteSchema = z
 export type Callsite = z.infer<typeof callsiteSchema>
 
 /**
- * Render the per-run `Callsite` as a `## Callsite` markdown block to
- * prepend to the user prompt. Returns the empty string when no callsite
- * was supplied so callers can `formatCallsiteBlock(...) + prompt`
+ * Render the per-run `Callsite` as a quiet single-line metadata prefix
+ * to prepend to the user prompt. Returns the empty string when no
+ * callsite was supplied so callers can `formatCallsiteBlock(...) + prompt`
  * unconditionally.
  *
- * Lives in shared (not the dispatcher) so the bridge handler and the
- * web-chat backend route can both prepend the block BEFORE persisting
- * `runs.input_prompt`. The dispatcher is then a dumb transport — it
- * forwards whatever `prompt` it receives to Mastra, no rewriting. This
- * keeps `runs.input_prompt` faithful to what the LLM actually saw.
+ * Format: a single italic line — `_Request origin: <client> · <agent>_`
+ * — followed by a blank line, then the user query. Subtle on purpose:
  *
- * Markdown rather than XML tags or JSON: the original convention.
- * Models may echo it; operators have explicitly accepted that trade-off
- * in exchange for skills being able to text-match against the rendered
- * output ("if 'client: cursor' appears in the message, …").
+ *   - No `##` heading (was pattern-matching to "this is response
+ *     context, give the answer" on weaker models).
+ *   - No `---` separator (same reason).
+ *   - No markdown list (looked like instructions).
+ *   - **No `tool:` line.** That field was being misread by Qwen-class
+ *     local models as "the tool has already been invoked, just answer
+ *     the question" — the agent then skipped wrapper calls entirely
+ *     and answered from training knowledge. Dropped from the prompt;
+ *     still available in `runs.callsite_json` for audit + the /logs
+ *     badge.
+ *   - No `repo` line in the prompt (the IDE hint line already prepends
+ *     repo info; duplicating it adds noise).
+ *   - No `started_at` (operator skills don't text-match against it;
+ *     it's available on the row for /logs).
+ *
+ * Operator skills can still text-match against `Request origin:` /
+ * the client name to vary behavior by source ("if origin contains
+ * 'web-chat', use friendly tone; if 'cursor-vscode', terse code").
+ *
+ * Lives in shared (not the dispatcher) so the bridge handler and the
+ * web-chat backend route can both prepend BEFORE persisting
+ * `runs.input_prompt`. The dispatcher stays a dumb transport.
  */
 export function formatCallsiteBlock(callsite: Callsite | null): string {
   if (!callsite) return ''
-  const lines: string[] = ['## Callsite', '']
   const clientLine = callsite.client.version
     ? `${callsite.client.name} v${callsite.client.version}`
     : callsite.client.name
-  lines.push(`- client: ${clientLine}`)
-  lines.push(`- agent: ${callsite.agent.slug} (${callsite.agent.name})`)
-  lines.push(`- tool: ${callsite.tool.name}`)
-  if (callsite.repo) {
-    const repoParts: string[] = []
-    if (callsite.repo.label) repoParts.push(callsite.repo.label)
-    if (callsite.repo.remote_url) repoParts.push(callsite.repo.remote_url)
-    if (callsite.repo.branch) repoParts.push(`branch=${callsite.repo.branch}`)
-    if (callsite.repo.local_folder)
-      repoParts.push(`folder=${callsite.repo.local_folder}`)
-    if (repoParts.length > 0) lines.push(`- repo: ${repoParts.join(' · ')}`)
-  }
-  lines.push(`- started_at: ${callsite.started_at}`)
-  lines.push('')
-  lines.push('---')
-  lines.push('')
-  return lines.join('\n')
+  return `_Request origin: ${clientLine} · ${callsite.agent.slug}_\n\n`
 }
 
 export const runListRowSchema = z.object({

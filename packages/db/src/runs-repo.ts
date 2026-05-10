@@ -96,7 +96,7 @@ export async function createRun(
      * clientInfo + tool args; the chat backend synthesises the
      * `web-chat` shape. Persisted on `runs.callsite_json` so /logs can
      * render a per-row badge AND so the dispatcher can prepend a
-     * `## Callsite` markdown block to the prompt.
+     * `_Request origin: …_` metadata line to the prompt.
      */
     readonly callsite?: Callsite | null
   },

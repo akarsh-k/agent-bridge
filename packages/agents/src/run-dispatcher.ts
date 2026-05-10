@@ -146,12 +146,12 @@ export interface DispatchRunInput {
  */
 export async function dispatchRun(input: DispatchRunInput): Promise<void> {
   const { db, eventBus, agentId, runId, prompt, streamId } = input
-  // Note: the dispatcher does NOT prepend the `## Callsite` block here.
-  // Callers (bridge handler, web-chat backend) build the enriched
-  // prompt via `formatCallsiteBlock` from `@agent-bridge/shared` and
-  // persist it to `runs.input_prompt` BEFORE calling us. That way
-  // `runs.input_prompt` faithfully reflects what the LLM actually saw,
-  // and the dispatcher stays a dumb transport.
+  // Note: the dispatcher does NOT touch the prompt. Callers (bridge
+  // handler, web-chat backend) prepend the `_Request origin: …_`
+  // metadata line via `formatCallsiteBlock` from `@agent-bridge/shared`
+  // and persist the enriched prompt to `runs.input_prompt` BEFORE
+  // calling us. That way `runs.input_prompt` faithfully reflects what
+  // the LLM actually saw, and the dispatcher stays a dumb transport.
   // Per-agent fan-out channel for the right-rail Activity panel. Every
   // event we publish onto the per-run `streamId` is mirrored here so
   // the operator sees one continuous timeline for the focused agent
