@@ -79,6 +79,8 @@ import {
   type RunEventKind,
   type RunFinishedPayload,
   type RunMcpLogPayload,
+  type RunModelCalledPayload,
+  type RunModelResultPayload,
   type RunStartedPayload,
   type RunStepFinishedPayload,
   type RunStepStartedPayload,
@@ -329,6 +331,21 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
     // the declared union type intact. semantically identical.
     let lastUsage: RunFinishedPayload['usage'] | undefined
 
+    // Per-dispatch state carried into `mapChunk`. Step + token indices
+    // live here (not module globals) so concurrent dispatches don't share
+    // counters and so a single chunk's index reflects the real position
+    // within THIS run. `currentStepIndex` is bumped only on `step-start`;
+    // `tool-call` / `tool-result` / `step-finish` reuse it so they
+    // correctly attribute to the same step the model is executing.
+    // `currentStepStartedAt` lets `run.model.result` compute the per-
+    // step wall-clock duration without subscribers having to subtract
+    // adjacent event timestamps.
+    const mapState: MapChunkState = {
+      currentStepIndex: -1,
+      currentStepStartedAt: 0,
+      tokenIndex: 0,
+    }
+
     // Wrap the entire stream-iteration block in the inspector run
     // context (`docs/ARCHITECTURE.md §10` Phase C C4). Mastra's tool-execute
     // context exposes `agent.toolCallId` but not our app-level `runId`,
@@ -338,6 +355,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
     // propagate through `agent.stream`, the for-await loop, and any
     // tool executes Mastra dispatches under the hood.
     const builtAgent = built.agent
+    const builtModelId = built.meta.provider.modelId
     const runBatcher = batcher
     await runWithInspectorContext(
       {
@@ -352,7 +370,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
       async () => {
         const output = await builtAgent.stream(prompt, streamOptions)
         for await (const chunk of output.fullStream as AsyncIterable<unknown>) {
-      const mapped = mapChunk(chunk, runId)
+      const mapped = mapChunk(chunk, runId, mapState)
       if (!mapped) continue
 
       if (mapped.kind === 'run.token') {
@@ -436,6 +454,37 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
           data: mapped.data,
         },
       )
+
+      // Per-step LLM telemetry, emitted alongside the lightweight
+      // `run.step.*` lifecycle events. Carries the FULL provider
+      // request/response so an operator inspecting "what did the model
+      // see, what did it decide?" answers it from the timeline without
+      // having to enable provider-side tracing. Capture is a separate
+      // concern from `mapChunk` (which handles lifecycle + tools) so
+      // either path can evolve without breaking the other.
+      const modelEvent = mapChunkToModelEvent(
+        chunk,
+        runId,
+        mapState,
+        builtModelId,
+        mapped.ts,
+      )
+      if (modelEvent) {
+        await publishAndAudit(
+          db,
+          eventBus,
+          redactor,
+          streamId,
+          agentStreamId,
+          runId,
+          {
+            kind: modelEvent.kind,
+            ts: modelEvent.ts,
+            streamId,
+            data: modelEvent.data,
+          },
+        )
+      }
         }
       },
     )
@@ -576,6 +625,25 @@ interface MappedEvent {
 }
 
 /**
+ * Per-dispatch state threaded into `mapChunk`. Replaces the old module-
+ * global counters (which incremented on every chunk type and produced
+ * sparse, run-aliased indices like step 0/4/8 instead of 0/1/2).
+ *
+ * `currentStepIndex` advances ONLY on `step-start`. `tool-call`,
+ * `tool-result`, and `step-finish` reuse the value so all chunks emitted
+ * during one model turn carry the same step index. `tokenIndex` is
+ * monotonic per run; the SSE consumer uses it to detect dropped frames.
+ */
+interface MapChunkState {
+  currentStepIndex: number
+  /** Wall-clock ms when the most recent step-start fired, used by
+   *  `mapChunkToModelEvent` to compute the per-step `durationMs` on
+   *  the matching `run.model.result`. 0 before the first step. */
+  currentStepStartedAt: number
+  tokenIndex: number
+}
+
+/**
  * Map one Mastra chunk to at most one of our `run.*` events. Chunks
  * we don't surface in 3d (reasoning-*, raw, watch, workflow-*) return
  * `null` and get dropped.
@@ -586,7 +654,11 @@ interface MappedEvent {
  *   - `runId: string`         — Mastra-internal run id (unrelated to ours)
  *   - `from: ChunkFrom`       — AGENT | USER | SYSTEM | WORKFLOW | NETWORK
  */
-function mapChunk(chunk: unknown, runId: string): MappedEvent | null {
+function mapChunk(
+  chunk: unknown,
+  runId: string,
+  state: MapChunkState,
+): MappedEvent | null {
   if (!isRecord(chunk)) return null
   const type = chunk['type']
   if (typeof type !== 'string') return null
@@ -597,23 +669,32 @@ function mapChunk(chunk: unknown, runId: string): MappedEvent | null {
     case 'text-delta': {
       const text = typeof payload['text'] === 'string' ? payload['text'] : ''
       if (text.length === 0) return null
+      const idx = state.tokenIndex
+      state.tokenIndex += 1
       return {
         kind: 'run.token',
         ts,
         data: {
           runId,
-          index: nextTokenIndex(),
+          index: idx,
           text,
         } satisfies RunTokenPayload,
       }
     }
     case 'step-start': {
+      // Bump *only* on step-start. If Mastra ever supplies an explicit
+      // `stepIndex` we honour it (and snap our counter to it) so sequence
+      // matches their telemetry.
+      const explicit = stringOrNumberOrNull(payload['stepIndex'])
+      state.currentStepIndex =
+        explicit !== null ? explicit : state.currentStepIndex + 1
+      state.currentStepStartedAt = ts
       return {
         kind: 'run.step.started',
         ts,
         data: {
           runId,
-          stepIndex: stringOrNumber(payload['stepIndex'], stepIndexFallback()),
+          stepIndex: state.currentStepIndex,
           messageId: stringOr(payload['messageId'], ''),
         } satisfies RunStepStartedPayload,
       }
@@ -624,7 +705,9 @@ function mapChunk(chunk: unknown, runId: string): MappedEvent | null {
         ts,
         data: {
           runId,
-          stepIndex: stringOrNumber(payload['stepIndex'], stepIndexFallback()),
+          stepIndex:
+            stringOrNumberOrNull(payload['stepIndex']) ??
+            Math.max(0, state.currentStepIndex),
           messageId: stringOr(payload['messageId'], ''),
           finishReason: stringOr(payload['finishReason'], null),
           usage: pickUsage(payload['usage']),
@@ -637,7 +720,9 @@ function mapChunk(chunk: unknown, runId: string): MappedEvent | null {
         ts,
         data: {
           runId,
-          stepIndex: stringOrNumber(payload['stepIndex'], stepIndexFallback()),
+          stepIndex:
+            stringOrNumberOrNull(payload['stepIndex']) ??
+            Math.max(0, state.currentStepIndex),
           toolCallId: stringOr(payload['toolCallId'], ''),
           toolName: stringOr(payload['toolName'], ''),
           input: payload['args'] ?? payload['input'] ?? null,
@@ -650,7 +735,9 @@ function mapChunk(chunk: unknown, runId: string): MappedEvent | null {
         ts,
         data: {
           runId,
-          stepIndex: stringOrNumber(payload['stepIndex'], stepIndexFallback()),
+          stepIndex:
+            stringOrNumberOrNull(payload['stepIndex']) ??
+            Math.max(0, state.currentStepIndex),
           toolCallId: stringOr(payload['toolCallId'], ''),
           toolName: stringOr(payload['toolName'], ''),
           output: payload['result'] ?? payload['output'] ?? null,
@@ -663,7 +750,9 @@ function mapChunk(chunk: unknown, runId: string): MappedEvent | null {
         ts,
         data: {
           runId,
-          stepIndex: stringOrNumber(payload['stepIndex'], stepIndexFallback()),
+          stepIndex:
+            stringOrNumberOrNull(payload['stepIndex']) ??
+            Math.max(0, state.currentStepIndex),
           toolCallId: stringOr(payload['toolCallId'], ''),
           toolName: stringOr(payload['toolName'], ''),
           error: errorMessageFromPayload(payload),
@@ -705,19 +794,86 @@ function mapChunk(chunk: unknown, runId: string): MappedEvent | null {
 }
 
 /**
- * Mastra chunk payloads don't always carry a `stepIndex` field; when
- * they don't, we synthesise a monotonically increasing counter so our
- * event rows still have a join key. This is per-dispatcher-call so two
- * concurrent runs don't alias.
+ * Map a Mastra chunk to a `run.model.*` event when applicable. Runs
+ * alongside `mapChunk` (which handles lifecycle + tool events) so the
+ * two concerns can evolve independently. Returns `null` for chunk
+ * types that don't carry LLM-call telemetry.
+ *
+ * The captured payloads are FULL — no preview cap. Postgres TOAST
+ * absorbs the JSONB, the frontend viewer truncates display (not
+ * storage), and `RunRedactor` scrubs secrets at the publish boundary.
+ * This is a deliberate departure from the inspector subsystem's 2KB
+ * convention; see `RunModelCalledPayload` for the reasoning.
  */
-let STEP_INDEX_COUNTER = 0
-function stepIndexFallback(): number {
-  return STEP_INDEX_COUNTER++
-}
+function mapChunkToModelEvent(
+  chunk: unknown,
+  runId: string,
+  state: MapChunkState,
+  modelId: string,
+  ts: number,
+): MappedEvent | null {
+  if (!isRecord(chunk)) return null
+  const type = chunk['type']
+  if (typeof type !== 'string') return null
+  const payload = isRecord(chunk['payload']) ? chunk['payload'] : {}
 
-let TOKEN_INDEX_COUNTER = 0
-function nextTokenIndex(): number {
-  return TOKEN_INDEX_COUNTER++
+  switch (type) {
+    case 'step-start': {
+      // `request` field shape is provider-specific and Mastra-version-
+      // dependent. We pass through whatever's there (or `null` when
+      // absent) and let the frontend's `EventPayloadBody` render it.
+      const request = payload['request'] ?? null
+      const warnings = Array.isArray(payload['warnings'])
+        ? (payload['warnings'] as ReadonlyArray<unknown>)
+        : []
+      return {
+        kind: 'run.model.called',
+        ts,
+        data: {
+          runId,
+          stepIndex: state.currentStepIndex,
+          model: modelId,
+          request,
+          warnings,
+        } satisfies RunModelCalledPayload,
+      }
+    }
+    case 'step-finish': {
+      // Mastra's step-finish chunk includes the assembled assistant
+      // text + tool-call decisions for THIS step (different from the
+      // run-level `outputSummary` which concatenates all steps). The
+      // `response` field carries the raw provider response when
+      // surfaced; we forward it opaquely.
+      const text = stringOr(payload['text'], '')
+      const toolCalls = Array.isArray(payload['toolCalls'])
+        ? (payload['toolCalls'] as ReadonlyArray<unknown>)
+        : []
+      const reasoning = stringOr(payload['reasoning'], null)
+      const response = payload['response'] ?? null
+      const durationMs =
+        state.currentStepStartedAt > 0
+          ? Math.max(0, ts - state.currentStepStartedAt)
+          : 0
+      return {
+        kind: 'run.model.result',
+        ts,
+        data: {
+          runId,
+          stepIndex: state.currentStepIndex,
+          model: modelId,
+          text,
+          toolCalls,
+          reasoning,
+          finishReason: stringOr(payload['finishReason'], null),
+          durationMs,
+          usage: pickUsage(payload['usage']),
+          response,
+        } satisfies RunModelResultPayload,
+      }
+    }
+    default:
+      return null
+  }
 }
 
 function pickUsage(raw: unknown): RunFinishedPayload['usage'] {
@@ -742,8 +898,8 @@ function stringOr<T>(value: unknown, fallback: T): string | T {
   return typeof value === 'string' ? value : fallback
 }
 
-function stringOrNumber(value: unknown, fallback: number): number {
-  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+function stringOrNumberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 function errorMessageFromPayload(payload: Record<string, unknown>): string {

@@ -20,6 +20,24 @@ export const runEventKinds = [
   'run.token.batch',
   'run.step.started',
   'run.step.finished',
+  /**
+   * Per-step LLM-call telemetry. Emitted alongside `run.step.started` /
+   * `run.step.finished` (one pair per model turn), carrying the FULL
+   * request body sent to the provider and the FULL assistant response —
+   * not the 2KB previews used by the inspector subsystem. Operators
+   * inspecting "why did the model not call tool X?" or "what did the
+   * system prompt look like with skills composed in?" answer those
+   * questions from these rows.
+   *
+   * Cost is bounded by the `RunRedactor` pass + Postgres TOAST (JSONB
+   * scales to MB-class values without index pressure). Skipping the
+   * cap on purpose — see `docs/ARCHITECTURE.md` notes around
+   * `run.model.*`.
+   *
+   * Pairs by `stepIndex` in the timeline UI.
+   */
+  'run.model.called',
+  'run.model.result',
   'run.tool.called',
   'run.tool.result',
   /**
@@ -415,6 +433,83 @@ export interface RunStepFinishedPayload {
     readonly outputTokens: number | null
     readonly totalTokens: number | null
   }
+}
+
+/**
+ * `run.model.called` payload. Emitted from the dispatcher right after
+ * the matching `run.step.started`, carrying the FULL request body Mastra
+ * shipped to the provider for this step (system + message history + tool
+ * definitions + sampling params). Operators answer "what did the model
+ * actually see this turn?" from this row.
+ *
+ * Intentionally uncapped — JSONB / TOAST handles MB-scale values, and
+ * the frontend `EventPayloadViewer` already truncates DISPLAY (with a
+ * "Show all" affordance) so storage stays full while the UI stays calm.
+ * The 2KB cap on `inspector.llm.*` is a separate convention for that
+ * subsystem's high-frequency previews; it does not apply here.
+ *
+ * `request` is `unknown` because the body shape is provider-specific
+ * (OpenAI vs Anthropic vs Google formats). Consumers treat it opaquely;
+ * the `EventPayloadBody` knows how to render it as a key/value tree.
+ */
+export interface RunModelCalledPayload {
+  readonly runId: string
+  readonly stepIndex: number
+  /** Provider model id (e.g. `gpt-4o-mini`, `claude-sonnet-4-6`). Lifted
+   *  from the agent meta so the operator sees the model on every call
+   *  event without joining to the run row. */
+  readonly model: string
+  /** Full provider request body (messages, tools, sampling). `null` when
+   *  Mastra didn't surface it on this chunk — older versions or some
+   *  streaming paths only emit the messageId on `step-start`. */
+  readonly request: unknown | null
+  /** Mastra warnings from this step-start (e.g. "tool X has no schema",
+   *  "temperature ignored by provider"). Useful for spotting silent
+   *  provider rejections. Empty array, not undefined, when none. */
+  readonly warnings: ReadonlyArray<unknown>
+}
+
+/**
+ * `run.model.result` payload. Emitted alongside `run.step.finished` with
+ * the FULL assistant response for this step — text, tool-call decisions,
+ * reasoning content (for reasoning models), and the raw provider
+ * response body when Mastra surfaces it. Pairs with `run.model.called`
+ * by `stepIndex` in the timeline UI.
+ *
+ * `text` is the assistant text emitted by THIS step only (not the
+ * concatenated `runs.output_summary`) so multi-step runs can be debugged
+ * one turn at a time: "step 2 said X before requesting tool Y, step 3
+ * came back and said Z."
+ */
+export interface RunModelResultPayload {
+  readonly runId: string
+  readonly stepIndex: number
+  readonly model: string
+  /** Assistant text from this step only. Empty when the step ended in a
+   *  pure tool-call without surfacing user-visible text. */
+  readonly text: string
+  /** Tool calls the model decided to make this step. Each entry mirrors
+   *  the `tool-call` chunk: `{ toolCallId, toolName, input }`. Repeated
+   *  here so the operator sees decisions and arguments on the response
+   *  row without having to scan for the matching `run.tool.called`. */
+  readonly toolCalls: ReadonlyArray<unknown>
+  /** Reasoning content from reasoning-capable models (Claude reasoning,
+   *  o1, etc.). `null` when the model isn't a reasoning model or the
+   *  provider didn't emit it. */
+  readonly reasoning: string | null
+  readonly finishReason: string | null
+  /** Wall-clock duration from step-start to step-finish. Lets the
+   *  operator spot which step was the slow one in a multi-step run
+   *  without doing arithmetic on adjacent timestamps. */
+  readonly durationMs: number
+  readonly usage?: {
+    readonly inputTokens: number | null
+    readonly outputTokens: number | null
+    readonly totalTokens: number | null
+  }
+  /** Raw provider response body if Mastra surfaced it on the
+   *  `step-finish` chunk, else null. Provider-specific shape. */
+  readonly response: unknown | null
 }
 
 /**

@@ -22,6 +22,8 @@ import type {
 import { Sheet } from '../../ui/sheet'
 import { Pill } from '../../ui/pill'
 import { ApiError, fetchRun, fetchWorkerJob } from '../../lib/rpc'
+import { formatDurationMs } from './event-labels'
+import { EventTimeline } from './event-timeline'
 
 /** Discriminated union — what the parent wants the sheet to fetch. */
 export type DetailTarget =
@@ -158,7 +160,11 @@ function RunDetailBody({ data }: { data: RunDetailResponse }) {
       {run.outputSummary !== null && (
         <CollapsibleBody title="Output summary" body={run.outputSummary} />
       )}
-      <EventTimeline events={events} source="run_events" />
+      <EventTimeline
+        events={events}
+        source="run_events"
+        liveStreamId={run.status === 'running' ? run.streamId : null}
+      />
     </>
   )
 }
@@ -192,7 +198,11 @@ function WorkerJobDetailBody({
     <>
       <WorkerJobHeader job={job} />
       {job.errorMessage && <RunErrorCard message={job.errorMessage} />}
-      <EventTimeline events={events} source="worker_events" />
+      <EventTimeline
+        events={events}
+        source="worker_events"
+        liveStreamId={null}
+      />
     </>
   )
 }
@@ -274,58 +284,122 @@ function capitalise(s: string): string {
 }
 
 function RunHeader({ run }: { run: RunDetailResponse['run'] }) {
-  const items: Array<{ label: string; value: string }> = [
-    { label: 'Started', value: formatTs(run.startedAt) },
-    {
-      label: 'Finished',
-      value: run.finishedAt ? formatTs(run.finishedAt) : '—',
-    },
+  const [showDebug, setShowDebug] = useState(false)
+  const metrics: Array<{ label: string; value: string }> = [
     {
       label: 'Duration',
       value:
         run.durationMs !== null
-          ? `${(run.durationMs / 1000).toFixed(2)}s`
+          ? formatDurationMs(run.durationMs)
+          : run.status === 'running'
+            ? 'running…'
+            : '—',
+    },
+    {
+      label: 'Prompt',
+      value:
+        run.promptTokens !== null
+          ? `${run.promptTokens.toLocaleString()} tok`
           : '—',
     },
     {
-      label: 'Prompt tokens',
-      value:
-        run.promptTokens !== null ? run.promptTokens.toLocaleString() : '—',
-    },
-    {
-      label: 'Completion tokens',
+      label: 'Completion',
       value:
         run.completionTokens !== null
-          ? run.completionTokens.toLocaleString()
+          ? `${run.completionTokens.toLocaleString()} tok`
           : '—',
     },
-    { label: 'Stream id', value: run.streamId },
   ]
   return (
     <div className="ab-card ab-card-pad ab-form-section">
       <div
         style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: '8px 16px',
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: '8px 24px',
+          alignItems: 'baseline',
         }}
       >
-        {items.map((it) => (
-          <div key={it.label}>
-            <div
-              style={{
-                fontSize: 11,
-                color: 'var(--text-muted)',
-                marginBottom: 2,
-              }}
-            >
-              {it.label}
-            </div>
-            <div className="ab-mono" style={{ fontSize: 12 }}>
-              {it.value}
-            </div>
-          </div>
+        {metrics.map((m) => (
+          <Metric key={m.label} label={m.label} value={m.value} />
         ))}
+        <button
+          type="button"
+          onClick={() => setShowDebug((s) => !s)}
+          className="ab-inline-action"
+          style={{ marginLeft: 'auto' }}
+        >
+          {showDebug ? 'Hide details' : 'Show details'}
+        </button>
+      </div>
+      {showDebug && (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '8px 16px',
+            marginTop: 12,
+            paddingTop: 12,
+            borderTop: '1px solid var(--border)',
+          }}
+        >
+          <DebugCell label="Started" value={formatTs(run.startedAt)} />
+          <DebugCell
+            label="Finished"
+            value={run.finishedAt ? formatTs(run.finishedAt) : '—'}
+          />
+          <DebugCell label="Stream id" value={run.streamId} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div
+        style={{
+          fontSize: 10,
+          color: 'var(--text-muted)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.06em',
+          marginBottom: 2,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        className="ab-mono"
+        style={{ fontSize: 14, color: 'var(--text)' }}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function DebugCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div
+        style={{
+          fontSize: 11,
+          color: 'var(--text-muted)',
+          marginBottom: 2,
+        }}
+      >
+        {label}
+      </div>
+      <div
+        className="ab-mono"
+        style={{
+          fontSize: 12,
+          color: 'var(--text-dim)',
+          wordBreak: 'break-all',
+        }}
+      >
+        {value}
       </div>
     </div>
   )
@@ -425,178 +499,6 @@ function CollapsibleBody({
   )
 }
 
-/** Shape both RunDetailEvent and WorkerJobDetailEvent satisfy. */
-type TimelineEvent = {
-  id: string
-  ts: string
-  kind: string
-  payload: unknown
-}
-
-function EventTimeline({
-  events,
-  source,
-}: {
-  events: ReadonlyArray<TimelineEvent>
-  /** Table of origin (for the section's sub-line — purely cosmetic). */
-  source: 'run_events' | 'worker_events'
-}) {
-  // Roll consecutive token-batch / token events into one summary row.
-  // Otherwise a 30-step run dumps 200+ rows that drown out tool calls.
-  const rolled = useMemo(() => rollTokenEvents(events), [events])
-  return (
-    <div className="ab-card ab-card-pad ab-form-section">
-      <div className="ab-section-head">
-        <div className="ab-section-title">
-          Event timeline{' '}
-          <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
-            ({events.length} event{events.length === 1 ? '' : 's'})
-          </span>
-        </div>
-        <div className="ab-section-sub">
-          Every entry from <code className="ab-mono">{source}</code>, oldest
-          first. Click a row to see its raw payload.
-        </div>
-      </div>
-      {rolled.length === 0 ? (
-        <div className="ab-field-help">No events recorded.</div>
-      ) : (
-        <ol
-          style={{
-            margin: 0,
-            padding: 0,
-            listStyle: 'none',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 4,
-          }}
-        >
-          {rolled.map((row) => (
-            <EventRow key={row.id} row={row} />
-          ))}
-        </ol>
-      )}
-    </div>
-  )
-}
-
-interface RolledRow {
-  id: string
-  ts: string
-  kind: string
-  payload: unknown
-  /** When > 1, the row represents N rolled-up token events. */
-  count: number
-}
-
-function rollTokenEvents(
-  events: ReadonlyArray<TimelineEvent>,
-): ReadonlyArray<RolledRow> {
-  const out: RolledRow[] = []
-  for (const e of events) {
-    const isToken = e.kind === 'run.token' || e.kind === 'run.token.batch'
-    const last = out[out.length - 1]
-    if (isToken && last && (last.kind === 'run.token' || last.kind === 'run.token.batch')) {
-      last.count += 1
-      // Keep the FIRST event's payload as the representative (or merge
-      // text if you want — leaving the row representative for now).
-      continue
-    }
-    out.push({
-      id: e.id,
-      ts: e.ts,
-      kind: e.kind,
-      payload: e.payload,
-      count: 1,
-    })
-  }
-  return out
-}
-
-function EventRow({ row }: { row: RolledRow }) {
-  const [open, setOpen] = useState(false)
-  const tone = toneForKind(row.kind)
-  return (
-    <li
-      style={{
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-        background: 'var(--bg-canvas)',
-        overflow: 'hidden',
-      }}
-    >
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        style={{
-          width: '100%',
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: '8px 10px',
-          background: 'transparent',
-          border: 'none',
-          color: 'var(--text)',
-          cursor: 'pointer',
-          textAlign: 'left',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 12,
-        }}
-        title="Toggle payload"
-      >
-        <span
-          style={{
-            color: 'var(--text-muted)',
-            fontSize: 11,
-            minWidth: 88,
-          }}
-        >
-          {formatClock(row.ts)}
-        </span>
-        <Pill kind={tone}>{row.kind}</Pill>
-        {row.count > 1 && (
-          <span
-            style={{
-              color: 'var(--text-muted)',
-              fontSize: 11,
-            }}
-          >
-            ×{row.count}
-          </span>
-        )}
-        <span style={{ flex: 1 }} />
-        <span
-          style={{
-            color: 'var(--text-muted)',
-            fontSize: 11,
-          }}
-          aria-hidden
-        >
-          {open ? '▾' : '▸'}
-        </span>
-      </button>
-      {open && row.payload !== null && (
-        <pre
-          style={{
-            margin: 0,
-            padding: '8px 12px',
-            borderTop: '1px solid var(--border)',
-            background: 'var(--surface-hi)',
-            fontFamily: 'var(--font-mono)',
-            fontSize: 11.5,
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-            maxHeight: 320,
-            overflow: 'auto',
-          }}
-        >
-          {safeStringify(row.payload)}
-        </pre>
-      )}
-    </li>
-  )
-}
-
 // ─── helpers ────────────────────────────────────────────────────────────
 
 function statusPill(status: RunDetailResponse['run']['status']): {
@@ -619,19 +521,6 @@ function statusPill(status: RunDetailResponse['run']['status']): {
   }
 }
 
-function toneForKind(
-  kind: string,
-): 'success' | 'warn' | 'danger' | 'neutral' {
-  if (kind.endsWith('.error') || kind.endsWith('.fail')) return 'danger'
-  if (kind.endsWith('.ok') || kind === 'run.finished') return 'success'
-  if (kind === 'run.started') return 'neutral'
-  if (kind.startsWith('run.tool') || kind.startsWith('coding-agent.'))
-    return 'neutral'
-  if (kind.endsWith('.progress') || kind.startsWith('run.step.'))
-    return 'neutral'
-  return 'neutral'
-}
-
 function looksLikeJson(s: string): boolean {
   const t = s.trim()
   return t.startsWith('{') || t.startsWith('[')
@@ -641,22 +530,4 @@ function formatTs(iso: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return iso
   return d.toLocaleString()
-}
-
-function formatClock(iso: string): string {
-  const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return iso
-  const h = String(d.getHours()).padStart(2, '0')
-  const m = String(d.getMinutes()).padStart(2, '0')
-  const s = String(d.getSeconds()).padStart(2, '0')
-  const ms = String(d.getMilliseconds()).padStart(3, '0')
-  return `${h}:${m}:${s}.${ms}`
-}
-
-function safeStringify(value: unknown): string {
-  try {
-    return JSON.stringify(value, null, 2)
-  } catch {
-    return String(value)
-  }
 }
