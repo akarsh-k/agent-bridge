@@ -55,6 +55,7 @@ import {
   executePhase7Tool,
   type AgentRecord,
   type BridgeContext,
+  type IdeClientInfo,
   type ToolEntry,
 } from './inspect-codebase-handler.js'
 
@@ -77,11 +78,11 @@ const EMPTY_OBJECT_SCHEMA: Record<string, unknown> = {
 }
 
 /**
- * `inspect_codebase` JSON Schema — shipped on every agent. The IDE
- * LLM passes free-form `query` plus optional repo hints; the agent's
- * wrappers each accept their own `repo_hint`, but pre-binding it on
- * the bridge call lets the agent pick the right repo on the first
- * try without a `list_repos` round-trip.
+ * `inspect_codebase` JSON Schema — shipped on Inspector-enabled agents.
+ * The IDE LLM passes free-form `query` plus optional repo hints; the
+ * agent's wrappers each accept their own `repo_hint`, but pre-binding
+ * it on the bridge call lets the agent pick the right repo on the
+ * first try without a `list_repos` round-trip.
  */
 const INSPECT_CODEBASE_INPUT_SCHEMA: Record<string, unknown> = {
   type: 'object',
@@ -116,12 +117,14 @@ const INSPECT_CODEBASE_INPUT_SCHEMA: Record<string, unknown> = {
   },
 }
 
+
 interface AgentRow {
   readonly id: string
   readonly slug: string
   readonly name: string
   readonly description: string | null
   readonly llmProviderId: string | null
+  readonly inspectorEnabled: boolean
 }
 
 async function listExposableAgents(db: AgentBridgeDb): Promise<AgentRow[]> {
@@ -132,6 +135,7 @@ async function listExposableAgents(db: AgentBridgeDb): Promise<AgentRow[]> {
       name: schema.agents.name,
       description: schema.agents.description,
       llmProviderId: schema.agents.llmProviderId,
+      inspectorEnabled: schema.agents.inspectorEnabled,
     })
     .from(schema.agents)
     .orderBy(asc(schema.agents.slug))
@@ -139,15 +143,25 @@ async function listExposableAgents(db: AgentBridgeDb): Promise<AgentRow[]> {
 }
 
 /**
- * Build the bridge's tool registry. For every exposable agent:
- *   1. One `<slug>__inspect_codebase` entry.
- *   2. Zero or more operator-authored `bridge_tools` rows (Phase 7).
- *      Operator picks the name; we register verbatim. The DB CHECK
- *      constraint banning the `query_` prefix on explicit rows is
- *      preserved (reserved namespace, even though we no longer emit
- *      `query_<slug>`).
+ * Build the bridge's tool registry. Per agent:
+ *   - `<slug>__inspect_codebase` (system tool, mini-repo envelope) is
+ *     registered automatically when `agents.inspector_enabled = true`
+ *     (Coding-helper template). Description: operator's
+ *     `agents.description` + a system note about the structured envelope.
+ *   - Zero or more operator-authored `bridge_tools` rows are registered
+ *     verbatim (Phase 7) for both kinds. Operator picks the name,
+ *     description, schema, and prompt template.
  *
- * Mode reporting (per agent): `inspect`, or `inspect + explicit:N`.
+ * Build-your-own (blank) agents have NO built-in tool — when an agent
+ * is created with `inspector_enabled = false` the backend auto-INSERTs
+ * a `bridge_tools` row named `<slug_safe>__ask_agent` so the IDE has
+ * a tool to call. The operator edits / renames / deletes that row
+ * from the Bridge-tools tab like any other custom tool. This keeps
+ * the bridge's runtime simple (one path per tool kind) and the
+ * operator UX consistent (one editor for every tool).
+ *
+ * Mode reporting (per agent): `inspect` / `(none)`, optionally
+ * suffixed with `+ explicit:N` when operator-authored rows exist.
  */
 async function buildToolRegistry(
   db: AgentBridgeDb,
@@ -167,17 +181,25 @@ async function buildToolRegistry(
   for (const agentRow of agents) {
     const agent: AgentRecord = agentRow
 
-    // 1) inspect_codebase — always-on per agent.
-    const inspectName = `${agent.slug}__inspect_codebase`
-    registry.set(inspectName, {
-      kind: 'inspect',
-      agent,
-      mcpName: inspectName,
-      description: buildInspectDescription(agent),
-      inputSchema: INSPECT_CODEBASE_INPUT_SCHEMA,
-    })
+    // 1) System built-in — only inspect_codebase, only when inspector
+    //    is enabled. Blank agents have NO built-in; their ask_agent
+    //    tool lives in `bridge_tools` (auto-created on agent insert).
+    let baseMode: 'inspect' | 'none' = 'none'
+    if (agentRow.inspectorEnabled) {
+      const inspectName = `${agent.slug}__inspect_codebase`
+      registry.set(inspectName, {
+        kind: 'inspect',
+        agent,
+        mcpName: inspectName,
+        description: buildInspectDescription(agent),
+        inputSchema: INSPECT_CODEBASE_INPUT_SCHEMA,
+      })
+      baseMode = 'inspect'
+    }
 
-    // 2) Phase 7 explicit operator-authored rows.
+    // 2) Phase 7 explicit operator-authored rows — both kinds.
+    //    For blank agents, this is where their auto-created
+    //    `<slug>__ask_agent` row lands.
     const explicit = await db.db
       .select({
         id: schema.bridgeTools.id,
@@ -219,14 +241,16 @@ async function buildToolRegistry(
     const explicitCount = explicit.length
     modeByAgentSlug.set(
       agent.slug,
-      explicitCount === 0 ? 'inspect' : `inspect + explicit:${explicitCount}`,
+      explicitCount === 0
+        ? baseMode
+        : `${baseMode} + explicit:${explicitCount}`,
     )
   }
 
   return { registry, modeByAgentSlug }
 }
 
-function buildInspectDescription(agent: AgentRow): string {
+function buildInspectDescription(agent: AgentRecord): string {
   const head = agent.description?.trim()
   const base =
     'Ask any question about the agent\'s attached codebases. Returns a structured envelope: ' +
@@ -235,6 +259,7 @@ function buildInspectDescription(agent: AgentRow): string {
     'Read-only — never edits files.'
   return head ? `${head}\n\n${base}` : base
 }
+
 
 // ─── Boot ────────────────────────────────────────────────────────────────
 
@@ -271,10 +296,25 @@ async function main(): Promise<void> {
     { capabilities: { tools: {} } },
   )
 
+  // The MCP SDK exposes the negotiated `clientInfo` from the
+  // `initialize` handshake via `server.getClientVersion()` once the
+  // handshake completes. We read it lazily on every tool call so
+  // late-binding works even if the IDE re-initializes the session.
+  // Returns `null` for the brief window before initialize lands (no
+  // tool call is allowed before handshake completes anyway, so this
+  // path is mostly defensive).
   const ctx: BridgeContext = {
     db,
     eventBus,
     threadId: BRIDGE_THREAD_ID,
+    getClientInfo: (): IdeClientInfo | null => {
+      const v = server.getClientVersion()
+      if (!v || typeof v.name !== 'string' || v.name.length === 0) return null
+      return {
+        name: v.name,
+        version: typeof v.version === 'string' ? v.version : null,
+      }
+    },
   }
 
   server.setRequestHandler(ListToolsRequestSchema, () => {

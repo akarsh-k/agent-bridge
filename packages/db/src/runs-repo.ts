@@ -34,6 +34,7 @@
  */
 
 import { and, eq, inArray, sql } from 'drizzle-orm'
+import type { Callsite } from '@agent-bridge/shared'
 import type { AgentBridgeDb } from './client.js'
 import { runEvents, runs, type RunEventRow, type RunRow } from './schema.js'
 
@@ -89,6 +90,15 @@ export async function createRun(
      * row. Phase 5 (1:1 default) and UI-chat runs leave this null.
      */
     readonly bridgeToolName?: string | null
+    /**
+     * Captured call-site context (`docs/ARCHITECTURE.md` §10 — per-agent
+     * inspector flag rollout). The bridge handlers + chat backend build
+     * this and forward it through `dispatchRun`; we persist it on the
+     * row so the /logs UI can render "called from Cursor on
+     * ecommerce-frontend" per row. Null only on legacy callers that
+     * predate the column.
+     */
+    readonly callsite?: Callsite | null
   },
 ): Promise<RunRow> {
   const [row] = await handle.db
@@ -101,6 +111,9 @@ export async function createRun(
       status: 'pending',
       ...(params.bridgeToolName !== undefined
         ? { bridgeToolName: params.bridgeToolName }
+        : {}),
+      ...(params.callsite !== undefined
+        ? { callsiteJson: params.callsite }
         : {}),
     })
     .returning()

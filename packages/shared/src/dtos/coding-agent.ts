@@ -230,6 +230,51 @@ export const INSPECT_CODEBASE_METADATA: InspectCodebaseMetadata = Object.freeze(
 })
 
 /**
+ * Defaults the backend uses when auto-creating the `<slug>__ask_agent`
+ * `bridge_tools` row for a Build-your-own-agent at insert time. After
+ * creation the row is fully operator-controlled (rename, edit
+ * description, change input schema, change prompt template, delete) —
+ * these constants only seed the initial values.
+ *
+ * Kept as a single source of truth so the auto-create path AND any
+ * UI-side preview/copy stay in lockstep.
+ */
+export interface AskAgentDefaults {
+  /** Suffix appended to `<safeSlug>__` in the auto-created bridge_tools.name. */
+  readonly nameSuffix: 'ask_agent'
+  /** Default `bridge_tools.description` shown to the IDE LLM. */
+  readonly description: string
+  /** Default `bridge_tools.input_schema`. */
+  readonly inputSchema: Record<string, unknown>
+  /** Default `bridge_tools.prompt_template` — pure pass-through. */
+  readonly promptTemplate: string
+}
+
+export const ASK_AGENT_DEFAULTS: AskAgentDefaults = Object.freeze({
+  nameSuffix: 'ask_agent',
+  description:
+    'Free-form Q&A with this agent. Returns prose. ' +
+    'IMPORTANT — this agent has NO codebase access, file-system access, or external retrieval beyond what the operator wired in. It can only reason about: (a) its system prompt + authored skills, (b) anything you literally include in `query`, and (c) operator-attached external MCPs (if any). ' +
+    'DO NOT paste file contents into `query` expecting the agent to retrieve more from disk — include any context verbatim. ' +
+    'For codebase Q&A (file paths, code search, call-graph, change impact), route to a Coding-helper agent\'s `inspect_codebase` tool instead.',
+  inputSchema: Object.freeze({
+    type: 'object',
+    required: ['query'],
+    additionalProperties: false,
+    properties: {
+      query: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 8000,
+        description:
+          'Free-form question or instruction. Include any context verbatim — the agent will not fetch anything else.',
+      },
+    },
+  }),
+  promptTemplate: '{{ query }}',
+})
+
+/**
  * Reserved `repo_hint` value meaning "the question is general across
  * every attached repo". The resolver short-circuits on this; tools
  * in `SINGLE_REPO_ONLY_TOOLS` reject it.

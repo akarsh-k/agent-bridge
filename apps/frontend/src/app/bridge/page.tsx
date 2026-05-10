@@ -160,14 +160,15 @@ function ToolsCard() {
         <div className="ab-section-title">Exposed tools</div>
         <div className="ab-section-sub">
           {exposed.length} agent{exposed.length === 1 ? '' : 's'} exposed
-          to your IDE. Each one ships one built-in tool —{' '}
+          to your IDE. Coding helpers ship{' '}
           <span className="ab-mono">
             &lt;slug&gt;__{INSPECT_CODEBASE_METADATA.nameSuffix}
           </span>{' '}
-          — that the IDE LLM calls with a free-form query. The agent
-          picks the right inspector wrapper internally and returns a
-          structured envelope. Add your own tools per-agent on the
-          Bridge tools tab.
+          as a system tool. Build-your-own agents ship a starter{' '}
+          <span className="ab-mono">&lt;slug&gt;__ask_agent</span>{' '}
+          tool that's auto-created when the agent is — fully editable
+          (name, description, prompt template) on the agent's
+          Bridge-tools tab, like any custom tool. Add more from there.
           {skipped > 0 && ` · ${skipped} skipped (no LLM provider)`}
         </div>
       </div>
@@ -219,11 +220,14 @@ function ExposedAgentRow({
   highlight: boolean
   defaultOpen: boolean
 }) {
-  // The always-on built-in is `<slug>__inspect_codebase`. Operator-
-  // authored rows from `bridge_tools` ship by their literal `name`.
-  // The expanded panel below renders both, mirroring what the IDE
-  // actually sees on `tools/list`.
-  const inspectName = `${agent.slug}__${INSPECT_CODEBASE_METADATA.nameSuffix}`
+  // System built-in (only on coding helpers): <slug>__inspect_codebase.
+  // Blank agents have NO built-in here — their auto-created
+  // `<slug>__ask_agent` lives in `bridge_tools` and renders below as
+  // a regular custom tool. Operator-authored rows from `bridge_tools`
+  // ship by their literal `name` for both kinds.
+  const builtInName = agent.inspectorEnabled
+    ? `${agent.slug}__${INSPECT_CODEBASE_METADATA.nameSuffix}`
+    : null
   const [open, setOpen] = useState(defaultOpen)
   const [bridgeTools, setBridgeTools] = useState<
     readonly BridgeToolResponse[] | null
@@ -348,17 +352,19 @@ function ExposedAgentRow({
             background: 'var(--surface-hi)',
           }}
         >
-          <ToolGroup
-            label="Inspector"
-            sub="Built-in. The IDE sees this on every agent. The name is prefixed with the agent's slug so multi-agent installs don't collide."
-            tools={[
-              {
-                name: inspectName,
-                description: INSPECT_CODEBASE_METADATA.summary,
-                enabled: true,
-              },
-            ]}
-          />
+          {builtInName && (
+            <ToolGroup
+              label="Inspector (system)"
+              sub="System tool shipped on coding helpers. Returns structured codebase evidence (mini_repos[])."
+              tools={[
+                {
+                  name: builtInName,
+                  description: INSPECT_CODEBASE_METADATA.summary,
+                  enabled: true,
+                },
+              ]}
+            />
+          )}
 
           {loadingBridgeTools && (
             <div
@@ -400,9 +406,9 @@ function ExposedAgentRow({
               className="ab-field-help"
               style={{ marginTop: 8, fontStyle: 'italic' }}
             >
-              No custom tools on this agent. The IDE sees just{' '}
-              <span className="ab-mono">{inspectName}</span> above. Add a
-              custom tool from the agent's Bridge tools tab.
+              {agent.inspectorEnabled
+                ? "No custom tools on this agent. The IDE sees just the system built-in above. Add a custom tool from the agent's Bridge tools tab."
+                : "No tools on this agent yet. Add one from the agent's Bridge tools tab — a starter `<slug>__ask_agent` tool is normally created automatically; if it's missing, create one."}
             </div>
           )}
         </div>

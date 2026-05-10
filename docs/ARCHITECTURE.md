@@ -115,14 +115,20 @@ nothing escapes the data root.
 
 ### 2.4 `apps/mcp-bridge`
 
-MCP server (stdio) that exposes one tool per agent — `<slug>__inspect_codebase`
-— to Cursor / Claude Code / Codex / any MCP-compatible IDE. The IDE LLM
-calls it with a free-form `query` plus optional repo hints; under the
-hood the agent's wrapper toolkit (find / trace / impact / debug /
-understand / list) gathers structured evidence and the bridge wraps the
-result in the D17′ envelope (see §10.7). Operator-authored
-`bridge_tools` rows continue to register alongside with their authored
-names (§8.2). The handler lives in `inspect-codebase-handler.ts`.
+MCP server (stdio) that exposes one or two built-in tools per agent
+to Cursor / Claude Code / Codex / any MCP-compatible IDE:
+
+- `<slug>__ask_agent` is always exposed — free-form Q&A, prose-only
+  envelope. Handler: `ask-agent-handler.ts`.
+- `<slug>__inspect_codebase` is additionally exposed when the agent
+  has `inspector_enabled = true` (Coding-helper template). Mini-repo
+  envelope carrying structured codebase evidence (the agent's wrapper
+  toolkit gathers it: find / trace / impact / debug / understand /
+  list — see §10.7 for the wire shapes). Handler:
+  `inspect-codebase-handler.ts`.
+
+Operator-authored `bridge_tools` rows continue to register alongside
+with their authored names (§8.2).
 
 #### 2.4.1 Bridge session = one Mastra thread
 
@@ -430,17 +436,24 @@ Everything else. Mastra has no opinion or schema here, so we design freely:
 
 | Our concept                          | Why Mastra has no schema                      |
 | ------------------------------------ | --------------------------------------------- |
-| `agents` (row), `skills`, `tools`    | Mastra agents + tools are code, not data      |
+| `agents` (row, incl. `inspector_enabled`), `skills`, `tools` | Mastra agents + tools are code, not data |
 | `repos`, `agent_repos`, `repo_edges` | Mastra has no notion of attached codebases    |
 | `mcp_connections`, `agent_mcp_tools` | Mastra consumes MCP tools at runtime, not DB  |
 | `llm_providers` (incl. `embedding_dims`) | Mastra providers are instantiated, not stored |
 | `bridge_tools`                       | Operator-authored IDE-facing tools (§8.2)     |
-| `runs` (incl. `minirepo_json` jsonb) | UI-facing audit log + D17′ envelope cache     |
+| `runs` (incl. `minirepo_json`, `callsite_json`) | UI-facing audit log + D17′ envelope cache + per-run callsite |
 | `run_events`                         | UI-facing audit log; `mastra.traces` is OTel  |
 
 A few of these columns have non-obvious shapes worth calling out
-inline; the inspector toolkit (§10) reads them on every wrapper call:
+inline:
 
+- **`agents.inspector_enabled`** — boolean, default `true`. Per-agent
+  toggle for the auto-mounted inspector toolkit (§10). When `true`
+  (Coding-helper template) the wrapper mount, gitnexus subprocess,
+  inspector system-prompt, and embedding-provider boot-fail all run.
+  When `false` (Build-your-own-agent) the agent runs with only the
+  operator's system prompt + skills + allowlisted external MCPs; the
+  bridge exposes only `<slug>__ask_agent`.
 - **`llm_providers.embedding_dims`** — smallint, populated when an
   operator adds an embedding-role provider. The provider editor's
   *Test connection* button auto-detects it from the model's first
@@ -451,7 +464,15 @@ inline; the inspector toolkit (§10) reads them on every wrapper call:
   Each wrapper invocation appends a `MiniRepo` via `appendMinirepo`
   inside one transaction with a 14 KiB oldest-eviction policy
   (see §10.4). Used by both the chat-tab tool-call cards and the
-  IDE bridge envelope so they cannot drift.
+  `inspect_codebase` bridge envelope so they cannot drift.
+- **`runs.callsite_json`** — jsonb, captured at dispatch time.
+  Carries `{client, agent, tool, repo?, started_at}` (see
+  `Callsite` in `@agent-bridge/shared/dtos/runs`). Bridge handlers
+  read the negotiated MCP `clientInfo` for `client.name` (cursor /
+  claude-code / codex); the chat backend stamps `'web-chat'`.
+  Persistence-only — not injected into the LLM's prompt stack
+  (see §10.7 for the rationale on why an earlier injection
+  approach was reverted).
 
 **`runs` vs `mastra.traces`.** Both exist and that's deliberate. Our `runs`
 carries UI semantics (`stream_id` for SSE, `input_prompt`, user-facing
@@ -592,41 +613,38 @@ spec.
 ### 8.2 Bridge tools (outbound — what the IDE sees)
 
 What `apps/mcp-bridge` exposes to Cursor / Claude Code / Codex over MCP.
-When a developer types `@<agent>__inspect_codebase "why does login fail?"`
-in the IDE, this is the tool that handles the request by running the
-agent's wrapper toolkit (§10) and returning a bounded D17′ envelope.
+When a developer invokes one of these in the IDE, the bridge runs the
+agent and returns the matching wire envelope.
 
-**Default surface — one `inspect_codebase` per agent.** Every `agents`
-row contributes exactly one auto-derived MCP tool with the name
-`<agent.slug>__inspect_codebase`, description sourced from
-`agents.description`, and the input schema `{ query: string,
-repo_hint?: string }`. The handler in
-`apps/mcp-bridge/src/inspect-codebase-handler.ts` kicks off a run
-against the agent's BuiltAgent, lets the inspector wrappers gather
-evidence into `runs.minirepo_json`, then returns the envelope:
+**Per-agent built-ins.** Every exposable agent ships:
 
-```jsonc
-{ "ok": true,
-  "mini_repos": [ /* per-wrapper MiniRepos, oldest dropped to fit 14 KiB */ ],
-  "prose_summary": "≤ 1 KiB",  // populated only when mini_repos is empty
-  "warnings": [] }
-```
+- `<agent.slug>__ask_agent` — always, regardless of template.
+  Free-form Q&A; envelope is prose-only `{ok, prose_summary?, warnings}`.
+  Stable across `agents.inspector_enabled` flips so the IDE's tool
+  registry doesn't churn under operator config edits. Handler:
+  `apps/mcp-bridge/src/ask-agent-handler.ts`.
+- `<agent.slug>__inspect_codebase` — additionally exposed when
+  `agents.inspector_enabled = true` (Coding-helper template).
+  Mini-repo envelope `{ok, mini_repos[], prose_summary?, warnings}`
+  carrying structured codebase evidence. Handler:
+  `apps/mcp-bridge/src/inspect-codebase-handler.ts`.
 
-`stream_id` is prefixed `bridge:` so the UI can distinguish IDE-originated
-runs from chat-tab runs. The `inspect_codebase` suffix is **reserved** —
-operator-authored tools cannot collide with it.
+Both descriptions are sourced from `agents.description`; both
+suffixes are **reserved** — operator-authored tools cannot collide
+with them. `stream_id` is prefixed `bridge:` so the UI can
+distinguish IDE-originated runs from chat-tab runs.
 
-**Operator-authored extras — `bridge_tools` rows.** An operator can
+**Operator-authored extras — `bridge_tools` rows.** Operators can
 author additional curated tools per agent (`ask_architecture`,
 `explain_module`, `find_tests_for`, …) by inserting `bridge_tools`
 rows with their own input schema + prompt template. These mount
-alongside the default `inspect_codebase` tool with the operator's
-chosen names. They wrap into the same envelope but with an 8 KiB
-prose cap (operators authored their template on purpose, so the
-prose channel is theirs to use). `runs.bridge_tool_name text`
+alongside the built-ins with the operator's chosen names. They wrap
+into the inspect_codebase envelope shape (mini_repos[] + prose) with
+an 8 KiB prose cap (operators authored their template on purpose, so
+the prose channel is theirs to use). `runs.bridge_tool_name text`
 (nullable) records which explicit tool a run was invoked from —
-the default `inspect_codebase` rows stay `NULL`. A DB CHECK
-constraint enforces the reserved-suffix rule.
+built-in `ask_agent` / `inspect_codebase` rows stay `NULL`. A DB
+CHECK constraint enforces the reserved-prefix rule on author names.
 
 ### 8.3 Rule of thumb
 
@@ -918,22 +936,42 @@ that previously left dialogs hanging.
 
 The IDE coding agent only sees the file the developer has open. Agent
 Bridge sees every repo the operator attached plus the operator-curated
-edges between them. The wrapper-tool architecture closes that gap with
-**one** MCP tool per agent (`inspect_codebase`) and a set of
-deterministic wrapper tools the agent's own LLM picks between
-internally. The IDE LLM never sees `gitnexus_*` tools by name; the
-agent's wrappers wrap them.
+edges between them. For Coding-helper agents, the wrapper-tool
+architecture closes that gap with one MCP tool per agent
+(`inspect_codebase`) plus six deterministic wrapper tools the agent's
+own LLM picks between internally. The IDE LLM never sees `gitnexus_*`
+tools by name; the agent's wrappers wrap them.
 
-The reasoning is straightforward: a generic IDE coding agent staring
-at a 50k-line repo through grep + a single open file will rabbit-hole
-on the wrong thread. We have already-indexed graph + embeddings, plus
-operator-curated repo edges, so we can answer in one tool call with
-structured evidence (call graph, related files across repos, ranked
-hits) instead of begging the IDE LLM to explore the codebase line by
-line. V1 tried to expose every gitnexus tool to the IDE LLM directly
-and failed for reasons captured in the local `notes.md` — short
-version: too many low-level tools, no enforced bound on prose, and
-nothing to stop the IDE LLM from looping.
+Not every agent is a coding helper, though. Per-agent
+`agents.inspector_enabled` (default `true`) gates the inspector
+toolkit. Coding-helper agents (Build flow → "Coding helper") have it
+on; Build-your-own agents have it off and run with only the
+operator's system prompt + skills + any allowlisted external MCPs.
+
+Bridge surface:
+
+- **Always exposed**: `<slug>__ask_agent` — free-form Q&A, prose-only
+  envelope `{ok, prose_summary?, warnings}`. Stable across
+  `inspector_enabled` flips so the IDE's tool registry never loses
+  this entry under operator config edits.
+- **Additionally exposed when `inspector_enabled = true`**:
+  `<slug>__inspect_codebase` — mini-repo envelope `{ok, mini_repos[],
+  prose_summary?, warnings}` carrying structured codebase evidence.
+- Operator-authored `bridge_tools` rows mount alongside on either
+  kind (§8.2). Their names are reserved against the `query_*` prefix
+  by a DB CHECK constraint.
+
+The reasoning behind the toolkit (for the coding-helper case): a
+generic IDE coding agent staring at a 50k-line repo through grep + a
+single open file will rabbit-hole on the wrong thread. We have
+already-indexed graph + embeddings, plus operator-curated repo edges,
+so we can answer in one tool call with structured evidence (call
+graph, related files across repos, ranked hits) instead of begging
+the IDE LLM to explore the codebase line by line. V1 tried to expose
+every gitnexus tool to the IDE LLM directly and failed for reasons
+captured in the local `notes.md` — short version: too many low-level
+tools, no enforced bound on prose, and nothing to stop the IDE LLM
+from looping.
 
 ### 10.1 Flow
 
@@ -942,23 +980,35 @@ IDE / Chat
    │ user question + (optional) repo hint
    ▼
 apps/mcp-bridge      ──► Mastra agent (BuiltAgent cache)
-   inspect_codebase       tools: {                              ──► gitnexus MCP
-                            find_in_codebase                          (subprocess,
-                            trace_flow                                 sandboxed)
-                            assess_change_impact
-                            debug_help
-                            understand_module
-                            list_repos
-                            …operator MCPs
-                          }
-                          ↓ run-context AsyncLocalStorage
-                          wrapper telemetry → run_events + minirepo_json
+   ask_agent              tools: { (only when inspector_enabled)    ──► gitnexus MCP
+   inspect_codebase  ←┐     find_in_codebase                              (subprocess,
+   (when inspector    │     trace_flow                                    sandboxed)
+    enabled)          │     assess_change_impact
+                      │     debug_help
+                      │     understand_module
+                      │     list_repos
+                      │     …operator MCPs
+                      │   }
+                      │   ↓ run-context AsyncLocalStorage
+                      │   wrapper telemetry → run_events + minirepo_json
+                      │
+                      └── envelope shape:
+                          ask_agent           → {ok, prose_summary?, warnings}
+                          inspect_codebase    → {ok, mini_repos[], prose_summary?, warnings}
 ```
+
+Build-your-own agents (`inspector_enabled = false`) have only
+`ask_agent` registered; the bridge skips the gitnexus subprocess
+spawn and `mountInspectorTools` entirely, and `composeInstructions`
+omits the auto-attached toolkit prompt. The agent runs with the
+operator's base system prompt + authored skills + any allowlisted
+external MCPs.
 
 The chat tab and the IDE bridge converge on the same
 `packages/agents/src/run-dispatcher.ts` path. The only difference is
 the streamId prefix (`run:` vs `bridge:`) and what the bridge does
-with the run's accumulated mini-repos at the end.
+with the run's accumulated mini-repos at the end (per the envelope
+shapes above).
 
 ### 10.2 Inspector wrapper toolkit
 
@@ -1021,9 +1071,13 @@ Each preview field is capped at `INSPECTOR_PREVIEW_BYTES_CAP = 2048`.
 Audit row written to `run_events` keyed by `runId`; per-run channel
 + per-agent fan-out channel get the same scrubbed payload.
 
-### 10.7 Wire envelope (D17′)
+### 10.7 Wire envelopes
 
-`apps/mcp-bridge` returns this for every `inspect_codebase` call:
+The bridge ships two envelope shapes — one per built-in tool. The
+shape telegraphs the response: structured codebase evidence vs. a
+free-form prose answer.
+
+**`<slug>__inspect_codebase`** (Coding helpers only):
 
 ```jsonc
 { "ok": true,
@@ -1032,10 +1086,44 @@ Audit row written to `run_events` keyed by `runId`; per-run channel
   "warnings": [] }
 ```
 
-`ok: true` always — chit-chat is a valid response and the IDE LLM
-decides what to do with it. Operator-authored `bridge_tools` rows
-wrap into the same envelope with an 8 KiB prose cap (operators
+**`<slug>__ask_agent`** (every agent):
+
+```jsonc
+{ "ok": true,
+  "prose_summary": "≤ 8 KiB",  // the agent's free-form answer
+  "warnings": [] }
+```
+
+No `mini_repos` field on `ask_agent`. Even on a Coding-helper agent,
+when called via `ask_agent` the bridge strips structured evidence
+from the response — the IDE LLM that called this tool wants prose.
+The wrappers may still fire internally during the run (they live in
+the cached BuiltAgent's tool dict and the LLM may choose to call
+them), and their output still lands on `runs.minirepo_json` for
+/logs replay; it just doesn't reach the IDE on this tool.
+
+Operator-authored `bridge_tools` rows wrap into the
+`inspect_codebase` envelope shape with an 8 KiB prose cap (operators
 authored their template on purpose).
+
+`ok: true` always — chit-chat is a valid response and the IDE LLM
+decides what to do with it.
+
+**Per-run callsite** — every run (chat or bridge) persists a
+`Callsite` payload on `runs.callsite_json` capturing
+`{client, agent, tool, repo?, started_at}`. The bridge handlers read
+the IDE's negotiated MCP `clientInfo` for the `client` field; the
+chat backend stamps `client.name = 'web-chat'`. The /logs UI surfaces
+this so operators can see "called from Cursor on `<repo>`" per row.
+
+The dispatcher does NOT inject the callsite into the LLM's prompt
+stack: an earlier prepend-as-markdown approach echoed the block back
+to users (model treated it as user content) and triggered template
+errors on local models with strict Jinja chat templates (Qwen,
+certain Mistral variants). Per-run runtime context that's both
+invisible to users AND safe across local-model templates needs a
+deeper Mastra-side change; for now callsite is persistence-only and
+operator skills can't reference it at runtime.
 
 ### 10.8 Auto-attached system prompt
 

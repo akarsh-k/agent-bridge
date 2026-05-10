@@ -18,16 +18,76 @@ import {
   agentIdParamSchema,
   agentResponseSchema,
   agentUpdateInputSchema,
+  ASK_AGENT_DEFAULTS,
   defaultMemoryConfig,
   type AgentResponse,
 } from '@agent-bridge/shared'
-import { schema } from '@agent-bridge/db'
+import { schema, type AgentBridgeDb } from '@agent-bridge/db'
 import { getDb } from '../db.js'
 import { publishAgentConfig } from '../lib/agent-events.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 import { isPostgresErrorWithCode, PG } from '../lib/pg-errors.js'
 
 type AgentRow = typeof schema.agents.$inferSelect
+
+/**
+ * Convert an agent slug into a string that satisfies
+ * `bridge_tools.name`'s CHECK regex `^[a-zA-Z][a-zA-Z0-9_]{0,63}$`.
+ * Slugs allow dashes and digit-start; bridge_tools names don't.
+ *
+ * - Dashes → underscores
+ * - Leading digit → prepend `a`
+ * - Total length capped at 64 - len("__ask_agent") = 53 to leave room
+ *   for the `__ask_agent` suffix
+ */
+function slugToBridgeToolPrefix(slug: string): string {
+  const noDashes = slug.replace(/-/g, '_')
+  const safe = /^[a-zA-Z]/.test(noDashes) ? noDashes : `a${noDashes}`
+  return safe.slice(0, 53)
+}
+
+/**
+ * Auto-create the starter `<slug>__ask_agent` `bridge_tools` row for
+ * a Build-your-own agent. No-op when one already exists (idempotent
+ * for the PATCH inspector_enabled true→false case where prior runs
+ * may have inserted the row).
+ *
+ * We swallow unique-violation on `bridge_tools.name` so a slug that
+ * collides with an existing operator-authored tool name doesn't
+ * block agent creation — the operator can manually add a tool with
+ * a different name later.
+ */
+async function ensureAskAgentBridgeTool(
+  db: AgentBridgeDb,
+  agentId: string,
+  slug: string,
+): Promise<void> {
+  const existing = await db.db
+    .select({ id: schema.bridgeTools.id })
+    .from(schema.bridgeTools)
+    .where(eq(schema.bridgeTools.agentId, agentId))
+    .limit(1)
+  if (existing.length > 0) return // operator already has tools; don't add
+
+  const name = `${slugToBridgeToolPrefix(slug)}__${ASK_AGENT_DEFAULTS.nameSuffix}`
+  try {
+    await db.db.insert(schema.bridgeTools).values({
+      agentId,
+      name,
+      description: ASK_AGENT_DEFAULTS.description,
+      inputSchema: ASK_AGENT_DEFAULTS.inputSchema,
+      promptTemplate: ASK_AGENT_DEFAULTS.promptTemplate,
+      enabled: true,
+    })
+  } catch (err) {
+    if (isPostgresErrorWithCode(err, PG.UNIQUE_VIOLATION)) {
+      // Name collision with another agent's tool. Fine — operator
+      // can add their own with a unique name later.
+      return
+    }
+    throw err
+  }
+}
 
 /**
  * Convert a Drizzle row to the wire shape. Dates become ISO strings so the
@@ -43,6 +103,7 @@ function toAgentResponse(row: AgentRow): AgentResponse {
     llmProviderId: row.llmProviderId,
     memoryEnabled: row.memoryEnabled,
     memoryConfig: row.memoryConfig,
+    inspectorEnabled: row.inspectorEnabled,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   })
@@ -58,7 +119,8 @@ export const agentsRouter = new Hono()
     }),
     async (c) => {
       const body = c.req.valid('json')
-      const { db } = getDb()
+      const dbHandle = getDb()
+      const { db } = dbHandle
 
       try {
         const [row] = await db
@@ -71,6 +133,12 @@ export const agentsRouter = new Hono()
             llmProviderId: body.llmProviderId ?? null,
             memoryEnabled: body.memoryEnabled ?? false,
             memoryConfig: body.memoryConfig ?? null,
+            // Defaults to true at the column level (Coding-helper). Pass
+            // through verbatim when the operator chose Build-your-own-agent
+            // at creation; otherwise the schema default applies.
+            ...(body.inspectorEnabled !== undefined
+              ? { inspectorEnabled: body.inspectorEnabled }
+              : {}),
           })
           .returning()
 
@@ -79,6 +147,14 @@ export const agentsRouter = new Hono()
             code: 'internal',
             message: 'insert returned no rows',
           })
+        }
+
+        // Build-your-own template: auto-create the starter
+        // `<slug>__ask_agent` bridge_tools row so the IDE has a
+        // tool to call out of the box. Operators edit / rename /
+        // delete it from the Bridge-tools tab like any other tool.
+        if (!row.inspectorEnabled) {
+          await ensureAskAgentBridgeTool(dbHandle, row.id, row.slug)
         }
 
         return c.json({ ok: true as const, agent: toAgentResponse(row) }, 201)
@@ -147,7 +223,8 @@ export const agentsRouter = new Hono()
     async (c) => {
       const { id } = c.req.valid('param')
       const body = c.req.valid('json')
-      const { db } = getDb()
+      const dbHandle = getDb()
+      const { db } = dbHandle
 
       // Build the update object from *only* keys the client sent. Zod's
       // `.strict()` guarantees no extra keys slipped in; missing keys become
@@ -160,6 +237,7 @@ export const agentsRouter = new Hono()
       if ('llmProviderId' in body) patch.llmProviderId = body.llmProviderId ?? null
       if ('memoryEnabled' in body) patch.memoryEnabled = body.memoryEnabled
       if ('memoryConfig' in body) patch.memoryConfig = body.memoryConfig ?? null
+      if ('inspectorEnabled' in body) patch.inspectorEnabled = body.inspectorEnabled
 
       // Phase 6b — when the operator flips `memoryEnabled` true without
       // simultaneously authoring a `memoryConfig`, seed Mastra's
@@ -193,6 +271,14 @@ export const agentsRouter = new Hono()
             code: 'not_found',
             message: `agent ${id} not found`,
           })
+        }
+
+        // Auto-create the starter ask_agent bridge_tool when the
+        // operator transitions to inspector_enabled=false (so they
+        // don't end up with a blank agent that exposes nothing to
+        // the IDE). No-op if a tool already exists for the agent.
+        if (patch.inspectorEnabled === false && !row.inspectorEnabled) {
+          await ensureAskAgentBridgeTool(dbHandle, row.id, row.slug)
         }
 
         // Activity feed: which fields changed? List the keys the

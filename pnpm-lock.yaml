@@ -300,6 +300,9 @@ importers:
       '@agent-bridge/shared':
         specifier: workspace:*
         version: link:../packages/shared
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.29.0
+        version: 1.29.0(zod@4.3.6)
       drizzle-orm:
         specifier: ^0.45.2
         version: 0.45.2(@types/pg@8.20.0)(pg@8.20.0)(postgres@3.4.9)

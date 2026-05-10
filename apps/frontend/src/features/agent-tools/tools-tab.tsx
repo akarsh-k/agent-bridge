@@ -23,10 +23,13 @@
 import { useEffect, useState } from 'react'
 import type { SystemToolDefinition } from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
+import { Button } from '../../ui/button'
 import { Pill } from '../../ui/pill'
 import { EmptyState } from '../../ui/empty'
-import { ChevronDownIcon, ToolIcon } from '../../ui/icons'
+import { ChevronDownIcon, PlusIcon, ToolIcon } from '../../ui/icons'
 import { ApiError, getGitnexusSystemTools } from '../../lib/rpc'
+import { confirmDialog } from '../../ui/dialog-store'
+import { toast } from '../../ui/toast-store'
 
 type SystemToolsState =
   | { status: 'loading' }
@@ -73,7 +76,9 @@ function firstSentence(text: string): string {
 }
 
 export function ToolsTab({ agentId }: { agentId: string }) {
-  const { agentResources } = useWorkspace()
+  const { agentResources, agents, patchAgent } = useWorkspace()
+  const agent = agents.find((a) => a.id === agentId)
+  const inspectorEnabled = agent?.inspectorEnabled ?? true
   const tools = agentResources[agentId]?.tools ?? []
   const attachedRepos = agentResources[agentId]?.attachedRepos ?? []
   const readyRepos = attachedRepos.filter((r) => r.repo.status === 'ready')
@@ -83,8 +88,35 @@ export function ToolsTab({ agentId }: { agentId: string }) {
   const [expandedSystemTool, setExpandedSystemTool] = useState<string | null>(
     null,
   )
+  const [enabling, setEnabling] = useState(false)
   const toggleSystemTool = (name: string) =>
     setExpandedSystemTool((cur) => (cur === name ? null : name))
+
+  const enableInspector = async () => {
+    if (!agent || enabling) return
+    const ok = await confirmDialog({
+      title: 'Enable Inspector toolkit?',
+      body:
+        'This attaches the six built-in wrappers (find / trace / impact / debug / understand / list) and the IDE-facing tool will switch to <slug>__inspect_codebase. Requires an embedding provider in the workspace if you have repos attached.',
+      confirmLabel: 'Enable',
+    })
+    if (!ok) return
+    setEnabling(true)
+    try {
+      await patchAgent(agentId, { inspectorEnabled: true })
+      toast.success('Inspector toolkit enabled')
+    } catch (e) {
+      toast.error(
+        e instanceof ApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : 'Failed to enable Inspector toolkit',
+      )
+    } finally {
+      setEnabling(false)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -246,6 +278,72 @@ export function ToolsTab({ agentId }: { agentId: string }) {
 
   const systemToolCount =
     systemTools.status === 'ready' ? systemTools.tools.length : 0
+
+  // Inspector-disabled (Build-your-own) agents see an opt-in card
+  // instead of the wrapper listing. Enabling the toolkit flips the
+  // agent flag and re-renders this tab with the standard layout.
+  if (!inspectorEnabled) {
+    return (
+      <div>
+        <div className="ab-card ab-card-pad ab-form-section">
+          <div className="ab-section-head">
+            <div className="ab-section-title">Tools</div>
+            <div className="ab-section-sub">
+              This is a Build-your-own agent — no built-in toolkit is
+              attached. Add the Inspector toolkit below to give the
+              agent code-search and graph-walk wrappers, or wire your
+              own external MCPs from the Bridge tools tab.
+            </div>
+          </div>
+
+          {tools.length > 0 && (
+            <>
+              <div
+                className="ab-field-help"
+                style={{ marginBottom: 8, fontStyle: 'italic' }}
+              >
+                The {tools.length} tool{tools.length === 1 ? '' : 's'} below
+                {tools.length === 1 ? ' was' : ' were'} authored before
+                native-tool support was deferred. They're persisted but
+                not currently mounted on the agent.
+              </div>
+              {renderInactiveRows()}
+            </>
+          )}
+
+          <BuiltInSubhead />
+          <div className="ab-card ab-list-card">
+            <div className="ab-list-row">
+              <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+                <ToolIcon />
+              </div>
+              <div className="ab-list-row-head">
+                <div className="ab-list-row-title">Inspector toolkit</div>
+                <div className="ab-list-row-sub">
+                  Six wrappers for codebase Q&A: find_in_codebase,
+                  trace_flow, assess_change_impact, debug_help,
+                  understand_module, list_repos. Switches the IDE-facing
+                  tool to <span className="ab-mono">&lt;slug&gt;__inspect_codebase</span>.
+                </div>
+              </div>
+              <div className="ab-list-row-meta">
+                <Pill kind="neutral">Built-in</Pill>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  leading={<PlusIcon strokeWidth={2.4} />}
+                  onClick={() => void enableInspector()}
+                  disabled={enabling}
+                >
+                  {enabling ? 'Enabling…' : 'Add'}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>

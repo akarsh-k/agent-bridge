@@ -286,17 +286,23 @@ export async function estimateAgentTokens(
   // `dist/src/inspector/`) gives a null entry, which the budget card
   // surfaces as a config gap. The shared `TokenEstimateSystemSkill`
   // type is kept for backwards-compat with the frontend's budget card.
+  //
+  // Build-your-own-agent (`inspectorEnabled === false`) skips the
+  // attach in `composeInstructions`, so the budget should reflect zero
+  // tokens for it — `null` here matches that.
   let systemSkill: TokenEstimateSystemSkill | null = null
-  try {
-    const skillBody = await loadInspectorSystemPrompt()
-    systemSkill = {
-      name: 'Inspector toolkit',
-      version: INSPECTOR_SYSTEM_PROMPT_VERSION,
-      tokens: tokenize(enc, skillBody),
+  if (agentRow.inspectorEnabled) {
+    try {
+      const skillBody = await loadInspectorSystemPrompt()
+      systemSkill = {
+        name: 'Inspector toolkit',
+        version: INSPECTOR_SYSTEM_PROMPT_VERSION,
+        tokens: tokenize(enc, skillBody),
+      }
+    } catch {
+      // Leave `systemSkill` null. The card flags this distinctly from
+      // "0 tokens" to nudge the operator toward a rebuild.
     }
-  } catch {
-    // Leave `systemSkill` null. The card flags this distinctly from
-    // "0 tokens" to nudge the operator toward a rebuild.
   }
 
   // The v1 auto-attached blocks (gitnexus library skills, attached-
@@ -319,13 +325,18 @@ export async function estimateAgentTokens(
   // with name + a one-line description + the same 60-token wrapper
   // overhead used in the v1 estimator. Slight undercount; the budget
   // card flags this in the help text.
+  //
+  // Build-your-own-agent skips the toolkit entirely, so the budget
+  // shows zero tool tokens for those agents.
   const tools: TokenEstimateTool[] = []
-  for (const name of inspectorWrapperNames) {
-    if (name !== 'list_repos' && repoRows.length === 0) continue
-    const description = describeInspectorWrapper(name)
-    const text = JSON.stringify({ name, description })
-    const tokens = tokenize(enc, text) + 60
-    tools.push({ name, tokens, source: 'gitnexus' })
+  if (agentRow.inspectorEnabled) {
+    for (const name of inspectorWrapperNames) {
+      if (name !== 'list_repos' && repoRows.length === 0) continue
+      const description = describeInspectorWrapper(name)
+      const text = JSON.stringify({ name, description })
+      const tokens = tokenize(enc, text) + 60
+      tools.push({ name, tokens, source: 'gitnexus' })
+    }
   }
 
   const toolsTotal = tools.reduce((sum, t) => sum + t.tokens, 0)

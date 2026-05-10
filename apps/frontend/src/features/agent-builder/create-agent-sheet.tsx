@@ -1,7 +1,11 @@
 /**
- * "New agent" side-sheet — slides in from the right. The inner form
- * is mounted/unmounted with a `key` derived from the sheet's open
- * count, so each open starts with fresh state.
+ * "New agent" side-sheet — slides in from the right. Two-step flow:
+ *   1. Template picker — Coding helper / Build your own agent. The
+ *      choice sets `inspector_enabled` on insert (true / false).
+ *   2. Identity form — name, slug, provider, description.
+ *
+ * The inner form is mounted/unmounted with a `key` derived from the
+ * sheet's open count so each open starts on Step 1 with fresh state.
  */
 
 import { useMemo, useState } from 'react'
@@ -24,9 +28,49 @@ function slugify(name: string): string {
     .slice(0, 64)
 }
 
+type AgentTemplate = 'coding' | 'blank'
+
+interface TemplateMeta {
+  readonly id: AgentTemplate
+  readonly title: string
+  readonly tagline: string
+  readonly bullets: readonly string[]
+  /** Maps to `inspector_enabled` on insert. */
+  readonly inspectorEnabled: boolean
+}
+
+const TEMPLATES: readonly TemplateMeta[] = [
+  {
+    id: 'coding',
+    title: 'Coding helper',
+    tagline: 'Q&A across the repos you attach. The agent reads code for you.',
+    bullets: [
+      'Built-in code search, call-graph walks, change-impact analysis, debugging hints',
+      'In your IDE this agent appears as one MCP tool: <slug>__inspect_codebase',
+      'Replies are structured: file paths, code snippets, related files across repos',
+      'Needs one embedding provider configured in the workspace (any model — local or cloud)',
+    ],
+    inspectorEnabled: true,
+  },
+  {
+    id: 'blank',
+    title: 'Build your own agent',
+    tagline: 'Empty starting point. For helpers that aren\'t about code.',
+    bullets: [
+      'No built-in tools — you bring the skills, system prompt, and any external MCP servers',
+      'In your IDE this agent appears as one MCP tool: <slug>__ask_agent (free-form Q&A)',
+      'Replies are plain prose — no file paths or structured code evidence',
+      'No embedding provider needed',
+      'You can turn on the code-search toolkit later from the Tools tab if you change your mind',
+    ],
+    inspectorEnabled: false,
+  },
+] as const
+
 function CreateAgentForm({ onClose }: { onClose: () => void }) {
   const { llmProviders, createAgent } = useWorkspace()
   const { defaultProviderId } = useDefaultProviderId()
+  const [template, setTemplate] = useState<AgentTemplate | null>(null)
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [slugTouched, setSlugTouched] = useState(false)
@@ -53,16 +97,20 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
   )
 
   const slugValid = SLUG_RE.test(effectiveSlug)
-  const canSubmit = name.trim().length > 0 && slugValid
+  const canSubmit =
+    template !== null && name.trim().length > 0 && slugValid
 
   const dirty =
+    template !== null ||
     name.length > 0 ||
     description.length > 0 ||
     providerId !== null
   const guardedClose = useDirtyClose(dirty && !busy, onClose)
 
   const submit = async () => {
-    if (!canSubmit) return
+    if (!canSubmit || template === null) return
+    const tmpl = TEMPLATES.find((t) => t.id === template)
+    if (!tmpl) return
     setBusy(true)
     try {
       const created = await createAgent({
@@ -72,6 +120,7 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
         systemPrompt: '',
         llmProviderId: providerId ?? null,
         memoryEnabled: false,
+        inspectorEnabled: tmpl.inspectorEnabled,
       })
       toast.success(`Created ${created.name}`)
       onClose()
@@ -85,17 +134,113 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
     }
   }
 
+  // ─── Step 1 — template picker ────────────────────────────────────
+  if (template === null) {
+    return (
+      <Sheet
+        open
+        onClose={guardedClose}
+        title="New agent"
+        subtitle="Pick a template. You can change anything about the agent after creation — including switching templates."
+      >
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 12,
+          }}
+        >
+          {TEMPLATES.map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTemplate(t.id)}
+              className="ab-card ab-card-pad"
+              style={{
+                width: '100%',
+                textAlign: 'left',
+                cursor: 'pointer',
+                background: 'var(--surface)',
+                borderColor: 'var(--border)',
+                font: 'inherit',
+              }}
+            >
+              <div className="ab-section-title" style={{ marginBottom: 4 }}>
+                {t.title}
+              </div>
+              <div
+                className="ab-section-sub"
+                style={{ marginBottom: 10 }}
+              >
+                {t.tagline}
+              </div>
+              <ul
+                style={{
+                  margin: 0,
+                  paddingLeft: 18,
+                  fontSize: 13,
+                  lineHeight: 1.55,
+                  color: 'var(--text-dim)',
+                }}
+              >
+                {t.bullets.map((b) => (
+                  <li key={b}>{b}</li>
+                ))}
+              </ul>
+            </button>
+          ))}
+        </div>
+      </Sheet>
+    )
+  }
+
+  // ─── Step 2 — identity form ──────────────────────────────────────
+  const chosen = TEMPLATES.find((t) => t.id === template)
   return (
     <Sheet
       open
       onClose={guardedClose}
       title="New agent"
-      subtitle="Two minutes. You can edit everything later."
+      subtitle={`Two minutes. You can edit everything later.`}
       primaryLabel="Create agent"
       onPrimary={submit}
       primaryBusy={busy}
       primaryDisabled={!canSubmit}
     >
+      <div
+        className="ab-card ab-card-pad"
+        style={{
+          marginBottom: 14,
+          background: 'var(--surface-hi)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 12,
+        }}
+      >
+        <div style={{ minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: 11,
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+              color: 'var(--text-muted)',
+              marginBottom: 2,
+            }}
+          >
+            Template
+          </div>
+          <div style={{ fontWeight: 600 }}>{chosen?.title}</div>
+        </div>
+        <button
+          type="button"
+          onClick={() => setTemplate(null)}
+          className="ab-btn ab-btn-secondary ab-btn-sm"
+          disabled={busy}
+        >
+          Change
+        </button>
+      </div>
       <div className="ab-field">
         <label className="ab-field-label" htmlFor="ca-name">
           Name

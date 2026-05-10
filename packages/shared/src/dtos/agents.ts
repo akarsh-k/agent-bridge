@@ -32,6 +32,19 @@ const baseFields = {
   llmProviderId: z.uuid().nullable().optional(),
   memoryEnabled: z.boolean(),
   memoryConfig: agentMemoryConfigSchema.nullable().optional(),
+  /**
+   * Inspector toolkit opt-in. See `agents.inspectorEnabled` in
+   * `@agent-bridge/db/schema` for the full semantics. The Coding-helper
+   * template sets this to `true` (the default); the Build-your-own-agent
+   * template sets it to `false`.
+   *
+   * When `false` (at create time, or transitioned to `false` later),
+   * the backend auto-creates a `bridge_tools` row named
+   * `<slug>__ask_agent` so the IDE has at least one tool to call.
+   * The operator edits / renames / deletes that row from the
+   * Bridge-tools tab like any other custom tool.
+   */
+  inspectorEnabled: z.boolean(),
 } as const
 
 /**
@@ -49,6 +62,9 @@ export const agentCreateInputSchema = z
     /** Defaults to `false` on the server. */
     memoryEnabled: baseFields.memoryEnabled.optional(),
     memoryConfig: baseFields.memoryConfig,
+    /** Defaults to `true` on the server (Coding-helper template). Pass
+     *  `false` from the Build-your-own-agent creation flow. */
+    inspectorEnabled: baseFields.inspectorEnabled.optional(),
   })
   .strict()
 
@@ -67,6 +83,13 @@ export const agentUpdateInputSchema = z
     llmProviderId: baseFields.llmProviderId,
     memoryEnabled: baseFields.memoryEnabled.optional(),
     memoryConfig: baseFields.memoryConfig,
+    /** Toggle the Inspector toolkit on / off after creation. Flipping
+     *  to `false` auto-creates a `bridge_tools` row named
+     *  `<slug>__ask_agent` if none exists, so the IDE keeps a tool
+     *  to call. Flipping to `true` re-arms the embedding-provider
+     *  boot-fail if any repos are attached; the auto-created
+     *  ask_agent row stays put unless the operator deletes it. */
+    inspectorEnabled: baseFields.inspectorEnabled.optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, {
@@ -88,6 +111,7 @@ export const agentResponseSchema = z.object({
   llmProviderId: z.uuid().nullable(),
   memoryEnabled: z.boolean(),
   memoryConfig: agentMemoryConfigSchema.nullable(),
+  inspectorEnabled: z.boolean(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 })

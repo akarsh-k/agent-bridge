@@ -36,8 +36,11 @@ import path from 'node:path'
 import { eq } from 'drizzle-orm'
 import { Client } from 'pg'
 
+import { ASK_AGENT_DEFAULTS } from '@agent-bridge/shared'
+
 import {
   FIXTURE_AGENT,
+  FIXTURE_BLANK_AGENT,
   FIXTURE_CHAT_PROVIDER,
   FIXTURE_EDGES,
   FIXTURE_EMBEDDING_PROVIDER,
@@ -148,6 +151,10 @@ async function main(): Promise<void> {
     const repoIds = await seedAndIndexRepos(db)
     await seedAgentRepos(db, agentId, repoIds)
     await seedRepoEdges(db, agentId, repoIds)
+    // Blank-agent fixture for the bridge-registry smoke. No repos
+    // attached, inspector_enabled=false. Verifies the bridge exposes
+    // only `<slug>__ask_agent` for these.
+    await seedBlankAgent(db, chatProviderId)
 
     log('')
     log('═'.repeat(60))
@@ -266,9 +273,47 @@ async function seedAgent(db: AgentBridgeDb, chatProviderId: string): Promise<str
       systemPrompt: 'You are the ecommerce-fixture inspector test agent.',
       llmProviderId: chatProviderId,
       memoryEnabled: false,
+      // Default; spelled out for the contrast with seedBlankAgent.
+      inspectorEnabled: true,
     })
     .returning({ id: schema.agents.id })
   if (!row) throw new Error('agent insert returned no row')
+  return row.id
+}
+
+async function seedBlankAgent(
+  db: AgentBridgeDb,
+  chatProviderId: string,
+): Promise<string> {
+  log(`▸ seeding blank agent ${FIXTURE_BLANK_AGENT.slug}…`)
+  const [row] = await db.db
+    .insert(schema.agents)
+    .values({
+      slug: FIXTURE_BLANK_AGENT.slug,
+      name: FIXTURE_BLANK_AGENT.name,
+      description: FIXTURE_BLANK_AGENT.description,
+      systemPrompt: 'You are a blank-fixture agent. Reply briefly to anything you receive.',
+      llmProviderId: chatProviderId,
+      memoryEnabled: false,
+      inspectorEnabled: false,
+    })
+    .returning({ id: schema.agents.id })
+  if (!row) throw new Error('blank agent insert returned no row')
+
+  // Mirror the backend's auto-create-on-blank behavior so the
+  // bridge-registry smoke sees the same row an operator-created agent
+  // would have. Slug is alphanumeric+dashes — replace dashes with
+  // underscores to satisfy bridge_tools.name CHECK regex.
+  const safeSlug = FIXTURE_BLANK_AGENT.slug.replace(/-/g, '_')
+  const toolName = `${safeSlug}__${ASK_AGENT_DEFAULTS.nameSuffix}`
+  await db.db.insert(schema.bridgeTools).values({
+    agentId: row.id,
+    name: toolName,
+    description: ASK_AGENT_DEFAULTS.description,
+    inputSchema: ASK_AGENT_DEFAULTS.inputSchema,
+    promptTemplate: ASK_AGENT_DEFAULTS.promptTemplate,
+    enabled: true,
+  })
   return row.id
 }
 

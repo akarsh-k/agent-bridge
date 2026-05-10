@@ -280,6 +280,18 @@ export function MemoryTab({ agentId }: { agentId: string }) {
               the agent should remember beyond the current message
               window.
             </div>
+            <div
+              className="ab-field-help"
+              style={{ marginTop: 6, color: 'var(--warn)' }}
+            >
+              Heads up: working memory injects a system message on every
+              turn. Cloud frontier models (OpenAI, Anthropic, Gemini)
+              accept this fine. Some local-model chat templates
+              (Qwen, certain Mistral variants) reject any system
+              message past position 0 with a Jinja error — disable
+              this on those agents and lean on <em>Recent messages</em>{' '}
+              for continuity.
+            </div>
           </div>
           <Button
             variant={wmEnabled ? 'secondary' : 'ghost'}

@@ -131,3 +131,63 @@ export const runDetailResponseSchema = z.object({
 })
 
 export type RunDetailResponse = z.infer<typeof runDetailResponseSchema>
+
+// ─── Callsite (always-on, per-run) ──────────────────────────────────────
+//
+// Captured at run dispatch time — never user-supplied via the chat or IDE
+// tool args. Composition order:
+//   - bridge handlers build it from the MCP `initialize` clientInfo + the
+//     dispatch-time agent record + the tool args the IDE LLM passed
+//   - the chat backend builds a synthetic `{client: {name: 'web-chat'}}` shape
+// Persisted to `runs.callsite_json` and injected as a `## Callsite` system
+// message at the top of the run's message stack so operator skills can
+// reference it (e.g. "if callsite.client.name = 'cursor', format X").
+
+const callsiteClientSchema = z
+  .object({
+    /** `'cursor'`, `'claude-code'`, `'codex'`, `'web-chat'`, … */
+    name: z.string().trim().min(1).max(120),
+    version: z.string().trim().max(120).nullable().optional(),
+  })
+  .strict()
+
+const callsiteAgentSchema = z
+  .object({
+    slug: z.string().trim().min(1).max(120),
+    name: z.string().trim().min(1).max(120),
+  })
+  .strict()
+
+const callsiteToolSchema = z
+  .object({
+    /** `'inspect_codebase'` / `'ask_agent'` / a `bridge_tools.name` value /
+     *  `'chat'` for web-chat runs. */
+    name: z.string().trim().min(1).max(120),
+  })
+  .strict()
+
+const callsiteRepoSchema = z
+  .object({
+    /** Operator-friendly repo label (`agent_repos.role` or URL tail). */
+    label: z.string().trim().max(200).nullable().optional(),
+    remote_url: z.string().trim().max(2_000).nullable().optional(),
+    branch: z.string().trim().max(200).nullable().optional(),
+    /** IDE-supplied workspace folder name. */
+    local_folder: z.string().trim().max(200).nullable().optional(),
+  })
+  .strict()
+
+export const callsiteSchema = z
+  .object({
+    client: callsiteClientSchema,
+    agent: callsiteAgentSchema,
+    tool: callsiteToolSchema,
+    /** Populated for inspect_codebase + custom bridge_tools that pass repo
+     *  hints; left null for ask_agent and web-chat runs that don't supply one. */
+    repo: callsiteRepoSchema.nullable().optional(),
+    /** ISO-8601 of when dispatch fired. */
+    started_at: z.iso.datetime(),
+  })
+  .strict()
+
+export type Callsite = z.infer<typeof callsiteSchema>

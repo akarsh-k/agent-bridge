@@ -74,6 +74,7 @@ import {
 } from '@agent-bridge/db'
 import {
   agentStreamId as buildAgentStreamId,
+  type Callsite,
   type RunErrorPayload,
   type RunEvent,
   type RunEventKind,
@@ -134,6 +135,20 @@ export interface DispatchRunInput {
   readonly threadId?: string
   /** Defaults to `agent:<agentId>` if the agent has memory enabled. */
   readonly resourceId?: string
+  /**
+   * Captured call-site context (`docs/ARCHITECTURE.md` §10 — per-agent
+   * inspector flag rollout). When provided, the dispatcher prepends a
+   * `## Callsite` markdown block to the user prompt so the LLM sees
+   * who's calling (client, agent, tool, optional repo) before the
+   * user's question. Operator skills can reference this to vary
+   * behavior by IDE / source.
+   *
+   * Persistence is the caller's responsibility — bridge handlers + the
+   * chat backend pass `callsite` to `runsRepo.createRun` so the row
+   * carries it for /logs replay. The dispatcher just uses it for
+   * prompt injection.
+   */
+  readonly callsite?: Callsite | null
 }
 
 /**
@@ -144,6 +159,24 @@ export interface DispatchRunInput {
  */
 export async function dispatchRun(input: DispatchRunInput): Promise<void> {
   const { db, eventBus, agentId, runId, prompt, streamId } = input
+  // Note on callsite handling: we PERSIST the captured `Callsite` on
+  // `runs.callsite_json` (via the upstream caller's `runsRepo.createRun`)
+  // so /logs can render "called from Cursor on …" per row, but we
+  // intentionally do NOT inject it into the model's message stack.
+  //
+  // The earlier prepend-as-markdown approach failed in two ways:
+  //   1. Models echoed the `## Callsite` block back to users (it
+  //      arrived as user content; the model couldn't tell it was meta).
+  //   2. Mastra's working-memory feature summarised callsite-laden
+  //      turns into a per-turn system message that strict-Jinja chat
+  //      templates (Qwen / Mistral / some llama.cpp models) reject
+  //      with "System message must be at the beginning."
+  //
+  // Per-run runtime context that's both invisible to the user AND
+  // safe across local-model templates needs a deeper Mastra-side
+  // change (e.g. a runtimeContext hook that survives the cached
+  // `Agent.instructions`). Until then, callsite is persistence-only;
+  // skills can't reference it at runtime.
   // Per-agent fan-out channel for the right-rail Activity panel. Every
   // event we publish onto the per-run `streamId` is mirrored here so
   // the operator sees one continuous timeline for the focused agent

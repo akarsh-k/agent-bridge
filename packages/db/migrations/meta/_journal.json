@@ -22,6 +22,27 @@
       "when": 1778295630033,
       "tag": "0002_striped_sue_storm",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778322735996,
+      "tag": "0003_last_skullbuster",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778381415502,
+      "tag": "0004_cultured_annihilus",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778382250264,
+      "tag": "0005_old_ozymandias",
+      "breakpoints": true
     }
   ]
 }

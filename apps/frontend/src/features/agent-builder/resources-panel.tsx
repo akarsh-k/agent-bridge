@@ -127,12 +127,15 @@ function CardHead({
 export function ResourcesPanel({ agentId }: { agentId: string }) {
   const {
     agentResources,
+    agents,
     detachRepo,
     removeSkill,
     patchSkill,
     setAgentMcpTools,
   } = useWorkspace()
   const resources = agentResources[agentId]
+  const agent = agents.find((a) => a.id === agentId)
+  const inspectorEnabled = agent?.inspectorEnabled ?? true
 
   const [repoSheet, setRepoSheet] = useState(false)
   const [mcpSheet, setMcpSheet] = useState(false)
@@ -274,6 +277,24 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
             </Button>
           }
         />
+        {!inspectorEnabled && (
+          <div
+            className="ab-field-help"
+            style={{
+              marginBottom: 10,
+              color: 'var(--warn)',
+              padding: '10px 12px',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)',
+              background: 'var(--surface-hi)',
+            }}
+          >
+            <strong>Inspector toolkit is disabled.</strong> Repos can
+            still be attached, but the agent has no built-in tools to
+            query them. Enable the toolkit on the <strong>Tools</strong> tab
+            to make these repos readable.
+          </div>
+        )}
         {(resources?.attachedRepos.length ?? 0) === 0 ? (
           <EmptyState
             glyph={<FileIcon />}
@@ -522,7 +543,11 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
             <EmptyState
               glyph={<FileIcon />}
               title="No custom skills yet"
-              body="Skills are reusable instruction packs that teach an agent how to do something well. like &ldquo;PR reviewer&rdquo; or &ldquo;migration writer&rdquo;. The system skill below is always attached automatically."
+              body={
+                inspectorEnabled
+                  ? 'Skills are reusable instruction packs that teach an agent how to do something well, like "PR reviewer" or "migration writer". The Inspector toolkit system skill below is always attached.'
+                  : 'Skills are reusable instruction packs that teach an agent how to do something well, like "PR reviewer" or "migration writer". This is a Build-your-own agent — no built-in system skill is attached.'
+              }
               action={
                 <Button
                   variant="primary"
@@ -536,10 +561,14 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                 </Button>
               }
             />
-            <BuiltInSubhead />
-            <div className="ab-card ab-list-card">
-              <SystemSkillRow />
-            </div>
+            {inspectorEnabled && (
+              <>
+                <BuiltInSubhead />
+                <div className="ab-card ab-list-card">
+                  <SystemSkillRow />
+                </div>
+              </>
+            )}
           </>
         ) : (
           <>
@@ -631,10 +660,14 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                 )
               })}
             </div>
-            <BuiltInSubhead />
-            <div className="ab-card ab-list-card">
-              <SystemSkillRow />
-            </div>
+            {inspectorEnabled && (
+              <>
+                <BuiltInSubhead />
+                <div className="ab-card ab-list-card">
+                  <SystemSkillRow />
+                </div>
+              </>
+            )}
           </>
         )}
       </div>

@@ -118,7 +118,9 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
 
   return (
     <div>
-      <CodingAgentToolkitCard slug={slug} />
+      {(agent?.inspectorEnabled ?? true) && (
+        <CodingAgentToolkitCard slug={slug} />
+      )}
 
       <div className="ab-card ab-card-pad ab-form-section">
         <div className="ab-section-head">
@@ -266,95 +268,106 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
 }
 
 /**
- * Read-only card showing the single built-in MCP tool the bridge
- * auto-exposes for every agent: `<slug>__inspect_codebase`. Always-on;
- * the operator can shadow it by authoring a `bridge_tools` row with
- * the same name (the DB CHECK reserves the suffix).
- *
- * Data is static. `INSPECT_CODEBASE_METADATA` ships with shared
- * (no network call). The slug-prefixed name displayed here is what
- * the IDE actually sees on `tools/list`.
+ * Read-only card showing the single system MCP tool coding-helper
+ * agents auto-expose: `<slug>__inspect_codebase`. Description is
+ * system-controlled (operator agent description + framework note
+ * about the structured envelope). Blank agents do NOT render this
+ * card — their starter `<slug>__ask_agent` tool lives in
+ * `bridge_tools` and shows up in the regular custom-tools list
+ * below as a fully-editable row.
  */
 function CodingAgentToolkitCard({ slug }: { slug: string }) {
-  const [expanded, setExpanded] = useState(false)
   const fullName = `${slug}__${INSPECT_CODEBASE_METADATA.nameSuffix}`
   return (
     <div className="ab-card ab-card-pad ab-form-section">
       <div className="ab-section-head" style={{ marginBottom: 6 }}>
-        <div className="ab-section-title">Inspector</div>
+        <div className="ab-section-title">Built-in tool · system</div>
         <div className="ab-section-sub">
-          Always-on bridge tool shipped by Agent Bridge for IDE coding
-          agents (Cursor / Claude Code / Codex). Read-only. The IDE LLM
-          calls it with a free-form query; the agent picks the right
-          inspector wrapper internally and returns a bounded mini-repo
-          envelope.
+          Coding helpers ship one system tool with a structured
+          response contract: file paths, code snippets, graph slices,
+          cross-repo edges. The description is system-controlled
+          (operator agent description + framework note about the
+          envelope). Operators can author additional tools below
+          via <strong>bridge_tools</strong>.
         </div>
       </div>
       <div className="ab-card ab-list-card">
-        <div>
-          <button
-            type="button"
-            className="ab-list-row"
-            onClick={() => setExpanded((v) => !v)}
-            aria-expanded={expanded}
-            style={{
-              width: '100%',
-              background: 'transparent',
-              border: 'none',
-              font: 'inherit',
-              textAlign: 'left',
-              cursor: 'pointer',
-            }}
-          >
-            <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-              <BridgeIcon />
-            </div>
-            <div className="ab-list-row-head">
-              <div className="ab-list-row-title ab-mono">{fullName}</div>
-              <div className="ab-list-row-sub">
-                {INSPECT_CODEBASE_METADATA.summary}
-              </div>
-            </div>
-            <div className="ab-list-row-meta">
-              <Pill kind="accent">Built-in</Pill>
-              <span
-                className="ab-row-affordance"
-                aria-hidden="true"
-                style={{
-                  transform: expanded ? 'rotate(180deg)' : undefined,
-                  transition: 'transform 160ms var(--ease-out)',
-                  display: 'inline-flex',
-                }}
-              >
-                <ChevronDownIcon />
-              </span>
-            </div>
-          </button>
-          {expanded && (
-            <div
-              style={{
-                padding: '14px 18px 14px 62px',
-                fontSize: 13,
-                lineHeight: 1.55,
-                background: 'var(--surface-hi)',
-                borderTop: '1px solid var(--border)',
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {INSPECT_CODEBASE_METADATA.description}
-              {'\n\nInputs:'}
-              {INSPECT_CODEBASE_METADATA.inputKeys.map((k) => (
-                <div key={k.name} style={{ marginTop: 6 }}>
-                  <span className="ab-mono" style={{ color: 'var(--text)' }}>
-                    {k.name}
-                  </span>{' '}
-                  {k.required ? '(required)' : '(optional)'} — {k.description}
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        <BuiltInRow fullName={fullName} meta={INSPECT_CODEBASE_METADATA} />
       </div>
     </div>
   )
 }
+
+function BuiltInRow({
+  fullName,
+  meta,
+}: {
+  fullName: string
+  meta: typeof INSPECT_CODEBASE_METADATA
+}) {
+  const [expanded, setExpanded] = useState(false)
+  return (
+    <div>
+      <button
+        type="button"
+        className="ab-list-row"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        style={{
+          width: '100%',
+          background: 'transparent',
+          border: 'none',
+          font: 'inherit',
+          textAlign: 'left',
+          cursor: 'pointer',
+        }}
+      >
+        <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+          <BridgeIcon />
+        </div>
+        <div className="ab-list-row-head">
+          <div className="ab-list-row-title ab-mono">{fullName}</div>
+          <div className="ab-list-row-sub">{meta.summary}</div>
+        </div>
+        <div className="ab-list-row-meta">
+          <Pill kind="accent">Built-in</Pill>
+          <span
+            className="ab-row-affordance"
+            aria-hidden="true"
+            style={{
+              transform: expanded ? 'rotate(180deg)' : undefined,
+              transition: 'transform 160ms var(--ease-out)',
+              display: 'inline-flex',
+            }}
+          >
+            <ChevronDownIcon />
+          </span>
+        </div>
+      </button>
+      {expanded && (
+        <div
+          style={{
+            padding: '14px 18px 14px 62px',
+            fontSize: 13,
+            lineHeight: 1.55,
+            background: 'var(--surface-hi)',
+            borderTop: '1px solid var(--border)',
+            whiteSpace: 'pre-wrap',
+          }}
+        >
+          {meta.description}
+          {'\n\nInputs:'}
+          {meta.inputKeys.map((k) => (
+            <div key={k.name} style={{ marginTop: 6 }}>
+              <span className="ab-mono" style={{ color: 'var(--text)' }}>
+                {k.name}
+              </span>{' '}
+              {k.required ? '(required)' : '(optional)'} — {k.description}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+

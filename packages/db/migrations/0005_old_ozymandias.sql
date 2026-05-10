@@ -1,0 +1,1 @@
+ALTER TABLE "agents" DROP COLUMN "ask_agent_description";

@@ -86,11 +86,22 @@ export const FIXTURE_EDGES: readonly FixtureEdge[] = [
   },
 ] as const
 
-/** Agent fixture identity. Stable so re-running setup and smoke don't drift. */
+/** Coding-helper agent fixture identity. Has all three repos attached
+ *  and inspector_enabled=true. */
 export const FIXTURE_AGENT = {
   slug: 'fixture-ecommerce',
   name: 'Ecommerce demo agent',
   description: 'Three-repo ecommerce fixture used for the inspector smoke.',
+} as const
+
+/** Build-your-own (blank) agent fixture identity. No repos attached,
+ *  inspector_enabled=false. Used by the bridge smoke to verify
+ *  ask_agent-only registration on Inspector-disabled agents. */
+export const FIXTURE_BLANK_AGENT = {
+  slug: 'fixture-blank',
+  name: 'Blank fixture agent',
+  description:
+    'Build-your-own fixture agent with the Inspector toolkit disabled.',
 } as const
 
 /** LLM provider fixture identity. Two rows: one chat, one embedding. */

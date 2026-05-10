@@ -91,8 +91,10 @@ import {
   type MountedExternalMcps,
 } from './mcp/external-mcps.js'
 import {
+  emptyInspectorMountMeta,
   mountInspectorTools,
   type InspectorMountMeta,
+  type MountedInspector,
 } from './inspector/index.js'
 import {
   INSPECTOR_SYSTEM_PROMPT_HEADING,
@@ -316,9 +318,18 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     .where(eq(schema.skills.agentId, agentId))
     .orderBy(asc(schema.skills.position), asc(schema.skills.createdAt))
 
+  // Per-agent toggle for the auto-mounted Inspector toolkit. When false
+  // (Build-your-own-agent template), `composeInstructions` skips the
+  // auto-attached inspector prompt, gitnexus subprocess + wrapper mount
+  // are short-circuited, and the embedding-provider boot-fail no longer
+  // gates startup. Existing agents default to true so behavior is
+  // preserved on rows that pre-date the column.
+  const inspectorEnabled = agentRow.inspectorEnabled
+
   const instructions = await composeInstructions(
     agentRow.systemPrompt,
     skillRows,
+    inspectorEnabled,
   )
 
   // The provider owns the model identity. If it's missing we fail
@@ -363,14 +374,20 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     .where(eq(schema.llmProviders.role, 'embedding'))
     .limit(1)
 
-  // D1: hard fail when an agent with attached repos has no embedding
-  // provider. We check `agent_repos` (any status — `pending` / `cloning`
-  // / `indexing` / `ready` / `error` all count) so the operator sees the
-  // gap before the first chat turn, not on the first wrapper invocation.
-  // The check runs even with `disableGitnexus: true` because the embedder
-  // configuration is independent of whether we mount the subprocess
-  // right now.
-  if (!embeddingProviderRow) {
+  // D1: hard fail when an Inspector-enabled agent with attached repos
+  // has no embedding provider. We check `agent_repos` (any status —
+  // `pending` / `cloning` / `indexing` / `ready` / `error` all count) so
+  // the operator sees the gap before the first chat turn, not on the
+  // first wrapper invocation. The check runs even with
+  // `disableGitnexus: true` because the embedder configuration is
+  // independent of whether we mount the subprocess right now.
+  //
+  // Build-your-own-agent (`inspectorEnabled === false`) skips this
+  // check: the LLM has no wrappers to call, gitnexus never spawns, so
+  // the embedder is genuinely unused. An operator who attaches a repo
+  // anyway (e.g. for a future external MCP to read) won't be blocked
+  // from running the agent.
+  if (!embeddingProviderRow && inspectorEnabled) {
     const attachedCount = await countAttachedRepos(db, agentId)
     if (attachedCount > 0) {
       throw new Error(
@@ -399,11 +416,17 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
   // to the caller as-is. If the second mount throws we tear down the
   // first so no subprocess leaks — `buildExternalFailsafeCleanup`
   // captures that invariant.
-  const mountedGitnexus = await mountGitnexusMcp({
-    db,
-    agentId,
-    disabled: disableGitnexus,
-  })
+  //
+  // Inspector-disabled agents skip the gitnexus subprocess entirely —
+  // no point paying spawn + listTools cost for a subprocess no wrapper
+  // will call.
+  const mountedGitnexus = inspectorEnabled
+    ? await mountGitnexusMcp({
+        db,
+        agentId,
+        disabled: disableGitnexus,
+      })
+    : null
 
   let mountedExternal: MountedExternalMcps | null
   try {
@@ -424,23 +447,28 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     throw err
   }
 
-  // Inspector wrapper-tool mount (`docs/ARCHITECTURE.md §10` Phase B B6). The
-  // Mastra agent's tool dict is now: inspector wrappers + external MCPs.
-  // GitNexus's tools live ONLY inside the inspector closure — the LLM
-  // never picks them by name. Wiki tools are dropped entirely (will be
-  // re-surfaced inside `understand_module` in Phase E).
-  let mountedInspector
+  // Inspector wrapper-tool mount (`docs/ARCHITECTURE.md §10` Phase B B6).
+  // For Inspector-enabled agents the Mastra agent's tool dict is:
+  // inspector wrappers + external MCPs. GitNexus's tools live ONLY
+  // inside the inspector closure — the LLM never picks them by name.
+  //
+  // Inspector-disabled agents skip this mount entirely. The agent's
+  // tool dict becomes only the external MCPs (and any future native
+  // tools); the LLM has no auto-attached toolkit.
+  let mountedInspector: MountedInspector | null = null
   try {
-    mountedInspector = await mountInspectorTools({
-      db,
-      agentId,
-      gitnexusTools: mountedGitnexus ? mountedGitnexus.tools : null,
-      // Hand the agent's model down so the inspector wrappers can run
-      // their internal term-expansion LLM call against the same provider
-      // (Phase C). Sibling tools-less Agent reuses the base URL + key
-      // we already decrypted above.
-      modelConfig,
-    })
+    if (inspectorEnabled) {
+      mountedInspector = await mountInspectorTools({
+        db,
+        agentId,
+        gitnexusTools: mountedGitnexus ? mountedGitnexus.tools : null,
+        // Hand the agent's model down so the inspector wrappers can run
+        // their internal term-expansion LLM call against the same provider
+        // (Phase C). Sibling tools-less Agent reuses the base URL + key
+        // we already decrypted above.
+        modelConfig,
+      })
+    }
   } catch (err) {
     if (mountedGitnexus) {
       try {
@@ -465,7 +493,10 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     ? mountedGitnexus.meta.repoCount
     : await countReadyRepos(db, agentId)
 
-  const mergedTools = mergeToolDicts(mountedInspector.tools, mountedExternal)
+  const mergedTools = mergeToolDicts(
+    mountedInspector ? mountedInspector.tools : {},
+    mountedExternal,
+  )
 
   const agent = new Agent({
     id: agentRow.id,
@@ -521,7 +552,9 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
       memory: memoryMeta,
       gitnexus: gitnexusMeta,
       externalMcps: externalMcpsMeta,
-      inspector: mountedInspector.meta,
+      inspector: mountedInspector
+        ? mountedInspector.meta
+        : emptyInspectorMountMeta(),
     },
     secrets,
     subscribeMcpLogs,
@@ -551,10 +584,11 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
 async function composeInstructions(
   basePrompt: string,
   skills: readonly SkillRow[],
+  inspectorEnabled: boolean,
 ): Promise<string> {
   // Composition order matters. The LLM weights system-prompt content by
   // recency: the closer to the user message, the louder it speaks. We
-  // therefore order:
+  // therefore order (when the Inspector toolkit is enabled):
   //
   //   1. operator's base system prompt        — sets identity / tone
   //   2. inspector toolkit guide              — baseline tool behavior
@@ -565,10 +599,16 @@ async function composeInstructions(
   // call instinct rather than getting drowned out by ~80 lines of
   // wrapper direction immediately following it.
   //
-  // The escape hatch from V1 still works: a skill body containing the
-  // literal `# Inspector toolkit` heading is treated as an explicit
-  // override; the auto-attach is skipped and that skill becomes the
-  // sole inspector guide.
+  // For Build-your-own-agent (`inspectorEnabled === false`) the
+  // toolkit prompt is skipped entirely — the LLM has no wrappers to
+  // call, no need to read instructions for tools that don't exist.
+  // Composition becomes just: base prompt + skills.
+  //
+  // The escape hatch still works: a skill body containing the literal
+  // `# Inspector toolkit` heading is treated as an explicit override;
+  // the auto-attach is skipped and that skill becomes the sole
+  // inspector guide. (Only meaningful for inspector-enabled agents;
+  // the marker is harmless on disabled ones.)
   const parts: string[] = []
 
   const trimmedBase = basePrompt.trim()
@@ -582,7 +622,7 @@ async function composeInstructions(
     trimmedBase.includes(INSPECTOR_SYSTEM_PROMPT_HEADING) ||
     trimmedSkills.some((s) => s.body.includes(INSPECTOR_SYSTEM_PROMPT_HEADING))
 
-  if (!operatorOverridesInspector) {
+  if (inspectorEnabled && !operatorOverridesInspector) {
     // Loud throw on FS failure — the agent without this section would
     // call wrapper tools without knowing the contract, which is worse
     // than failing the build.

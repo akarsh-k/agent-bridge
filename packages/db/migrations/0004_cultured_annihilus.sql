@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "ask_agent_description" text;

@@ -148,6 +148,23 @@ export const agents = pgTable(
     }),
     memoryEnabled: boolean('memory_enabled').notNull().default(false),
     memoryConfig: jsonb('memory_config').$type<AgentMemoryConfig>(),
+    /**
+     * Opt-in to the auto-mounted Inspector toolkit (`docs/ARCHITECTURE.md`
+     * §10). When `true` (default — Coding helper template):
+     *   - `mountInspectorTools` mounts the six wrappers + gitnexus subprocess
+     *   - `composeInstructions` auto-attaches the Inspector toolkit prompt
+     *   - the bridge auto-derives `<slug>__inspect_codebase` for the IDE
+     *   - `buildAgent` boot-fails if any attached repo lacks an embedding provider
+     * When `false` (Build-your-own-agent template):
+     *   - none of the above; the agent runs with only operator-authored
+     *     skills, external MCP allowlist, and `bridge_tools` rows
+     *   - the bridge instead exposes `<slug>__ask_agent` (free-form Q&A)
+     *   - repos can still be attached but won't be queried until the
+     *     operator opts back in via the Tools tab
+     * Existing rows default to `true` so no behavior changes for agents
+     * created before this column landed.
+     */
+    inspectorEnabled: boolean('inspector_enabled').notNull().default(true),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -555,6 +572,23 @@ export const runs = pgTable(
      * semantics for IDE consumers.
      */
     minirepoJson: jsonb('minirepo_json'),
+    /**
+     * Captured call-site context for this run (`docs/ARCHITECTURE.md`
+     * §10 — per-agent inspector flag rollout). Always-on; populated at
+     * dispatch time by the bridge handler (for IDE-originated runs)
+     * or the chat backend (for web-chat runs). Surfaces:
+     *   - which MCP client called (cursor / claude-code / codex / web-chat / …)
+     *   - which agent + which tool (inspect_codebase / ask_agent /
+     *     operator-authored bridge_tools name)
+     *   - the repo hints the IDE LLM passed (when applicable)
+     *   - run start timestamp
+     * Used by `composeInstructions` to inject a `## Callsite` system
+     * message at the top of every run's message stack so operator
+     * skills can reference it. Persisted here for the /logs UI to
+     * render "called from Cursor on ecommerce-frontend" per row.
+     * The shape mirrors `Callsite` in `@agent-bridge/shared/dtos/runs`.
+     */
+    callsiteJson: jsonb('callsite_json'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

@@ -11,6 +11,7 @@ import { Dropdown, type DropdownOption } from '../../ui/dropdown'
 import { toast } from '../../ui/toast-store'
 import { ApiError } from '../../lib/rpc'
 import { Button } from '../../ui/button'
+import { Pill } from '../../ui/pill'
 import { ContextBudgetCard } from './context-budget-card'
 
 const LOCAL_KINDS = new Set(['llama_cpp', 'ollama', 'openai_compatible'])
@@ -211,9 +212,21 @@ export function BuildTab({ agentId }: { agentId: string }) {
       {/* Identity */}
       <div className="ab-card ab-card-pad ab-form-section">
         <div className="ab-section-head">
-          <div className="ab-section-title">Identity</div>
+          <div className="ab-section-title">
+            Identity
+            <span style={{ marginLeft: 10 }}>
+              <Pill kind={agent.inspectorEnabled ? 'accent' : 'neutral'}>
+                {agent.inspectorEnabled
+                  ? 'Coding helper'
+                  : 'Build your own agent'}
+              </Pill>
+            </span>
+          </div>
           <div className="ab-section-sub">
             How the agent introduces itself when called from your IDE.
+            {agent.inspectorEnabled
+              ? ' Inspector toolkit auto-attached; toggle from the Tools tab.'
+              : ' No built-in toolkit. Add the Inspector toolkit from the Tools tab if you want code-search wrappers.'}
           </div>
         </div>
         <div className="ab-field-grid">
@@ -243,9 +256,18 @@ export function BuildTab({ agentId }: { agentId: string }) {
                 className="ab-field-help"
                 style={{ color: 'var(--warn)' }}
               >
-                ⚠ Bridge tool name will change to{' '}
-                <code className="ab-mono">query_{slug || '<slug>'}</code> —
-                connected IDEs need to reconnect to pick up the rename.
+                ⚠ IDE tool name{agent.inspectorEnabled ? 's' : ''} will
+                change to{' '}
+                <code className="ab-mono">{slug || '<slug>'}__ask_agent</code>
+                {agent.inspectorEnabled && (
+                  <>
+                    {' '}+{' '}
+                    <code className="ab-mono">
+                      {slug || '<slug>'}__inspect_codebase
+                    </code>
+                  </>
+                )}{' '}
+                — connected IDEs need to reconnect to pick up the rename.
               </span>
             )}
           </div>

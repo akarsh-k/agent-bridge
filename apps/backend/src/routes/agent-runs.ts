@@ -71,6 +71,8 @@ export const agentRunsRouter = new Hono().post(
     const [agent] = await db.db
       .select({
         id: schema.agents.id,
+        slug: schema.agents.slug,
+        name: schema.agents.name,
         llmProviderId: schema.agents.llmProviderId,
       })
       .from(schema.agents)
@@ -102,11 +104,22 @@ export const agentRunsRouter = new Hono().post(
     const runId = randomUUID()
     const streamId = runStreamId(runId)
 
+    // Synthesize a `web-chat` callsite for UI-originated runs. Persisted
+    // on the row + injected as a `## Callsite` block in the dispatcher
+    // so operator skills can vary behavior by source (web chat vs IDE).
+    const callsite: import('@agent-bridge/shared').Callsite = {
+      client: { name: 'web-chat' },
+      agent: { slug: agent.slug, name: agent.name },
+      tool: { name: 'chat' },
+      started_at: new Date().toISOString(),
+    }
+
     const run = await runsRepo.createRun(db, {
       id: runId,
       agentId,
       inputPrompt: body.prompt,
       streamId,
+      callsite,
     })
 
     // Fire-and-forget. Dispatcher owns its own lifecycle + cleanup.
@@ -117,6 +130,7 @@ export const agentRunsRouter = new Hono().post(
       runId: run.id,
       streamId,
       prompt: body.prompt,
+      callsite,
       ...(body.threadId ? { threadId: body.threadId } : {}),
       ...(body.resourceId ? { resourceId: body.resourceId } : {}),
     }).catch((err) => {
