@@ -45,6 +45,7 @@ import {
   type AgentBridgeDb,
 } from '@agent-bridge/db'
 import { builtAgentCache } from '@agent-bridge/agents'
+import { INSPECT_CODEBASE_METADATA } from '@agent-bridge/shared'
 import { loadOrCreateMasterKey } from '@agent-bridge/shared/crypto'
 import { ensureDataDirs } from '@agent-bridge/shared/paths'
 import { createEventBus, type EventBus } from '@agent-bridge/shared/event-bus'
@@ -250,12 +251,12 @@ async function buildToolRegistry(
 }
 
 function buildInspectDescription(agent: AgentRecord): string {
+  // Single source of truth: the system contract text lives on
+  // `INSPECT_CODEBASE_METADATA.description` in shared. Operator's
+  // `agents.description` is prepended when present so the IDE LLM
+  // sees both the operator's framing and the framework contract.
   const head = agent.description?.trim()
-  const base =
-    'Ask any question about the agent\'s attached codebases. Returns a structured envelope: ' +
-    '`mini_repos[]` (file paths + chunks + graph slices + cross-repo edges from the wrappers ' +
-    'the agent chose to call) and an optional `prose_summary` (≤ 1 KB) for chit-chat. ' +
-    'Read-only — never edits files.'
+  const base = INSPECT_CODEBASE_METADATA.description
   return head ? `${head}\n\n${base}` : base
 }
 

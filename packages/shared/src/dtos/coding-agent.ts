@@ -196,7 +196,17 @@ export const INSPECT_CODEBASE_METADATA: InspectCodebaseMetadata = Object.freeze(
   summary:
     'Ask any question about the agent’s attached codebases. The agent picks the right wrapper internally.',
   description:
-    'One MCP tool per agent. The IDE LLM passes a free-form `query` plus optional repo hints; the agent runs its inspector wrappers (find / trace / impact / debug / understand / list) and returns a bounded `mini_repos[]` envelope: file paths + chunks + graph slices + cross-repo edges. Read-only — never edits files.',
+    'One MCP tool per agent. The IDE LLM passes a free-form `query` plus optional repo hints; the agent runs its inspector wrappers (find / trace / impact / debug / understand / list) and returns one of two response shapes:\n\n' +
+    '  • Code question (the agent called at least one wrapper) → ' +
+    '`{ ok, mini_repos: [...], warnings }` — structured evidence: ' +
+    'file paths, code chunks, graph slices, cross-repo edges. ' +
+    'No `prose_summary` field. The IDE LLM is the synthesizer here ' +
+    '— read the mini-repos, write the answer.\n' +
+    '  • Chit-chat / clarification (no wrapper ran) → ' +
+    '`{ ok, prose_summary: "≤ 1 KB", warnings }` — the agent\'s ' +
+    'free-form reply. No `mini_repos` field.\n\n' +
+    '`ok` is always `true` (chit-chat is a valid response). ' +
+    'Read-only — never edits files.',
   inputKeys: Object.freeze([
     {
       name: 'query' as const,
