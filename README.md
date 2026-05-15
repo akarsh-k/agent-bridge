@@ -313,7 +313,7 @@ Agent Bridge is designed around a local-first trust boundary:
 - secrets (provider API keys, MCP env/header values, OAuth tokens) are
   encrypted at rest with AES-256-GCM under
   `<AGENT_BRIDGE_DATA_DIR>/secret.key` (mode 0600);
-- the MCP bridge runs locally over stdio (PID-auth);
+- the MCP bridge runs locally over stdio as an IDE-spawned subprocess;
 - external model APIs are optional;
 - external MCP tools are optional.
 

@@ -127,7 +127,7 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
   for (const r of targets) {
     for (const candidate of candidates) {
       try {
-        const hits = await withGitnexusCall(
+        const { hits, warning } = await withGitnexusCall(
           'debug_help',
           'gitnexus_query',
           { repo: r.label, query: candidate, limit: 6 },
@@ -140,6 +140,15 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
             }),
         )
         for (const hit of hits) allHits.push({ repo: r, hit, candidate })
+        // Route any server-side `warning` (e.g. FTS arm unavailable on
+        // the read-only MCP DB) into the wrapper's `warnings[]` so a
+        // degraded search arm is visible to the operator instead of
+        // silently dropping recall.
+        if (warning) {
+          warnings.push(
+            `gitnexus_query warning for repo "${r.label}", candidate "${candidate}": ${warning}`,
+          )
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         warnings.push(

@@ -292,7 +292,7 @@ export async function runFindInCodebase(
       .then(() =>
         callGitnexusQuery({ tools, repo: repo.label, query: expansion, limit }),
       )
-      .then(async (hits): Promise<Pair> => {
+      .then(async ({ hits, warning }): Promise<Pair> => {
         const resultPreview = previewJson(hits, INSPECTOR_PREVIEW_BYTES_CAP)
         await emitInspectorEvent('inspector.gitnexus.result', {
           runId,
@@ -303,7 +303,16 @@ export async function runFindInCodebase(
           truncated: resultPreview.truncated,
           ok: true,
         } satisfies InspectorGitnexusResultPayload)
-        return { repo, hits }
+        // Route gitnexus's diagnostic warning into the wrapper's
+        // `warnings[]` so a degraded BM25/FTS arm (or any other
+        // server-side hint) shows up on the mini-repo instead of
+        // disappearing into a silent zero-hit response.
+        if (warning) {
+          warnings.push(
+            `gitnexus_query warning for repo "${repo.label}", expansion "${expansion}": ${warning}`,
+          )
+        }
+        return { repo, hits: [...hits] }
       })
       .catch(async (err: unknown): Promise<null> => {
         const message = err instanceof Error ? err.message : String(err)

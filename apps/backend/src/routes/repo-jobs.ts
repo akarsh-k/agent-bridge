@@ -150,17 +150,31 @@ export const repoJobsRouter = new Hono().post(
       if (!result.success) return httpValidationError(c, result.error)
       return
     }),
-    // Body is optional. legacy callers (e.g. existing UI before A5 lands the
-    // "Rebuild from scratch" affordance) post no body and get the default
-    // incremental behaviour. Explicit `force: true` opts into the
-    // full-rebuild path.
-    zValidator('json', indexRepoBodySchema, (result, c) => {
-      if (!result.success) return httpValidationError(c, result.error)
-      return
-    }),
     async (c) => {
       const { id } = c.req.valid('param')
-      const body = c.req.valid('json')
+      // Body is optional — the default-incremental path takes no body, the
+      // "Rebuild from scratch" path posts `{force: true}`. We can't use
+      // `zValidator('json', …)` for that: it calls `c.req.json()` which
+      // throws "Malformed JSON in request body" on an empty body, breaking
+      // the legacy callsite. Parse manually with an empty-body fallback,
+      // then run the schema through Zod ourselves.
+      const rawBody = (await c.req.text()).trim()
+      let parsedBody: unknown = {}
+      if (rawBody.length > 0) {
+        try {
+          parsedBody = JSON.parse(rawBody)
+        } catch {
+          return httpError(c, {
+            code: 'validation_failed',
+            message: 'request body is not valid JSON',
+          })
+        }
+      }
+      const bodyResult = indexRepoBodySchema.safeParse(parsedBody)
+      if (!bodyResult.success) {
+        return httpValidationError(c, bodyResult.error)
+      }
+      const body = bodyResult.data
       const force = body.force ?? false
       const handle = getDb()
 

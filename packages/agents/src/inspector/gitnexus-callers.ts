@@ -102,9 +102,24 @@ export interface QueryInput extends CallGitnexusInput {
   readonly limit?: number
 }
 
+/**
+ * `callGitnexusQuery` returns hits AND any top-level diagnostic the
+ * server included. Today the only one in the wild is `warning` —
+ * emitted when gitnexus's BM25 (FTS) arm is unavailable on the
+ * read-only MCP DB connection (see `core/search/hybrid-search.js`,
+ * gitnexus issue #1403). Routing it through to the caller lets the
+ * wrapper surface "embedder/FTS misconfigured → recall is degraded"
+ * as a visible diagnostic instead of an unexplained empty result.
+ */
+export interface GitnexusQueryResponse {
+  readonly hits: readonly GitnexusQueryHit[]
+  /** Server-side warning text, or `null` when none. */
+  readonly warning: string | null
+}
+
 export async function callGitnexusQuery(
   input: QueryInput,
-): Promise<GitnexusQueryHit[]> {
+): Promise<GitnexusQueryResponse> {
   const { tools, query, repo, limit = 20 } = input
   const tool = tools['gitnexus_query']
   if (!tool || !tool.execute) {
@@ -113,7 +128,7 @@ export async function callGitnexusQuery(
   const args: Record<string, unknown> = { query, limit }
   if (repo) args['repo'] = repo
   const raw = await tool.execute(args as never, {} as never)
-  return parseQueryHits(raw)
+  return parseQueryResponse(raw)
 }
 
 export interface ContextInput extends CallGitnexusInput {
@@ -296,17 +311,23 @@ function tryJson(text: string): unknown | null {
  * symbol that appears in multiple processes isn't double-counted.
  *
  * If the response carries a top-level `warning` (gitnexus's hint about
- * a degraded FTS index), we surface it on the first hit's `reason`
- * field so the operator sees actionable diagnosis instead of an
- * unexplained empty result.
+ * a degraded FTS index), we return it on the response envelope so the
+ * caller can route it into the wrapper's `warnings[]` and the operator
+ * sees actionable diagnosis instead of an unexplained empty result.
  */
-function parseQueryHits(raw: unknown): GitnexusQueryHit[] {
+function parseQueryResponse(raw: unknown): GitnexusQueryResponse {
   const data = unwrap(raw)
   if (!data || typeof data !== 'object') {
-    if (Array.isArray(data)) return parseLegacyArray(data)
-    return []
+    if (Array.isArray(data)) {
+      return { hits: parseLegacyArray(data), warning: null }
+    }
+    return { hits: [], warning: null }
   }
   const top = data as Record<string, unknown>
+  const warning =
+    typeof top['warning'] === 'string' && top['warning'].length > 0
+      ? top['warning']
+      : null
 
   // gitnexus 1.6.3 process-grouped shape.
   const processSymbols = Array.isArray(top['process_symbols'])
@@ -362,23 +383,6 @@ function parseQueryHits(raw: unknown): GitnexusQueryHit[] {
   // important matches first.
   out.sort((a, b) => b.score - a.score)
 
-  // Surface gitnexus's degraded-index warning. operators should see
-  // "FTS unavailable" the first time it happens, not silently get 0
-  // hits from a half-built index.
-  if (out.length === 0 && typeof top['warning'] === 'string') {
-    return [
-      {
-        repo: '',
-        path: '',
-        line: null,
-        symbol: null,
-        score: 0,
-        snippet: null,
-        reason: `gitnexus warning: ${top['warning']}`,
-      },
-    ].filter(() => false) // drop the synthetic — caller doesn't want a path-less hit
-  }
-
   // Fallback: pre-1.6.3 / future shapes. Try `{results}` / `{items}` /
   // `{groups: [{items}]}` paths if we got nothing from the canonical shape.
   if (out.length === 0) {
@@ -386,7 +390,7 @@ function parseQueryHits(raw: unknown): GitnexusQueryHit[] {
     for (const item of legacy) pushSymbol(item, 'legacy hit')
   }
 
-  return out
+  return { hits: out, warning }
 }
 
 function parseLegacyArray(items: readonly unknown[]): GitnexusQueryHit[] {
