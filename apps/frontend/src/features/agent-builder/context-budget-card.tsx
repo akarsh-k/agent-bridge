@@ -40,13 +40,14 @@ export function ContextBudgetCard({ agentId }: { agentId: string }) {
   const { agents, agentResources, llmProviders } = useWorkspace()
   const agent = agents.find((a) => a.id === agentId)
   const resources = agentResources[agentId]
-  const providerModel = useMemo(() => {
-    if (!agent?.llmProviderId) return null
-    return (
-      llmProviders.find((p) => p.id === agent.llmProviderId)?.defaultModel ??
-      null
-    )
-  }, [agent?.llmProviderId, llmProviders])
+  // Plain derivation — React Compiler auto-memoizes this. Previously
+  // wrapped in useMemo but the compiler could not preserve the body
+  // (react-hooks/preserve-manual-memoization), and the inputs are
+  // cheap to recompute anyway.
+  const providerModel = agent?.llmProviderId
+    ? (llmProviders.find((p) => p.id === agent.llmProviderId)?.defaultModel ??
+      null)
+    : null
   const [state, setState] = useState<LoadState>({ kind: 'loading' })
   const [refreshKey, setRefreshKey] = useState(0)
   const [toolsOpen, setToolsOpen] = useState(false)

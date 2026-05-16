@@ -3,7 +3,7 @@
  * defaults, refresh the cached models list, and run a live test.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { LlmProviderUpdateInput } from '@agent-bridge/shared'
 import { useWorkspace } from '../../../../lib/workspace-context'
 import { Link } from '../../../../lib/link'
@@ -22,6 +22,7 @@ import {
 } from '../../../../lib/model-categories'
 import { ModelTestStatus } from '../../../../features/agent-tools/model-test-status'
 import { useModelTester } from '../../../../lib/use-model-tester'
+import { useTimeAgo } from '../../../../lib/use-time-ago'
 
 const LOCAL_KINDS = new Set(['llama_cpp', 'ollama', 'openai_compatible'])
 
@@ -274,7 +275,10 @@ export function ProviderDetailPage({ id }: { id: string }) {
   // cases with a null input.
   const fetchedAtDate =
     provider?.models?.fetchedAt ? new Date(provider.models.fetchedAt) : null
-  const catalogRefreshedLabel = useTimeAgo(fetchedAtDate)
+  const catalogRefreshedLabel = useTimeAgo(fetchedAtDate, {
+    compact: true,
+    fallback: '—',
+  })
 
   if (!provider) return <NotFound />
 
@@ -1074,28 +1078,6 @@ export function ProviderDetailPage({ id }: { id: string }) {
       </div>
     </div>
   )
-}
-
-/**
- * Render a relative-time label that re-ticks on its own. Mirrors the
- * canonical `useTimeAgo` on the agents detail page — without the
- * interval, "1m ago" would stay frozen for hours since the page only
- * re-renders on workspace mutations.
- */
-function useTimeAgo(date: Date | null): string {
-  const [, setTick] = useState(Date.now())
-  useEffect(() => {
-    if (!date) return
-    const id = setInterval(() => setTick(Date.now()), 30_000)
-    return () => clearInterval(id)
-  }, [date])
-  if (!date) return '—'
-  const ms = Date.now() - date.getTime()
-  if (Number.isNaN(ms)) return '—'
-  if (ms < 60_000) return 'just now'
-  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`
-  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`
-  return `${Math.floor(ms / 86_400_000)}d ago`
 }
 
 function NotFound() {

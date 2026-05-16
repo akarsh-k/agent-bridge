@@ -16,6 +16,7 @@ import { Pill } from '../../../ui/pill'
 import { Tabs, type TabSpec } from '../../../ui/tabs'
 import { ChatIcon } from '../../../ui/icons'
 import { agentGlyphKind } from '../../../lib/agent-helpers'
+import { useTimeAgo } from '../../../lib/use-time-ago'
 import { toast } from '../../../ui/toast-store'
 import { confirmDialog } from '../../../ui/dialog-store'
 // Code-split the heavier tabs: configure pulls in the build / memory
@@ -434,35 +435,3 @@ function downloadJson(data: unknown, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
-/**
- * Render a "Updated Xs ago" label that re-ticks on its own. The page
- * already re-renders on workspace context updates, but those fire on
- * mutation — not on the clock. Without this hook the meta row would
- * read "Updated 5s ago" forever until the next refetch, which lies to
- * a user reading the page for several minutes.
- *
- * 30s interval is comfortable: bumps "5s ago" → "35s ago" → "1m ago"
- * with no jitter, and the wakeup cost is one render + a Date.now()
- * comparison. Cleaned up on unmount.
- */
-function useTimeAgo(date: Date | null): string {
-  // `tick` only forces a re-render; its value is unused. Setting it to
-  // the current ms ensures consecutive ticks always produce a new
-  // value (vs. an incrementing counter that could theoretically wrap).
-  const [, setTick] = useState(Date.now())
-  useEffect(() => {
-    if (!date) return
-    const id = setInterval(() => setTick(Date.now()), 30_000)
-    return () => clearInterval(id)
-  }, [date])
-  if (!date) return ''
-  const ms = Date.now() - date.getTime()
-  const sec = Math.round(ms / 1000)
-  if (sec < 60) return `${sec}s ago`
-  const min = Math.round(sec / 60)
-  if (min < 60) return `${min}m ago`
-  const hr = Math.round(min / 60)
-  if (hr < 24) return `${hr}h ago`
-  const day = Math.round(hr / 24)
-  return `${day}d ago`
-}

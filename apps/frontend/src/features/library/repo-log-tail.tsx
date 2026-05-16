@@ -126,23 +126,31 @@ export function RepoLogTail({ repoId }: { repoId: string }) {
   // dev-mode double-render doesn't write stale state into the new one.
   useEffect(() => {
     const cancelToken = { cancelled: false }
-    setHistory(null)
-    setHistoryError(null)
-    setHistoryLoading(true)
-    void hydrateHistory(repoId).then(
-      (snap) => {
-        if (cancelToken.cancelled) return
-        setHistory(snap)
-        setHistoryLoading(false)
-      },
-      (err: unknown) => {
-        if (cancelToken.cancelled) return
-        const msg =
-          err instanceof Error ? err.message : 'Failed to load history'
-        setHistoryError(msg)
-        setHistoryLoading(false)
-      },
-    )
+    // All state writes (including the initial loading/clear) live
+    // inside the promise chain so the effect body has no synchronous
+    // setState — required by react-hooks/set-state-in-effect under
+    // React 19. The loading-spinner flash still happens; it just
+    // arrives on the next microtask instead of synchronously.
+    void Promise.resolve().then(() => {
+      if (cancelToken.cancelled) return
+      setHistory(null)
+      setHistoryError(null)
+      setHistoryLoading(true)
+      return hydrateHistory(repoId).then(
+        (snap) => {
+          if (cancelToken.cancelled) return
+          setHistory(snap)
+          setHistoryLoading(false)
+        },
+        (err: unknown) => {
+          if (cancelToken.cancelled) return
+          const msg =
+            err instanceof Error ? err.message : 'Failed to load history'
+          setHistoryError(msg)
+          setHistoryLoading(false)
+        },
+      )
+    })
     return () => {
       cancelToken.cancelled = true
     }
@@ -689,6 +697,9 @@ function capitalise(s: string): string {
 function cleanLine(line: string): string {
   // Strip ANSI escapes + carriage returns; collapse runs of whitespace.
   // Keep any leading icon (gitnexus uses ✓ ❌ ⚠) verbatim.
+  // The \x1b control char is REQUIRED — ANSI escape sequences begin
+  // with ESC (0x1B), so the rule's complaint is a false positive here.
+  // eslint-disable-next-line no-control-regex
   const noAnsi = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
   return noAnsi.replace(/[\r]+/g, '').replace(/[\t ]{2,}/g, ' ').trim()
 }

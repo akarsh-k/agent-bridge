@@ -41,7 +41,12 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createDb, schema } from '@agent-bridge/db'
 import { listAgentThreads } from '@agent-bridge/agents'
 import { callsiteSchema, type Callsite } from '@agent-bridge/shared'
+import { loadRootDotenv } from '@agent-bridge/shared/env'
 import { desc, eq } from 'drizzle-orm'
+
+// Load the repo-root .env so SMOKE_* vars resolve in preflight. tsx
+// doesn't auto-load it from the tests workspace cwd.
+loadRootDotenv(import.meta.url, { depth: 1 })
 
 import {
   FIXTURE_BLANK_AGENT,

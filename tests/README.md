@@ -39,7 +39,10 @@ Your dev DB and data root are never touched.
 # 2) set the embedder coordinates inline:
 export SMOKE_EMBEDDING_URL=http://127.0.0.1:8081/v1
 export SMOKE_EMBEDDING_MODEL=<your-embedding-model-id>
-export SMOKE_EMBEDDING_DIMS=1024
+# Optional — bearer token if your endpoint requires auth (cloud providers).
+# export SMOKE_EMBEDDING_API_KEY=...
+
+# Embedding dimensions are auto-probed from the endpoint at preflight.
 
 pnpm test:fixture:setup     # builds + indexes; ~30-60s
 pnpm test:fixture           # runs the assertions; ~10-20s

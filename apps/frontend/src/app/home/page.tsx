@@ -11,8 +11,7 @@ import { Link } from '../../lib/link'
 import { PageHeader } from '../_chrome/page-header'
 import { Button } from '../../ui/button'
 import { Pill } from '../../ui/pill'
-import { BridgeRow, type IDEKind } from '../../ui/bridge-row'
-import { agentGlyphKind, deriveAgentBridges } from '../../lib/agent-helpers'
+import { agentGlyphKind } from '../../lib/agent-helpers'
 import {
   ArrowRightIcon,
   CheckIcon,
@@ -35,10 +34,6 @@ export function HomePage() {
       new Date(b.updatedAt ?? 0).getTime() -
       new Date(a.updatedAt ?? 0).getTime(),
   )[0]
-
-  const bridges: ReadonlyArray<IDEKind> = lastTouched
-    ? deriveAgentBridges(lastTouched.id)
-    : []
 
   // Cold-start triggers the checklist when nothing's been wired up
   // anywhere yet. The repo step is optional — agents work without
@@ -100,11 +95,6 @@ export function HomePage() {
             {lastTouched.description?.trim() ||
               'Open the agent to keep configuring its prompt, repos, and bridge.'}
           </div>
-          <BridgeRow
-            ides={bridges}
-            live
-            onConnect={() => navigate(`/bridge#${lastTouched.slug}`)}
-          />
         </Link>
       ) : (
         <div className="ab-card ab-card-pad">

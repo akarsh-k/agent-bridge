@@ -20,7 +20,10 @@
  * Required env (set inline at invocation):
  *   SMOKE_EMBEDDING_URL    e.g. http://127.0.0.1:8081/v1
  *   SMOKE_EMBEDDING_MODEL  e.g. <model-id>
- *   SMOKE_EMBEDDING_DIMS   e.g. 1024
+ * Optional:
+ *   SMOKE_EMBEDDING_API_KEY  bearer token if the endpoint requires auth
+ *
+ * Embedding dimensions are auto-probed from the endpoint at preflight.
  *
  * Run from repo root:
  *   pnpm test:fixture:setup
@@ -37,6 +40,11 @@ import { eq } from 'drizzle-orm'
 import { Client } from 'pg'
 
 import { ASK_AGENT_DEFAULTS } from '@agent-bridge/shared'
+import { loadRootDotenv } from '@agent-bridge/shared/env'
+
+// Load the repo-root .env so SMOKE_* vars resolve in preflight. tsx
+// doesn't auto-load it from the tests workspace cwd.
+loadRootDotenv(import.meta.url, { depth: 1 })
 
 import {
   FIXTURE_AGENT,
@@ -52,6 +60,7 @@ import {
   TEST_DB_NAME,
   type FixtureRepo,
 } from './fixture-config.js'
+import { probeEmbeddingDims } from './probe-embedding-dims.js'
 
 // ─── Pre-flight (BEFORE any DB / worker import) ─────────────────────────────
 
@@ -66,24 +75,26 @@ interface SmokeConfig {
   readonly chatModel: string | null
 }
 
-function preflight(): SmokeConfig {
+async function preflight(): Promise<SmokeConfig> {
   const embeddingUrl = process.env['SMOKE_EMBEDDING_URL']
   const embeddingModel = process.env['SMOKE_EMBEDDING_MODEL']
-  const embeddingDimsRaw = process.env['SMOKE_EMBEDDING_DIMS']
   const missing: string[] = []
   if (!embeddingUrl) missing.push('SMOKE_EMBEDDING_URL')
   if (!embeddingModel) missing.push('SMOKE_EMBEDDING_MODEL')
-  if (!embeddingDimsRaw) missing.push('SMOKE_EMBEDDING_DIMS')
   if (missing.length > 0) {
     throw new Error(
       `Missing required env: ${missing.join(', ')}. ` +
         `These point the fixture's embedding provider at your local embedder.`,
     )
   }
-  const embeddingDims = Number.parseInt(embeddingDimsRaw!, 10)
-  if (!Number.isInteger(embeddingDims) || embeddingDims <= 0) {
-    throw new Error(`SMOKE_EMBEDDING_DIMS must be a positive integer, got ${embeddingDimsRaw}`)
-  }
+  // Probe the endpoint to discover output dimensionality. The probe is the
+  // single source of truth — overriding it risks silent vector-size mismatch
+  // between what we tell the schema and what the embedder actually returns.
+  const embeddingDims = await probeEmbeddingDims({
+    url: embeddingUrl!,
+    model: embeddingModel!,
+    apiKey: process.env['SMOKE_EMBEDDING_API_KEY'] ?? null,
+  })
   const gitCheck = spawnSync('git', ['--version'], { stdio: 'ignore' })
   if (gitCheck.status !== 0) {
     throw new Error('git not found on PATH')
@@ -103,7 +114,7 @@ function preflight(): SmokeConfig {
   }
 }
 
-const config = preflight()
+const config = await preflight()
 
 // ─── Env override (BEFORE any worker module import) ─────────────────────────
 //

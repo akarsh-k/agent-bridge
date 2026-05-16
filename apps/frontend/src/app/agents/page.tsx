@@ -13,14 +13,13 @@ import { Link } from '../../lib/link'
 import { useWorkspace } from '../../lib/workspace-context'
 import { PageHeader } from '../_chrome/page-header'
 import { Button } from '../../ui/button'
-import { BridgeRow } from '../../ui/bridge-row'
 import { ImportIcon, PlusIcon, SearchIcon } from '../../ui/icons'
 import { EmptyState } from '../../ui/empty'
 import { RowMenu } from '../../ui/row-menu'
 import { ContextMenu } from '../../ui/context-menu'
 import { confirmDialog } from '../../ui/dialog-store'
 import { ApiError, exportAgentBundle, importAgentBundle } from '../../lib/rpc'
-import { agentGlyphKind, deriveAgentBridges } from '../../lib/agent-helpers'
+import { agentGlyphKind } from '../../lib/agent-helpers'
 import { CreateAgentSheet } from '../../features/agent-builder/create-agent-sheet'
 import { toast } from '../../ui/toast-store'
 import { navigate } from '../../lib/router'
@@ -196,7 +195,6 @@ export function AgentsListPage() {
                   key={a.id}
                   agent={a}
                   featured={a.id === featuredId}
-                  onConnectBridge={() => navigate(`/bridge#${a.slug}`)}
                   onExport={async () => {
                     try {
                       const bundle = await exportAgentBundle(a.id)
@@ -262,18 +260,15 @@ export function AgentsListPage() {
 function AgentCard({
   agent,
   featured,
-  onConnectBridge,
   onExport,
   onDelete,
 }: {
   agent: AgentResponse
   featured: boolean
-  onConnectBridge: () => void
   onExport: () => void
   onDelete: () => void
 }) {
   const draft = isDraft(agent)
-  const bridges = deriveAgentBridges(agent.id)
   const ctxItems = [
     { label: 'Open agent', onClick: () => navigate(`/agents/${agent.id}`) },
     { label: 'Export bundle', onClick: onExport },
@@ -330,7 +325,6 @@ function AgentCard({
             </span>
           )}
         </div>
-        <BridgeRow ides={bridges} live onConnect={onConnectBridge} />
       </Link>
     </ContextMenu>
   )

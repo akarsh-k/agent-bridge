@@ -48,25 +48,29 @@ export function RunDetailSheet({ target, onClose }: RunDetailSheetProps) {
   const [error, setError] = useState<string | null>(null)
 
   // Fetch on open. Cleared on close so the next open shows a spinner
-  // instead of stale content. The dependency array uses `target?.kind`
-  // and `target?.id` so changing target while the sheet is open
-  // re-fetches correctly.
+  // instead of stale content. Capture the discriminator fields once so
+  // the effect depends only on primitives — parents construct `target`
+  // as a fresh object literal each render, so depending on `target`
+  // itself would re-fire the effect every parent render and infinite-
+  // loop with the setState calls below.
+  const targetKind = target?.kind
+  const targetId = target?.id
   useEffect(() => {
-    if (!target) {
-      setData(null)
-      setError(null)
-      return
-    }
     let alive = true
-    setLoading(true)
-    setError(null)
     void (async () => {
+      if (!targetKind || !targetId) {
+        if (alive) setData(null)
+        if (alive) setError(null)
+        return
+      }
+      if (alive) setLoading(true)
+      if (alive) setError(null)
       try {
-        if (target.kind === 'run') {
-          const res = await fetchRun(target.id)
+        if (targetKind === 'run') {
+          const res = await fetchRun(targetId)
           if (alive) setData({ kind: 'run', run: res })
         } else {
-          const res = await fetchWorkerJob(target.id)
+          const res = await fetchWorkerJob(targetId)
           if (alive) setData({ kind: 'worker', worker: res })
         }
       } catch (err) {
@@ -86,7 +90,7 @@ export function RunDetailSheet({ target, onClose }: RunDetailSheetProps) {
     return () => {
       alive = false
     }
-  }, [target?.kind, target?.id])
+  }, [targetKind, targetId])
 
   const open = target !== null
 

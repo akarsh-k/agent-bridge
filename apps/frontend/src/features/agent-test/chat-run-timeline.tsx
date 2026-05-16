@@ -75,9 +75,12 @@ export function ChatRunTimeline({
   useEffect(() => {
     if (!open) return
     let alive = true
-    setLoading(true)
-    setError(null)
     void (async () => {
+      // All state writes are kept inside the async block so the
+      // effect body has no synchronous setState (required by
+      // react-hooks/set-state-in-effect under React 19).
+      if (alive) setLoading(true)
+      if (alive) setError(null)
       try {
         const res = await fetchRun(runId)
         if (alive) setEvents(res.events)

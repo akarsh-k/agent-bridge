@@ -22,7 +22,11 @@
  * runner exits non-zero on any failure.
  *
  * Required env (same as the setup script):
- *   SMOKE_EMBEDDING_URL, SMOKE_EMBEDDING_MODEL, SMOKE_EMBEDDING_DIMS
+ *   SMOKE_EMBEDDING_URL, SMOKE_EMBEDDING_MODEL
+ * Optional:
+ *   SMOKE_EMBEDDING_API_KEY  bearer token if the endpoint requires auth
+ *
+ * Embedding dimensions are auto-probed from the endpoint at preflight.
  *
  * Run from repo root:
  *   pnpm test:fixture
@@ -34,11 +38,18 @@ import { spawnSync } from 'node:child_process'
 
 import { eq } from 'drizzle-orm'
 
+import { loadRootDotenv } from '@agent-bridge/shared/env'
+
+// Load the repo-root .env so SMOKE_* vars resolve in preflight. tsx
+// doesn't auto-load it from the tests workspace cwd.
+loadRootDotenv(import.meta.url, { depth: 1 })
+
 import {
   FIXTURE_AGENT,
   TEST_DATA_DIR,
   TEST_DB_NAME,
 } from './fixture-config.js'
+import { probeEmbeddingDims } from './probe-embedding-dims.js'
 
 // ─── Pre-flight + env override (BEFORE worker/agents imports) ──────────────
 
@@ -48,21 +59,23 @@ interface SmokeConfig {
   readonly embeddingDims: number
 }
 
-function preflight(): SmokeConfig {
+async function preflight(): Promise<SmokeConfig> {
   const embeddingUrl = process.env['SMOKE_EMBEDDING_URL']
   const embeddingModel = process.env['SMOKE_EMBEDDING_MODEL']
-  const embeddingDimsRaw = process.env['SMOKE_EMBEDDING_DIMS']
   const missing: string[] = []
   if (!embeddingUrl) missing.push('SMOKE_EMBEDDING_URL')
   if (!embeddingModel) missing.push('SMOKE_EMBEDDING_MODEL')
-  if (!embeddingDimsRaw) missing.push('SMOKE_EMBEDDING_DIMS')
   if (missing.length > 0) {
     throw new Error(`Missing required env: ${missing.join(', ')}`)
   }
-  const embeddingDims = Number.parseInt(embeddingDimsRaw!, 10)
-  if (!Number.isInteger(embeddingDims) || embeddingDims <= 0) {
-    throw new Error(`SMOKE_EMBEDDING_DIMS must be a positive integer`)
-  }
+  // Probe the endpoint to discover output dimensionality. The probe is the
+  // single source of truth — overriding it risks silent vector-size mismatch
+  // between what we tell the schema and what the embedder actually returns.
+  const embeddingDims = await probeEmbeddingDims({
+    url: embeddingUrl!,
+    model: embeddingModel!,
+    apiKey: process.env['SMOKE_EMBEDDING_API_KEY'] ?? null,
+  })
   // git available (transitively required by gitnexus walks)
   const gitCheck = spawnSync('git', ['--version'], { stdio: 'ignore' })
   if (gitCheck.status !== 0) throw new Error('git not found on PATH')
@@ -73,7 +86,7 @@ function preflight(): SmokeConfig {
   }
 }
 
-const config = preflight()
+const config = await preflight()
 
 const baseDbUrl =
   process.env['DATABASE_URL'] ??
