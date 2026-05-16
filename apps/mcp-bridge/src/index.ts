@@ -41,6 +41,7 @@ import { and, asc, eq } from 'drizzle-orm'
 
 import {
   createDb,
+  runMigrations,
   schema,
   type AgentBridgeDb,
 } from '@agent-bridge/db'
@@ -276,6 +277,29 @@ async function main(): Promise<void> {
     maxConnections: env.DATABASE_POOL_SIZE,
     debug: env.DATABASE_DEBUG && !env.isProd,
   })
+
+  // Apply pending schema migrations before reading any tables. The
+  // IDE spawns this process independently of the main app; if the
+  // user updates Agent Bridge (`git pull` brings new migrations) and
+  // reloads the MCP server in their IDE BEFORE restarting
+  // `pnpm start`, we'd otherwise be reading from a stale schema.
+  // Belt-and-braces alongside backend/worker's own migrate-on-boot —
+  // Drizzle's `migrate()` serialises through `__drizzle_migrations`,
+  // so a concurrent call (bridge + backend booting together) is a
+  // documented no-op for the loser. Dev keeps migrations manual
+  // (`pnpm db:migrate`) so contributors control timing.
+  if (env.isProd) {
+    try {
+      const result = await runMigrations(db)
+      console.error(
+        `[mcp-bridge] migrations applied in ${result.durationMs}ms from ${result.migrationsFolder}`,
+      )
+    } catch (err) {
+      console.error('[mcp-bridge] migration failed; refusing to start:', err)
+      process.exit(1)
+    }
+  }
+
   const eventBus = createEventBus({ redisUrl: env.REDIS_URL })
 
   const agents = await listExposableAgents(db)
