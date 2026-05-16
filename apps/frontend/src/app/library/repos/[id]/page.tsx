@@ -27,11 +27,17 @@ const GraphModal = lazy(() =>
   })),
 )
 
-const STATUS_PILL: Record<string, { kind: PillKind; label: string }> = {
+/** `dot` is reserved for in-flight/live states so the pulsing dot
+ *  reads as "something is actively happening". Steady-state pills
+ *  (Cloned / Indexed / Error / Pending) render flat. */
+const STATUS_PILL: Record<
+  string,
+  { kind: PillKind; label: string; dot?: boolean }
+> = {
   pending: { kind: 'neutral', label: 'Pending' },
-  cloning: { kind: 'warn', label: 'Cloning' },
+  cloning: { kind: 'warn', label: 'Cloning', dot: true },
   cloned: { kind: 'neutral', label: 'Cloned' },
-  indexing: { kind: 'warn', label: 'Indexing' },
+  indexing: { kind: 'warn', label: 'Indexing', dot: true },
   ready: { kind: 'success', label: 'Indexed' },
   error: { kind: 'danger', label: 'Error' },
 }
@@ -161,10 +167,8 @@ export function RepoDetailPage({ id }: { id: string }) {
           </h1>
           <div className="ab-detail-meta">
             <span className="ab-mono">{repo.remoteUrl}</span>
-            <span>·</span>
             <span className="ab-mono">{repo.branch}</span>
-            <span>·</span>
-            <Pill kind={sp.kind} dot>
+            <Pill kind={sp.kind} dot={sp.dot}>
               {sp.label}
             </Pill>
           </div>
@@ -204,26 +208,29 @@ export function RepoDetailPage({ id }: { id: string }) {
       </div>
 
       {repo.lastError && (
+        // role="status" — persistent advisory tied to a steady-state
+        // failure mode; not a transient just-happened notification, so
+        // we don't want a screen reader interrupting on every parent
+        // re-render of the page.
         <div
-          className="ab-card ab-card-pad ab-form-section"
-          style={{
-            background: 'var(--danger-bg)',
-            borderColor: 'rgba(251, 113, 133, 0.24)',
-          }}
+          role="status"
+          className="ab-alert ab-alert-danger"
+          style={{ alignItems: 'flex-start' }}
         >
-          <div className="ab-section-title" style={{ color: 'var(--danger)' }}>
-            Last error
-          </div>
-          <div
-            className="ab-mono"
-            style={{
-              marginTop: 6,
-              fontSize: 12,
-              whiteSpace: 'pre-wrap',
-              color: 'var(--text)',
-            }}
-          >
-            {repo.lastError}
+          <span className="ab-alert-dot" aria-hidden="true" />
+          <div className="ab-alert-body">
+            <div className="ab-alert-title">Last error</div>
+            <div
+              className="ab-mono"
+              style={{
+                marginTop: 4,
+                fontSize: 12,
+                whiteSpace: 'pre-wrap',
+                color: 'var(--text)',
+              }}
+            >
+              {repo.lastError}
+            </div>
           </div>
         </div>
       )}

@@ -3,7 +3,7 @@
  * defaults, refresh the cached models list, and run a live test.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { LlmProviderUpdateInput } from '@agent-bridge/shared'
 import { useWorkspace } from '../../../../lib/workspace-context'
 import { Link } from '../../../../lib/link'
@@ -266,6 +266,15 @@ export function ProviderDetailPage({ id }: { id: string }) {
     if (apiKey.trim() !== '') return true
     return false
   }, [provider, label, baseUrl, isLocal, defaultModel, isEmbedding, embeddingDims, apiKey])
+
+  // Re-tick "Catalog refreshed Xs ago" labels on a timer so the value
+  // doesn't lie to anyone reading the page for several minutes. Hook
+  // call must run on every render (Rules of Hooks) — derive the Date
+  // up here and let the hook handle the not-yet-fetched / no-provider
+  // cases with a null input.
+  const fetchedAtDate =
+    provider?.models?.fetchedAt ? new Date(provider.models.fetchedAt) : null
+  const catalogRefreshedLabel = useTimeAgo(fetchedAtDate)
 
   if (!provider) return <NotFound />
 
@@ -558,11 +567,12 @@ export function ProviderDetailPage({ id }: { id: string }) {
           </h1>
           <div className="ab-detail-meta">
             <span className="ab-mono">{provider.kind}</span>
-            <span>·</span>
             <Pill kind={isEmbedding ? 'accent' : 'neutral'}>
               {isEmbedding ? 'Embedding · workspace' : 'Chat'}
             </Pill>
-            <Pill kind={provider.apiKey.set ? 'success' : 'warn'} dot>
+            {/* Steady state — no `dot` (reserved for live/active
+                signals like an in-flight call). */}
+            <Pill kind={provider.apiKey.set ? 'success' : 'warn'}>
               {provider.apiKey.set ? 'Key set' : 'No key'}
             </Pill>
             <Pill kind="neutral">
@@ -723,7 +733,10 @@ export function ProviderDetailPage({ id }: { id: string }) {
             </button>
           </div>
           {modelStale && (
-            <div className="ab-stale-warning" role="alert">
+            // Persistent advisory — `role="status"` so screen readers
+            // don't re-announce on every parent re-render. Bumped from
+            // `alert` (transient/just-happened) to `status` (state).
+            <div className="ab-stale-warning" role="status">
               <span>
                 ⚠ Saved model <code className="ab-mono">{defaultModel}</code>{' '}
                 isn't in the current catalog. The endpoint may be running a
@@ -771,7 +784,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
               className="ab-field-help"
               title={new Date(provider.models.fetchedAt).toLocaleString()}
             >
-              Catalog refreshed {timeAgo(provider.models.fetchedAt)}.
+              Catalog refreshed {catalogRefreshedLabel}.
             </span>
           )}
         </div>
@@ -843,7 +856,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
               style={{ margin: 0, whiteSpace: 'nowrap' }}
               title={new Date(provider.models.fetchedAt).toLocaleString()}
             >
-              Refreshed {timeAgo(provider.models.fetchedAt)}
+              Refreshed {catalogRefreshedLabel}
             </span>
           )}
         </div>
@@ -1063,8 +1076,21 @@ export function ProviderDetailPage({ id }: { id: string }) {
   )
 }
 
-function timeAgo(iso: string): string {
-  const ms = Date.now() - Date.parse(iso)
+/**
+ * Render a relative-time label that re-ticks on its own. Mirrors the
+ * canonical `useTimeAgo` on the agents detail page — without the
+ * interval, "1m ago" would stay frozen for hours since the page only
+ * re-renders on workspace mutations.
+ */
+function useTimeAgo(date: Date | null): string {
+  const [, setTick] = useState(Date.now())
+  useEffect(() => {
+    if (!date) return
+    const id = setInterval(() => setTick(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [date])
+  if (!date) return '—'
+  const ms = Date.now() - date.getTime()
   if (Number.isNaN(ms)) return '—'
   if (ms < 60_000) return 'just now'
   if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`

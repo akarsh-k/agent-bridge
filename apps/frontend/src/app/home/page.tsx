@@ -92,8 +92,8 @@ export function HomePage() {
               <div className="ab-agent-name">{lastTouched.name}</div>
               <div className="ab-agent-slug">{lastTouched.slug}</div>
             </div>
-            <Pill kind="accent" dot className="ab-ml-auto">
-              <span style={{ paddingLeft: 0 }}>Most recent</span>
+            <Pill kind="accent" className="ab-ml-auto">
+              Most recent
             </Pill>
           </div>
           <div className="ab-agent-body">
@@ -351,21 +351,7 @@ function StepCard({ step }: { step: Step }) {
       }}
     >
       <div
-        style={{
-          width: 36,
-          height: 36,
-          borderRadius: 'var(--radius)',
-          background: step.done ? 'var(--success-bg)' : 'var(--accent-bg)',
-          color: step.done ? 'var(--success)' : 'var(--accent-300)',
-          display: 'grid',
-          placeItems: 'center',
-          flexShrink: 0,
-          border:
-            '1px solid ' +
-            (step.done
-              ? 'rgba(52, 211, 153, 0.32)'
-              : 'var(--accent-border)'),
-        }}
+        className={`ab-glyph ${step.done ? 'ab-glyph-green' : 'ab-glyph-violet'}`}
         aria-hidden="true"
       >
         {step.done ? (
@@ -387,15 +373,12 @@ function StepCard({ step }: { step: Step }) {
           <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
             Step {step.n}
           </span>
-          <span style={{ color: 'var(--text-muted)' }}>·</span>
           <span>{step.title}</span>
           {step.optional && (
             <Pill kind="neutral">Optional</Pill>
           )}
           {step.done && (
-            <Pill kind="success" dot>
-              Done
-            </Pill>
+            <Pill kind="success">Done</Pill>
           )}
         </div>
         <div

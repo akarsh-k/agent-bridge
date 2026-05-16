@@ -54,6 +54,12 @@
       "development": "./src/queues.ts",
       "import": "./dist/queues.js",
       "default": "./dist/queues.js"
+    },
+    "./version": {
+      "types": "./src/version.ts",
+      "development": "./src/version.ts",
+      "import": "./dist/version.js",
+      "default": "./dist/version.js"
     }
   },
   "files": [

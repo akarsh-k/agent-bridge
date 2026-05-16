@@ -285,53 +285,53 @@ function AgentCard({
   ]
   return (
     <ContextMenu items={ctxItems}>
-    <Link
-      to={`/agents/${agent.id}`}
-      className={
-        'ab-card ab-card-link ab-card-pad' +
-        (featured ? ' ab-card-featured' : '')
-      }
-    >
-      {featured && (
-        <div className="ab-agent-state ab-agent-state-recent">
-          <span className="ab-agent-state-dot" aria-hidden="true" />
-          Most recent
-        </div>
-      )}
-      {!featured && draft && (
-        <div className="ab-agent-state ab-agent-state-draft">
-          <span className="ab-agent-state-dot" aria-hidden="true" />
-          Draft
-        </div>
-      )}
-      <div className="ab-agent-head">
-        <div className={`ab-glyph ab-glyph-${agentGlyphKind(agent.id)}`}>
-          {(agent.name ?? 'A').charAt(0).toUpperCase()}
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="ab-agent-name">{agent.name}</div>
-          <div className="ab-agent-slug">{agent.slug}</div>
-        </div>
-        <RowMenu
-          items={[
-            { label: 'Export bundle', onClick: onExport },
-            {
-              label: 'Delete agent',
-              destructive: true,
-              onClick: onDelete,
-            },
-          ]}
-        />
-      </div>
-      <div className="ab-agent-body">
-        {agent.description?.trim() || (
-          <span style={{ color: 'var(--text-muted)' }}>
-            No description yet.
-          </span>
+      <Link
+        to={`/agents/${agent.id}`}
+        className={
+          'ab-card ab-card-link ab-card-pad' +
+          (featured ? ' ab-card-featured' : '')
+        }
+      >
+        {featured && (
+          <div className="ab-agent-state ab-agent-state-recent">
+            <span className="ab-agent-state-dot" aria-hidden="true" />
+            Most recent
+          </div>
         )}
-      </div>
-      <BridgeRow ides={bridges} live onConnect={onConnectBridge} />
-    </Link>
+        {!featured && draft && (
+          <div className="ab-agent-state ab-agent-state-draft">
+            <span className="ab-agent-state-dot" aria-hidden="true" />
+            Draft
+          </div>
+        )}
+        <div className="ab-agent-head">
+          <div className={`ab-glyph ab-glyph-${agentGlyphKind(agent.id)}`}>
+            {(agent.name ?? 'A').charAt(0).toUpperCase()}
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div className="ab-agent-name">{agent.name}</div>
+            <div className="ab-agent-slug">{agent.slug}</div>
+          </div>
+          <RowMenu
+            items={[
+              { label: 'Export bundle', onClick: onExport },
+              {
+                label: 'Delete agent',
+                destructive: true,
+                onClick: onDelete,
+              },
+            ]}
+          />
+        </div>
+        <div className="ab-agent-body">
+          {agent.description?.trim() || (
+            <span style={{ color: 'var(--text-muted)' }}>
+              No description yet.
+            </span>
+          )}
+        </div>
+        <BridgeRow ides={bridges} live onConnect={onConnectBridge} />
+      </Link>
     </ContextMenu>
   )
 }

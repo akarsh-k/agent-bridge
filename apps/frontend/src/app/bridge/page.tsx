@@ -22,7 +22,12 @@ import {
 import { PageHeader } from '../_chrome/page-header'
 import { Pill } from '../../ui/pill'
 import { EmptyState } from '../../ui/empty'
-import { BridgeIcon, CheckIcon, CopyIcon } from '../../ui/icons'
+import {
+  BridgeIcon,
+  CheckIcon,
+  ChevronRightIcon,
+  CopyIcon,
+} from '../../ui/icons'
 
 export function BridgePage() {
   return (
@@ -88,16 +93,21 @@ function SetupCard() {
         </div>
       </div>
       {error && (
-        <div className="ab-field-help" style={{ color: 'var(--danger)' }}>
-          {error}
+        <div role="status" className="ab-alert ab-alert-danger">
+          <span className="ab-alert-dot" aria-hidden="true" />
+          <div className="ab-alert-body">
+            <div className="ab-alert-title">Couldn't load bridge config</div>
+            <div className="ab-alert-sub">{error}</div>
+          </div>
         </div>
       )}
       {config && !config.ready && config.readyHint && (
-        <div
-          className="ab-field-help"
-          style={{ color: 'var(--warn)', marginBottom: 8 }}
-        >
-          <strong>Not runnable yet:</strong> {config.readyHint}
+        <div role="status" className="ab-alert ab-alert-warn">
+          <span className="ab-alert-dot" aria-hidden="true" />
+          <div className="ab-alert-body">
+            <div className="ab-alert-title">Not runnable yet</div>
+            <div className="ab-alert-sub">{config.readyHint}</div>
+          </div>
         </div>
       )}
       {config ? (
@@ -117,7 +127,8 @@ function SetupCard() {
           <pre className="ab-codeblock-body">{config.configBlock}</pre>
         </div>
       ) : !error ? (
-        <div style={{ color: 'var(--text-muted)', padding: '8px 0' }}>
+        <div className="ab-loading-row">
+          <span className="ab-pulse-dot" />
           Loading config…
         </div>
       ) : null}
@@ -284,7 +295,7 @@ function ExposedAgentRow({
           ? {
               background: 'var(--accent-bg)',
               boxShadow: 'inset 3px 0 0 var(--accent-400)',
-              transition: 'background 320ms ease',
+              transition: 'background var(--dur-3) var(--ease-out)',
             }
           : null),
       }}
@@ -332,15 +343,12 @@ function ExposedAgentRow({
             aria-hidden="true"
             style={{
               color: 'var(--text-muted)',
-              fontSize: 14,
-              transition: 'transform 160ms var(--ease-out)',
+              display: 'inline-flex',
+              transition: 'transform var(--dur-1) var(--ease-out)',
               transform: open ? 'rotate(90deg)' : 'rotate(0)',
-              display: 'inline-block',
-              width: 14,
-              textAlign: 'center',
             }}
           >
-            ›
+            <ChevronRightIcon width={14} height={14} />
           </span>
         </div>
       </button>
@@ -367,26 +375,20 @@ function ExposedAgentRow({
           )}
 
           {loadingBridgeTools && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                color: 'var(--text-dim)',
-                fontSize: 12,
-                padding: '8px 0 4px',
-              }}
-            >
+            <div className="ab-loading-row">
               <span className="ab-pulse-dot" />
               Loading custom bridge tools…
             </div>
           )}
           {bridgeToolsErr && (
-            <div
-              className="ab-field-help"
-              style={{ color: 'var(--danger)' }}
-            >
-              {bridgeToolsErr}
+            <div role="status" className="ab-alert ab-alert-danger">
+              <span className="ab-alert-dot" aria-hidden="true" />
+              <div className="ab-alert-body">
+                <div className="ab-alert-title">
+                  Couldn't load bridge tools
+                </div>
+                <div className="ab-alert-sub">{bridgeToolsErr}</div>
+              </div>
             </div>
           )}
           {bridgeTools && bridgeTools.length > 0 && (
@@ -460,9 +462,13 @@ function ToolGroup({
             <span className="ab-mono" style={{ color: 'var(--text)' }}>
               {t.name}
             </span>
-            <Pill kind={t.enabled ? 'success' : 'neutral'} dot>
-              {t.enabled ? 'Enabled' : 'Disabled'}
-            </Pill>
+            {t.enabled ? (
+              <Pill kind="success" dot>
+                Enabled
+              </Pill>
+            ) : (
+              <Pill kind="neutral">Disabled</Pill>
+            )}
             {t.tag && (
               <Pill
                 kind={t.tag === 'single-repo' ? 'accent' : 'neutral'}

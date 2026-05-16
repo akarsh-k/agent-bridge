@@ -34,16 +34,21 @@ import {
   type RunEvent,
 } from '@agent-bridge/shared'
 
-const DEFAULT_API = 'http://127.0.0.1:3001'
+const DEV_DEFAULT_API = 'http://127.0.0.1:3001'
 
 function resolveApiBase(): string {
   const raw = import.meta.env.VITE_API_URL?.trim()
-  if (!raw) return DEFAULT_API
+  if (!raw) {
+    // Same logic as `apiBaseUrl` in lib/rpc — production defaults to
+    // same-origin so EventSource hits a relative `/api/events/...`
+    // path. Dev needs the explicit 3001 origin.
+    return import.meta.env.PROD ? '' : DEV_DEFAULT_API
+  }
   try {
     const url = new URL(raw)
     return url.origin + (url.pathname === '/' ? '' : url.pathname)
   } catch {
-    return DEFAULT_API
+    return import.meta.env.PROD ? '' : DEV_DEFAULT_API
   }
 }
 

@@ -9,6 +9,7 @@
 [data-theme='light'] {
   --bg: #f7f6f4;
   --bg-canvas: #efedea;
+  --bg-grid: rgba(17, 16, 33, 0.06);
   --surface: #ffffff;
   --surface-hi: #fbfaf8;
   --surface-raised: #ffffff;
@@ -35,10 +36,13 @@
 
   --success: #059669;
   --success-bg: rgba(5, 150, 105, 0.1);
+  --success-border: rgba(5, 150, 105, 0.28);
   --danger: #dc2626;
   --danger-bg: rgba(220, 38, 38, 0.09);
+  --danger-border: rgba(220, 38, 38, 0.28);
   --warn: #d97706;
   --warn-bg: rgba(217, 119, 6, 0.1);
+  --warn-border: rgba(217, 119, 6, 0.28);
 
   --shadow-1: 0 1px 2px rgba(15, 14, 33, 0.05),
     0 0 0 1px rgba(15, 14, 33, 0.02);
@@ -1771,11 +1775,6 @@ button.ab-list-row {
     rgba(124, 58, 237, 0.04) 100%
   );
 }
-[data-theme='light'] .ab-msg-user .ab-msg-bubble {
-  background: var(--accent-500);
-  color: #fff;
-  border-color: var(--accent-400);
-}
 [data-theme='light'] .ab-chat-input-bar {
   background: var(--bg);
 }
@@ -2015,7 +2014,10 @@ button.ab-list-row {
 }
 .ab-detail-header {
   display: flex;
-  align-items: flex-start;
+  /* Vertical-centered so primary actions (Chat etc.) align with the
+   * page title's optical baseline. With flex-start the right-column
+   * buttons sat ~6px above the title line and felt orphaned. */
+  align-items: center;
   gap: 18px;
   margin-bottom: 24px;
 }
@@ -2031,10 +2033,170 @@ button.ab-list-row {
 .ab-detail-meta {
   display: flex;
   align-items: center;
+  /* `gap` carries all the visual separation; pages should NOT inject
+   * `·` dot separators between meta items — they compete with the
+   * gap and clash with adjacent pills that already read as discrete
+   * chips. */
   gap: 10px;
   margin-top: 6px;
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* Narrow viewports: actions wrap below the title block so the page
+ * header doesn't overflow the viewport. Glyph stays anchored top-left
+ * so the title's identity cue isn't lost. */
+@media (max-width: 600px) {
+  .ab-detail-header {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .ab-detail-header > .ab-page-actions {
+    flex-basis: 100%;
+    justify-content: flex-start;
+  }
+}
+
+/* ---- Dropdown menus (More-actions) --------------------------------------- */
+/* Used by detail-page headers to surface secondary actions behind a
+ * ⋯ trigger. Anchored absolutely to a positioned parent. The backdrop
+ * is a full-viewport invisible click-catcher so taps outside the
+ * panel close it without us wiring document-level listeners. */
+.ab-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+.ab-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 192px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 4px;
+  z-index: 41;
+  /* Subtle pop on open. `transform-origin: top right` anchors the
+   * scale-in at the trigger button so the panel feels like it grew
+   * from the click target rather than appearing from nowhere. */
+  animation: ab-menu-pop var(--dur-2) var(--ease-out);
+  transform-origin: top right;
+}
+@keyframes ab-menu-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.ab-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+.ab-menu-item:hover {
+  background: var(--surface-hover);
+}
+.ab-menu-item:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}
+.ab-menu-item-danger {
+  color: var(--danger);
+}
+.ab-menu-item-danger:hover {
+  background: var(--danger-bg);
+}
+.ab-menu-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0;
+}
+
+/* ---- Inline alert banner ------------------------------------------------- */
+/* Tone-driven banner for detail pages: "missing provider", "wrong
+ * state", "needs attention" notices. Tone variants share padding +
+ * radius; only border + bg + dot color differ. Don't conflate with
+ * `ab-pulse-dot` — the alert dot is a static indicator, NOT a
+ * liveness signal. */
+.ab-alert {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  margin-bottom: 18px;
+}
+.ab-alert-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ab-alert-body {
+  flex: 1;
+  min-width: 0;
+}
+.ab-alert-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+.ab-alert-sub {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.ab-alert-warn {
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
+}
+.ab-alert-warn .ab-alert-dot {
+  background: var(--warn);
+}
+.ab-alert-danger {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+.ab-alert-danger .ab-alert-dot {
+  background: var(--danger);
+}
+.ab-alert-success {
+  background: var(--success-bg);
+  border-color: var(--success-border);
+}
+.ab-alert-success .ab-alert-dot {
+  background: var(--success);
+}
+
+/* ---- Loading row --------------------------------------------------------- */
+/* Tiny "still working…" affordance: pulsing dot + dim label. Used by
+ * tab-switch suspense fallbacks and any place we need a one-liner
+ * inline progress hint without spinning up a full skeleton state. */
+.ab-loading-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-dim);
+  padding: 20px 0;
+  font-size: 13px;
 }
 
 /* ---- Form sections (cards) ----------------------------------------------- */
@@ -2700,6 +2862,14 @@ button.ab-list-row {
   line-height: 1.55;
   border-radius: 18px 18px 4px 18px;
 }
+/* Light theme: slightly stronger tint so the bubble reads against
+ * the near-white surface. The base rule uses `--accent-bg` which is
+ * ~8% violet — too faint on white; bumping to `--accent-bg-hi`
+ * (~14%) gives the pill enough visual weight without competing with
+ * primary CTAs (which use solid `--accent-500`). Nested elements
+ * (.ab-msg-mention, .ab-msg-json-toggle) assume a tinted background
+ * so they can use solid accent colors for their own text — keep
+ * this subtle treatment to preserve their contrast. */
 [data-theme='light'] .ab-msg-user .ab-msg-bubble {
   background: var(--accent-bg-hi);
 }

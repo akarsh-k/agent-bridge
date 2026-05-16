@@ -204,10 +204,10 @@ Requirements:
 ```bash
 pnpm install        # installs all workspaces; you may be asked to approve a build script
 cp .env.example .env
-pnpm dev            # preflight → docker compose up -d → start backend / frontend / worker / shared watcher
+pnpm start          # preflight → pnpm install → pnpm build → docker compose up -d → starts backend + worker
 ```
 
-Open http://127.0.0.1:5173. Then:
+Open http://127.0.0.1:3001. Then:
 
 1. Add a model provider.
 2. Add or clone a repo.
@@ -222,13 +222,55 @@ Open http://127.0.0.1:5173. Then:
 running** so DB state stays warm. Run `pnpm stop` to tear them down
 (preserves data) or `pnpm stop:clean` to drop the volumes too.
 
+## Updating
+
+```bash
+git pull
+pnpm start
+```
+
+That's enough. `pnpm start` always runs `pnpm install` then `pnpm build`
+before booting, so dep bumps, source changes, and `.env` edits all get
+picked up automatically — every workspace (`packages/shared`, `db`,
+`agents`; `apps/backend`, `worker`, `mcp-bridge`, `frontend`) gets built
+in topological order. `tsc -b` is incremental, so a no-op build
+finishes in ~5–10s; a real change takes the time it actually needs. The
+backend then auto-applies any pending database migrations on boot.
+
+No separate `pnpm install` / `pnpm build` / `pnpm db:migrate` step is
+required for the common update flow. Escape hatches if you know your
+state is fresh and want the fast path: `SKIP_INSTALL=1 pnpm start`,
+`SKIP_BUILD=1 pnpm start`, or both. (See "Scripts" below for the env
+var docs.)
+
+Your data is safe across updates:
+
+- The Postgres volume managed by Docker persists, so DB content
+  survives `pnpm stop` and `pnpm start`.
+- Cloned repos, indexes, the encryption master key, and OAuth tokens
+  live under `.agent-bridge-data/` (gitignored), untouched by
+  `git pull`.
+- Your `.env` is gitignored.
+
+The backend logs `Agent Bridge v<X.Y.Z> (commit <sha>)` on startup so
+you can verify which version you just upgraded to. `GET /api/system/version`
+returns the same.
+
+> **Switching between `pnpm dev` and `pnpm start`?** They use different
+> bridge entry points (source `.ts` vs compiled `.js`). After switching
+> modes, open Settings in the app and re-copy the MCP config block
+> into your IDE — the paths differ.
+
 ## Connect your IDE
 
 In the running app, go to **Settings** and copy the auto-generated MCP
 server config. The backend resolves absolute paths so the IDE doesn't
-need to find `tsx` / `node` on its own minimal `PATH`.
+need to find `tsx` / `node` on its own minimal `PATH`. The block
+adjusts to your install — `pnpm start` (production) emits a path that
+points at the compiled bridge; `pnpm dev` emits a `tsx`-wrapped path
+that runs the bridge from source for live edits.
 
-For Cursor (`~/.cursor/mcp.json`) the block looks like:
+For Cursor (`~/.cursor/mcp.json`) the production block looks like:
 
 ```json
 {
@@ -236,8 +278,7 @@ For Cursor (`~/.cursor/mcp.json`) the block looks like:
     "agent-bridge": {
       "command": "/absolute/path/to/node",
       "args": [
-        "/absolute/path/to/tsx/dist/cli.mjs",
-        "/absolute/path/to/agent-bridge/apps/mcp-bridge/src/index.ts"
+        "/absolute/path/to/agent-bridge/apps/mcp-bridge/dist/index.js"
       ]
     }
   }
@@ -269,6 +310,7 @@ Run logs and tool traces show up in `/logs` in the UI.
 ├── tests/                # Local fixture harness + smoke runners
 ├── docs/                 # ARCHITECTURE.md and design notes
 ├── scripts/dev.mjs       # cross-platform dev orchestrator
+├── scripts/start.mjs     # production orchestrator (pnpm start)
 ├── docker-compose.yml    # Postgres (pgvector) + Redis, loopback-bound
 └── pnpm-workspace.yaml
 ```
@@ -280,7 +322,8 @@ Run from the repo root:
 | Script              | What it does                                                                                          |
 | ------------------- | ----------------------------------------------------------------------------------------------------- |
 | `pnpm preflight`    | Verifies Node version, `.env`, `node_modules`, and workspace layout.                                  |
-| `pnpm dev`          | Preflight → build `packages/*` once → `docker compose up -d` → start all apps in parallel.            |
+| `pnpm start`        | **For end users.** Preflight → `pnpm install` → `pnpm build` (every workspace, topological) → `docker compose up -d` → spawn backend + worker against built outputs. Auto-migrates the DB on boot. One URL: http://localhost:3001. |
+| `pnpm dev`          | **For contributors.** Preflight → build `packages/*` once → `docker compose up -d` → start all apps in parallel with `tsx watch` / Vite HMR / `tsc --watch`. Frontend on 5173, backend on 3001. |
 | `pnpm stop`         | `docker compose down` — stops the Postgres/Redis containers (volumes preserved, data kept).           |
 | `pnpm stop:clean`   | `docker compose down -v` — stops containers **and removes volumes** (destroys local DB + cache data). |
 | `pnpm build`        | Recursive `build` across all workspaces (topological: `packages/*` build before `apps/*`).            |
@@ -298,6 +341,16 @@ Useful env-var overrides:
 - `SKIP_PREFLIGHT=1 pnpm dev` — skip preflight checks.
 - `SKIP_DOCKER=1 pnpm dev` — run app servers only; don't start Postgres/Redis.
 - `SKIP_SHARED_BUILD=1 pnpm dev` — skip the one-time `packages/*` build.
+- `SKIP_INSTALL=1 pnpm start` — skip the always-run `pnpm install`.
+  Use when you know your install is fresh (e.g., you just ran it
+  manually) and want to shave ~1–2s off the boot.
+- `SKIP_BUILD=1 pnpm start` — skip the always-run `pnpm build`.
+  Useful for verifying that the existing `dist/` boots cleanly, or
+  for fast iteration when you're only restarting the runtime. Still
+  fails fast if any required dist file is missing — better to error
+  here than crash a child two seconds after spawn.
+- `pnpm start --check` — verify a fresh clone is ready (Node version,
+  `.env`, `node_modules`, Docker + Compose v2) without booting.
 
 For the local fixture harness (synthetic ecommerce multi-repo demo),
 see [`tests/README.md`](tests/README.md).

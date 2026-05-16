@@ -36,11 +36,18 @@ import type {
   RepoGraphMode,
 } from '@agent-bridge/shared'
 
-const DEFAULT_BASE_URL = 'http://127.0.0.1:3001'
+const DEV_DEFAULT_BASE_URL = 'http://127.0.0.1:3001'
 
 function resolveBaseUrl(): string {
   const raw = import.meta.env.VITE_API_URL?.trim()
-  if (!raw) return DEFAULT_BASE_URL
+  if (!raw) {
+    // Production builds default to same-origin (empty base) because the
+    // backend serves this bundle from its own host — every API call
+    // becomes a relative `/api/...` fetch, no CORS round-trip needed.
+    // Dev runs Vite on 5173 and the backend on 3001, so an explicit
+    // cross-origin URL is required for fetch to reach the API.
+    return import.meta.env.PROD ? '' : DEV_DEFAULT_BASE_URL
+  }
   try {
     const url = new URL(raw)
     if (url.protocol !== 'http:' && url.protocol !== 'https:') {

@@ -21,10 +21,26 @@ function readStored(): Theme {
   return 'system'
 }
 
+/**
+ * Always writes a concrete `light` or `dark` value to `data-theme`,
+ * never leaves it empty. Component-level `[data-theme='light']` rules
+ * (chat bubble color, sidebar tuning, brand-glyph flips, …) ONLY
+ * apply when the attribute is set, so leaving it empty for theme=
+ * 'system' would silently disable dozens of light-theme polish rules
+ * — the same trap the bootstrap script in `index.html` documents
+ * inline.
+ *
+ * `system` means "follow the OS"; we resolve it to the current OS
+ * preference here. The bootstrap script wires a live listener for
+ * OS changes when no explicit choice is stored.
+ */
 function applyToDocument(theme: Theme) {
   const root = document.documentElement
   if (theme === 'system') {
-    delete root.dataset.theme
+    const prefersLight = window.matchMedia(
+      '(prefers-color-scheme: light)',
+    ).matches
+    root.dataset.theme = prefersLight ? 'light' : 'dark'
   } else {
     root.dataset.theme = theme
   }

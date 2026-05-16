@@ -166,28 +166,19 @@ export function AgentDetailPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
+  // `updatedAt` derived above the early returns so the `useTimeAgo`
+  // hook below sees a stable call site every render — Rules of Hooks
+  // require the hook order to be invariant, so we can't conditionally
+  // run it inside the not-found / loading branches.
+  const updatedAt = agent ? new Date(agent.updatedAt) : null
+  const updatedLabel = useTimeAgo(updatedAt)
+
   if (!agent) {
     // Distinguish "still loading" from "doesn't exist". Without this
     // guard, navigating to a freshly-created agent lands on "not
     // found" before the workspace refetch has populated the new row.
     if (status === 'loading') {
-      return (
-        <div className="ab-page">
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              color: 'var(--text-dim)',
-              padding: '20px 0',
-              fontSize: 13,
-            }}
-          >
-            <span className="ab-pulse-dot" />
-            Loading agent…
-          </div>
-        </div>
-      )
+      return <LoadingRow label="Loading agent…" inPage />
     }
     return (
       <div className="ab-page">
@@ -196,12 +187,16 @@ export function AgentDetailPage({
           <div className="ab-section-sub" style={{ marginTop: 4 }}>
             The agent {id.slice(0, 8)}… doesn't exist or has been deleted.
           </div>
+          <div style={{ marginTop: 14 }}>
+            <Button variant="secondary" onClick={() => navigate('/agents')}>
+              Back to agents
+            </Button>
+          </div>
         </div>
       </div>
     )
   }
 
-  const updatedAt = new Date(agent.updatedAt)
   const isDraft = !agent.systemPrompt || agent.systemPrompt.trim().length === 0
 
   return (
@@ -218,13 +213,9 @@ export function AgentDetailPage({
           </h1>
           <div className="ab-detail-meta">
             <span className="ab-mono">{agent.slug}</span>
-            <span>·</span>
-            <span>Updated {timeAgo(updatedAt)}</span>
-            <span>·</span>
+            <span>Updated {updatedLabel}</span>
             {isDraft ? (
-              <Pill kind="warn" dot>
-                Draft
-              </Pill>
+              <Pill kind="warn">Draft</Pill>
             ) : (
               <Pill kind="success" dot>
                 Active
@@ -247,33 +238,18 @@ export function AgentDetailPage({
             variant="secondary"
             onClick={() => setMenuOpen((v) => !v)}
             aria-label="More actions"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
           >
-            ⋯
+            <EllipsisIcon />
           </Button>
           {menuOpen && (
             <>
               <div
+                className="ab-menu-backdrop"
                 onClick={() => setMenuOpen(false)}
-                style={{
-                  position: 'fixed',
-                  inset: 0,
-                  zIndex: 40,
-                }}
               />
-              <div
-                style={{
-                  position: 'absolute',
-                  top: 'calc(100% + 6px)',
-                  right: 0,
-                  background: 'var(--surface-raised)',
-                  border: '1px solid var(--border-strong)',
-                  borderRadius: 'var(--radius)',
-                  boxShadow: 'var(--shadow-2)',
-                  padding: 4,
-                  minWidth: 180,
-                  zIndex: 41,
-                }}
-              >
+              <div className="ab-menu" role="menu">
                 <MenuItem
                   label="Export bundle"
                   onClick={async () => {
@@ -296,13 +272,7 @@ export function AgentDetailPage({
                     }
                   }}
                 />
-                <div
-                  style={{
-                    height: 1,
-                    background: 'var(--border)',
-                    margin: '4px 0',
-                  }}
-                />
+                <div className="ab-menu-divider" />
                 <MenuItem
                   label="Delete agent…"
                   danger
@@ -345,34 +315,14 @@ export function AgentDetailPage({
       </div>
 
       {!agent.llmProviderId && (
-        <div
-          role="alert"
-          className="ab-card ab-card-pad"
-          style={{
-            background: 'var(--warn-bg)',
-            borderColor: 'rgba(251, 191, 36, 0.32)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            marginBottom: 18,
-            padding: '12px 16px',
-          }}
-        >
-          <span
-            className="ab-pulse-dot"
-            style={{
-              background: 'var(--warn)',
-              animation: 'none',
-            }}
-          />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 600, fontSize: 13 }}>
-              No LLM provider assigned
-            </div>
-            <div
-              className="ab-section-sub"
-              style={{ marginTop: 2, fontSize: 12 }}
-            >
+        // role="status" (polite live region) instead of role="alert" so
+        // screen readers don't re-announce on every parent re-render —
+        // this is a persistent advisory, not a transient warning.
+        <div role="status" className="ab-alert ab-alert-warn">
+          <span className="ab-alert-dot" aria-hidden="true" />
+          <div className="ab-alert-body">
+            <div className="ab-alert-title">No LLM provider assigned</div>
+            <div className="ab-alert-sub">
               {agent.name} can't run yet. Pick a provider on the Configure
               tab, or add one in Library if you haven't.
             </div>
@@ -389,22 +339,22 @@ export function AgentDetailPage({
       <Tabs value={tab} onChange={setTabAndUrl} tabs={TABS} />
 
       {tab === 'configure' && (
-        <Suspense fallback={<TabSpinner />}>
+        <Suspense fallback={<LoadingRow label="Loading…" />}>
           <ConfigureTab agentId={agent.id} />
         </Suspense>
       )}
       {tab === 'resources' && (
-        <Suspense fallback={<TabSpinner />}>
+        <Suspense fallback={<LoadingRow label="Loading…" />}>
           <ResourcesTab agentId={agent.id} />
         </Suspense>
       )}
       {tab === 'chat' && (
-        <Suspense fallback={<TabSpinner />}>
+        <Suspense fallback={<LoadingRow label="Loading…" />}>
           <ChatTab agentId={agent.id} />
         </Suspense>
       )}
       {tab === 'bridge' && (
-        <Suspense fallback={<TabSpinner />}>
+        <Suspense fallback={<LoadingRow label="Loading…" />}>
           <BridgeToolsTab agentId={agent.id} />
         </Suspense>
       )}
@@ -412,22 +362,22 @@ export function AgentDetailPage({
   )
 }
 
-function TabSpinner() {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        color: 'var(--text-dim)',
-        padding: '20px 0',
-        fontSize: 13,
-      }}
-    >
+/**
+ * Shared "still working…" row: pulsing dot + dim label. Used by every
+ * tab's Suspense fallback AND the page-level loading state. `inPage`
+ * wraps in `.ab-page` so the top-level loading state inherits the
+ * page's gutters; tab fallbacks don't need that since they render
+ * inside the already-padded page container.
+ */
+function LoadingRow({ label, inPage }: { label: string; inPage?: boolean }) {
+  const row = (
+    <div className="ab-loading-row">
       <span className="ab-pulse-dot" />
-      Loading…
+      {label}
     </div>
   )
+  if (inPage) return <div className="ab-page">{row}</div>
+  return row
 }
 
 function MenuItem({
@@ -442,27 +392,31 @@ function MenuItem({
   return (
     <button
       type="button"
+      role="menuitem"
       onClick={onClick}
-      style={{
-        display: 'block',
-        width: '100%',
-        textAlign: 'left',
-        padding: '8px 10px',
-        borderRadius: 7,
-        background: 'transparent',
-        border: 'none',
-        color: danger ? 'var(--danger)' : 'var(--text)',
-        fontSize: 13,
-        cursor: 'pointer',
-        font: 'inherit',
-      }}
-      onMouseEnter={(e) =>
-        (e.currentTarget.style.background = 'var(--surface-hover)')
-      }
-      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+      className={`ab-menu-item${danger ? ' ab-menu-item-danger' : ''}`}
     >
       {label}
     </button>
+  )
+}
+
+/** Inline ellipsis icon for the More-actions trigger. Single-color
+ *  via `currentColor` so the button's text color drives it. */
+function EllipsisIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 16 16"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <circle cx="3" cy="8" r="1.5" fill="currentColor" />
+      <circle cx="8" cy="8" r="1.5" fill="currentColor" />
+      <circle cx="13" cy="8" r="1.5" fill="currentColor" />
+    </svg>
   )
 }
 
@@ -480,8 +434,29 @@ function downloadJson(data: unknown, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 0)
 }
 
-function timeAgo(d: Date): string {
-  const ms = Date.now() - d.getTime()
+/**
+ * Render a "Updated Xs ago" label that re-ticks on its own. The page
+ * already re-renders on workspace context updates, but those fire on
+ * mutation — not on the clock. Without this hook the meta row would
+ * read "Updated 5s ago" forever until the next refetch, which lies to
+ * a user reading the page for several minutes.
+ *
+ * 30s interval is comfortable: bumps "5s ago" → "35s ago" → "1m ago"
+ * with no jitter, and the wakeup cost is one render + a Date.now()
+ * comparison. Cleaned up on unmount.
+ */
+function useTimeAgo(date: Date | null): string {
+  // `tick` only forces a re-render; its value is unused. Setting it to
+  // the current ms ensures consecutive ticks always produce a new
+  // value (vs. an incrementing counter that could theoretically wrap).
+  const [, setTick] = useState(Date.now())
+  useEffect(() => {
+    if (!date) return
+    const id = setInterval(() => setTick(Date.now()), 30_000)
+    return () => clearInterval(id)
+  }, [date])
+  if (!date) return ''
+  const ms = Date.now() - date.getTime()
   const sec = Math.round(ms / 1000)
   if (sec < 60) return `${sec}s ago`
   const min = Math.round(sec / 60)

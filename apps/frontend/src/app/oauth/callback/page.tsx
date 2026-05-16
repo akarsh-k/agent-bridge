@@ -48,8 +48,22 @@ export function OAuthCallbackPage() {
         textAlign: 'center',
       }}
     >
-      <div className="ab-card ab-card-pad" style={{ maxWidth: 440 }}>
-        <div className="ab-section-title" style={{ marginBottom: 6 }}>
+      <div
+        role="status"
+        aria-live="polite"
+        className="ab-card ab-card-pad"
+        style={{ maxWidth: 440 }}
+      >
+        <div
+          className="ab-section-title"
+          style={{
+            marginBottom: 6,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 10,
+          }}
+        >
+          {!closed && <span className="ab-pulse-dot" aria-hidden="true" />}
           {closed ? 'Done' : 'Finalising authorisation…'}
         </div>
         <div className="ab-section-sub">

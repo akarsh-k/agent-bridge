@@ -103,19 +103,13 @@ export function ProvidersPage() {
               </div>
               <div className="ab-list-row-meta">
                 {defaultProviderId === p.id && (
-                  <Pill kind="accent" dot>
-                    Default
-                  </Pill>
+                  <Pill kind="accent">Default</Pill>
                 )}
                 <Pill kind={p.role === 'embedding' ? 'accent' : 'neutral'}>
                   {p.role === 'embedding' ? 'Embedding · workspace' : 'Chat'}
                 </Pill>
-                {!p.defaultModel && (
-                  <Pill kind="warn" dot>
-                    No model
-                  </Pill>
-                )}
-                <Pill kind={p.apiKey.set ? 'success' : 'warn'} dot>
+                {!p.defaultModel && <Pill kind="warn">No model</Pill>}
+                <Pill kind={p.apiKey.set ? 'success' : 'warn'}>
                   {p.apiKey.set ? 'Key set' : 'No key'}
                 </Pill>
                 <Pill kind="neutral">

@@ -1,14 +1,23 @@
 import { serve } from '@hono/node-server'
 import { builtAgentCache } from '@agent-bridge/agents'
+import { runMigrations } from '@agent-bridge/db'
 import {
   getSecretKeyPath,
   loadOrCreateMasterKey,
 } from '@agent-bridge/shared/crypto'
+import { getAgentBridgeVersion } from '@agent-bridge/shared/version'
 import { env } from './env.js'
 import { app } from './app.js'
-import { closeDb } from './db.js'
+import { closeDb, getDb } from './db.js'
 import { closeEventBus } from './event-bus.js'
 import { closeQueues } from './lib/queues.js'
+
+// Print version + commit before anything else so bug reports always
+// have a usable identifier even when the boot fails downstream.
+const buildInfo = getAgentBridgeVersion()
+console.info(
+  `[server] Agent Bridge v${buildInfo.version} (commit ${buildInfo.commit})`,
+)
 
 // Eagerly materialise the data-encryption key on boot so:
 //   (a) the one-time "generated new key" log appears before the first HTTP
@@ -17,6 +26,24 @@ import { closeQueues } from './lib/queues.js'
 //       failure, not as a stray 500 the first time someone saves a secret.
 loadOrCreateMasterKey()
 console.info(`[server] data-encryption key ready at ${getSecretKeyPath()}`)
+
+// Apply any pending schema migrations BEFORE accepting traffic. Dev
+// keeps migrations manual (`pnpm db:migrate`) so contributors control
+// timing; production auto-applies on every boot. Drizzle is idempotent
+// — usually a no-op after the first run. A migration failure here is
+// fatal: we'd rather refuse to serve than answer requests against a
+// half-migrated schema.
+if (env.isProd) {
+  try {
+    const result = await runMigrations(getDb())
+    console.info(
+      `[server] migrations applied in ${result.durationMs}ms from ${result.migrationsFolder}`,
+    )
+  } catch (err) {
+    console.error('[server] migration failed; refusing to start:', err)
+    process.exit(1)
+  }
+}
 
 async function closeResources(): Promise<void> {
   // Tear down cached BuiltAgents FIRST so their MCP subprocesses

@@ -231,7 +231,6 @@ export function McpDetailPage({ id }: { id: string }) {
           <div className="ab-detail-meta">
             <Pill kind="neutral">{conn.transport}</Pill>
             <McpAuthBadge auth={conn.auth} />
-            <span>·</span>
             <span className="ab-mono">{conn.commandOrUrl}</span>
           </div>
         </div>
@@ -411,44 +410,43 @@ export function McpDetailPage({ id }: { id: string }) {
           </div>
         </div>
         {discoverErr && (
-          <div
-            className="ab-field-help"
-            style={{ color: 'var(--danger)' }}
-            role="alert"
-          >
-            {discoverErr}
+          // role="status" — sticks around until the next Discover click;
+          // not a transient flash, so screen readers shouldn't
+          // interrupt on every parent re-render.
+          <div role="status" className="ab-alert ab-alert-danger">
+            <span className="ab-alert-dot" aria-hidden="true" />
+            <div className="ab-alert-body">
+              <div className="ab-alert-title">Discovery failed</div>
+              <div className="ab-alert-sub">{discoverErr}</div>
+            </div>
           </div>
         )}
         {discoverSummary && (
-          <div
-            style={{
-              display: 'flex',
-              gap: 12,
-              alignItems: 'center',
-              flexWrap: 'wrap',
-              padding: '10px 12px',
-              marginBottom: 12,
-              background: 'var(--success-bg)',
-              border: '1px solid rgba(52, 211, 153, 0.22)',
-              borderRadius: 'var(--radius)',
-            }}
-          >
-            <Pill kind="success" dot>
-              Reachable
-            </Pill>
-            <span className="ab-mono" style={{ fontSize: 12, color: 'var(--text)' }}>
-              {discoverSummary.toolCount} tool
-              {discoverSummary.toolCount === 1 ? '' : 's'} ·{' '}
-              {discoverSummary.durationMs}ms
-              {discoverSummary.serverVersion &&
-                ` · server ${discoverSummary.serverVersion}`}
-            </span>
-            <span
-              className="ab-field-help"
-              style={{ margin: 0, marginLeft: 'auto' }}
-            >
-              {discoverSummary.message}
-            </span>
+          // Steady-state success summary — `ab-alert-success` carries
+          // the tone tokens; the `dot` on the Reachable pill is
+          // dropped (Pill `dot` is for live/active states; this is a
+          // settled "discovery returned" result).
+          <div role="status" className="ab-alert ab-alert-success">
+            <span className="ab-alert-dot" aria-hidden="true" />
+            <div className="ab-alert-body">
+              <div className="ab-alert-title">
+                Reachable · {discoverSummary.toolCount} tool
+                {discoverSummary.toolCount === 1 ? '' : 's'}
+              </div>
+              <div className="ab-alert-sub">
+                <span className="ab-mono">
+                  {discoverSummary.durationMs}ms
+                  {discoverSummary.serverVersion &&
+                    ` · server ${discoverSummary.serverVersion}`}
+                </span>
+                {discoverSummary.message && (
+                  <>
+                    {' '}
+                    · {discoverSummary.message}
+                  </>
+                )}
+              </div>
+            </div>
           </div>
         )}
         {tools === null ? (

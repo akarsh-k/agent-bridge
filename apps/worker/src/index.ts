@@ -1,10 +1,12 @@
 import { Queue, Worker } from 'bullmq'
 import { env } from './env.js'
+import { runMigrations } from '@agent-bridge/db'
 import { assertExpectedGitnexusVersion } from '@agent-bridge/shared/gitnexus'
 import { ensureDataDirs } from '@agent-bridge/shared/paths'
 import { loadOrCreateMasterKey } from '@agent-bridge/shared/crypto'
+import { getAgentBridgeVersion } from '@agent-bridge/shared/version'
 import { createRedisConnection } from './redis.js'
-import { closeDb } from './db.js'
+import { closeDb, getDb } from './db.js'
 import { closeEventBus } from './event-bus.js'
 import { QUEUE_NAMES } from './queues.js'
 import { handlePingJob } from './jobs/ping.js'
@@ -33,10 +35,33 @@ import { closeProducerQueues } from './jobs/enqueue.js'
  */
 
 async function main(): Promise<void> {
+  const buildInfo = getAgentBridgeVersion()
+  console.info(
+    `[worker] Agent Bridge v${buildInfo.version} (commit ${buildInfo.commit})`,
+  )
+
   const dirs = ensureDataDirs()
   console.info(`[worker] data dir: ${dirs.dataDir}`)
 
   loadOrCreateMasterKey()
+
+  // Apply any pending migrations before dequeuing jobs. In dev we
+  // skip — the start orchestrator + the backend's own auto-migrate
+  // cover it, and contributors prefer manual `pnpm db:migrate`
+  // timing. In production this is belt-and-braces: if the user
+  // launched the worker directly (without the orchestrator),
+  // migrations still get applied. Drizzle is idempotent.
+  if (env.isProd) {
+    try {
+      const result = await runMigrations(getDb())
+      console.info(
+        `[worker] migrations applied in ${result.durationMs}ms from ${result.migrationsFolder}`,
+      )
+    } catch (err) {
+      console.error('[worker] migration failed; refusing to start:', err)
+      process.exit(1)
+    }
+  }
 
   // Resolve GitNexus against the *worker's* dependency graph, not
   // @agent-bridge/shared's — shared doesn't (and shouldn't) depend on gitnexus.

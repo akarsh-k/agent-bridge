@@ -51,9 +51,7 @@ export function SettingsPage() {
           </div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Pill kind="success" dot>
-            Configured
-          </Pill>
+          <Pill kind="success">Configured</Pill>
           <span className="ab-field-help">
             Rotation flow lands in a follow-up. For now treat the env var as
             the source of truth.
@@ -136,9 +134,7 @@ function AboutCard() {
               Ready
             </Pill>
           ) : (
-            <Pill kind="warn" dot>
-              Not ready
-            </Pill>
+            <Pill kind="warn">Not ready</Pill>
           )}
           {bridgeMsg && (
             <span className="ab-field-help" style={{ margin: 0 }}>

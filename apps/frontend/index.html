@@ -13,16 +13,41 @@
     />
     <script>
       // Synchronous theme bootstrap — runs before React hydrates so
-      // there's no flash of wrong theme. Reads localStorage; falls
-      // through to OS preference when no explicit choice is set.
-      (function () {
+      // there's no flash of wrong theme. ALWAYS writes `data-theme`
+      // to the root (light or dark, never empty) so the dozens of
+      // component-level `[data-theme='light']` rules in shell.css
+      // (chat bubble color, sidebar tuning, brand glyph flips, …)
+      // fire uniformly regardless of whether the user explicitly
+      // picked Light or their OS is set to light + theme=system.
+      // Without this, theme=system leaves the attribute empty, only
+      // @media (prefers-color-scheme) rules apply, and component-
+      // level light polish silently disappears.
+      ;(function () {
         try {
-          var t = localStorage.getItem('ab.theme')
-          if (t === 'light' || t === 'dark') {
-            document.documentElement.dataset.theme = t
+          var explicit = localStorage.getItem('ab.theme')
+          var theme
+          if (explicit === 'light' || explicit === 'dark') {
+            theme = explicit
+          } else {
+            theme = window.matchMedia('(prefers-color-scheme: light)').matches
+              ? 'light'
+              : 'dark'
+            // Follow OS changes live while no explicit pick is stored.
+            // The listener self-suppresses once the user makes an
+            // explicit pick (we re-check localStorage on each fire).
+            window
+              .matchMedia('(prefers-color-scheme: light)')
+              .addEventListener('change', function (e) {
+                if (!localStorage.getItem('ab.theme')) {
+                  document.documentElement.dataset.theme = e.matches
+                    ? 'light'
+                    : 'dark'
+                }
+              })
           }
+          document.documentElement.dataset.theme = theme
         } catch (e) {
-          /* private mode etc — fall through */
+          /* private mode etc — fall through to default dark */
         }
       })()
     </script>
