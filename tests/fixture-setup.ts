@@ -17,7 +17,7 @@
  *   8. Insert `agent_repos` and `repo_edges`.
  *   9. Print a compact status line per step.
  *
- * Required env (set inline at invocation):
+ * Required env (configure in the repo-root `.env`; see `.env.example`):
  *   SMOKE_EMBEDDING_URL    e.g. http://127.0.0.1:8081/v1
  *   SMOKE_EMBEDDING_MODEL  e.g. <model-id>
  * Optional:
@@ -27,7 +27,6 @@
  *
  * Run from repo root:
  *   pnpm test:fixture:setup
- *     (with the SMOKE_* vars exported in your shell)
  */
 
 /* eslint-disable no-console */

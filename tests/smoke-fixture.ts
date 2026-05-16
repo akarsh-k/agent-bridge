@@ -21,7 +21,8 @@
  * Each assertion prints `✓` / `✗` with a one-line diagnostic and the
  * runner exits non-zero on any failure.
  *
- * Required env (same as the setup script):
+ * Required env (same as the setup script — configure in the repo-root
+ * `.env`; see `.env.example`):
  *   SMOKE_EMBEDDING_URL, SMOKE_EMBEDDING_MODEL
  * Optional:
  *   SMOKE_EMBEDDING_API_KEY  bearer token if the endpoint requires auth

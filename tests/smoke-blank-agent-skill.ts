@@ -26,9 +26,9 @@
  *   SMOKE_CHAT_URL    e.g. http://127.0.0.1:8080/v1
  *   SMOKE_CHAT_MODEL  e.g. <your-chat-model-id>
  *
- * Run after `pnpm test:fixture:setup` succeeded with the same env:
- *   SMOKE_CHAT_URL=… SMOKE_CHAT_MODEL=… pnpm test:fixture:setup
- *   SMOKE_CHAT_URL=… SMOKE_CHAT_MODEL=… pnpm test:fixture:skill
+ * Configure these in the repo-root `.env` (see `.env.example`). Then,
+ * after `pnpm test:fixture:setup` has succeeded, run:
+ *   pnpm test:fixture:skill
  */
 
 /* eslint-disable no-console */

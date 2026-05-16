@@ -84,6 +84,8 @@ export { getCurrentWorkingMemory } from './working-memory.js'
 export type { CurrentWorkingMemory } from './working-memory.js'
 export { loadAttachedRepos } from './coding-agent/repo-loader.js'
 export type { LoadAttachedReposInput } from './coding-agent/repo-loader.js'
+export { loadAllRepoEdges } from './inspector/repo-edges.js'
+export type { LoadAllRepoEdgesInput } from './inspector/repo-edges.js'
 export {
   normalizeRemoteUrl,
   urlTail,

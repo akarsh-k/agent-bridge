@@ -1548,5 +1548,7 @@ Two adjacent smokes target other contracts. `smoke-blank-agent-skill.ts`
 verifies operator-authored skills reach the LLM on a `inspector_enabled
 = false` agent (requires `SMOKE_CHAT_*` env pointed at a real chat
 endpoint). `smoke-bridge-registry.ts` exercises the bridge's tool-
-registry build for both inspector-enabled and blank agents without
-invoking the model.
+registry build for both inspector-enabled and blank agents; it runs
+model-free by default and, when `SMOKE_CHAT_*` is set, additionally
+round-trips `inspect_codebase` to assert the wire envelope carries
+`agent_repos` + `repo_edges`.

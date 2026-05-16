@@ -55,6 +55,17 @@ export interface LoadIncomingEdgesInput {
   readonly attached: readonly AttachedRepo[]
 }
 
+export interface LoadAllRepoEdgesInput {
+  readonly db: AgentBridgeDb
+  readonly agentId: string
+  /**
+   * Restrict the result to edges whose BOTH endpoints are attached to
+   * the agent today. Same filtering rationale as the per-endpoint
+   * loaders — an orphaned edge to a detached repo is just noise.
+   */
+  readonly attached: readonly AttachedRepo[]
+}
+
 /** @deprecated Use {@link LoadOutgoingEdgesInput}. Re-exported for callers
  *  that imported the original name; remove once no caller references it. */
 export type LoadEdgesInput = LoadOutgoingEdgesInput
@@ -154,6 +165,43 @@ export async function loadIncomingRepoEdges(
         connector: r.connector,
         description: r.description,
       } satisfies MiniRepoCrossRepoEdge,
+    })
+  }
+  return out
+}
+
+/**
+ * Load every cross-repo edge declared on the agent, filtered to edges
+ * whose both endpoints are currently attached. Used by the bridge's
+ * `inspect_codebase` envelope so the IDE always sees the full repo
+ * topology — not just the slice an individual wrapper expanded.
+ */
+export async function loadAllRepoEdges(
+  input: LoadAllRepoEdgesInput,
+): Promise<MiniRepoCrossRepoEdge[]> {
+  const { db, agentId, attached } = input
+
+  const rows = await db.db
+    .select({
+      fromRepoId: schema.repoEdges.fromRepoId,
+      toRepoId: schema.repoEdges.toRepoId,
+      connector: schema.repoEdges.connector,
+      description: schema.repoEdges.description,
+    })
+    .from(schema.repoEdges)
+    .where(eq(schema.repoEdges.agentId, agentId))
+
+  if (rows.length === 0) return []
+
+  const attachedIds = new Set(attached.map((r) => r.repo_id))
+  const out: MiniRepoCrossRepoEdge[] = []
+  for (const r of rows) {
+    if (!attachedIds.has(r.fromRepoId) || !attachedIds.has(r.toRepoId)) continue
+    out.push({
+      from_repo: r.fromRepoId,
+      to_repo: r.toRepoId,
+      connector: r.connector,
+      description: r.description,
     })
   }
   return out

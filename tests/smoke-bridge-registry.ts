@@ -12,6 +12,12 @@
  * `agents.inspector_enabled` and confirms the "exactly one built-in
  * per agent kind" rule.
  *
+ * Additionally, when `SMOKE_CHAT_URL` + `SMOKE_CHAT_MODEL` are set,
+ * round-trips a `callTool` against the coding helper's inspect tool
+ * and asserts the wire envelope carries `agent_repos` + `repo_edges`
+ * (so the IDE can offer "ask about the connected repo too" follow-ups
+ * without a separate inventory call).
+ *
  * Run after `pnpm test:fixture:setup` succeeds. Same env requirements
  * as the existing smoke (`SMOKE_EMBEDDING_*`).
  */
@@ -151,6 +157,20 @@ async function main(): Promise<void> {
       !toolNames.includes(blankInspect),
       `expected absent: ${blankInspect}`,
     )
+
+    // End-to-end envelope check. Requires a real chat endpoint —
+    // `inspect_codebase` dispatches a full Mastra run, so a placeholder
+    // chat provider won't do. Skip cleanly when the env vars are unset
+    // so the smoke stays runnable with embedder-only setups.
+    const chatUrl = process.env['SMOKE_CHAT_URL']?.trim()
+    const chatModel = process.env['SMOKE_CHAT_MODEL']?.trim()
+    if (chatUrl && chatModel) {
+      await assertInspectCodebaseEnvelope(client, codingInspect)
+    } else {
+      console.log(
+        '⚠ skipping inspect_codebase envelope check — set SMOKE_CHAT_URL + SMOKE_CHAT_MODEL to enable',
+      )
+    }
   } finally {
     await client.close().catch(() => undefined)
   }
@@ -170,6 +190,91 @@ async function main(): Promise<void> {
     console.log(' All checks passed.')
     console.log('═'.repeat(60))
   }
+}
+
+/**
+ * Round-trip the `<slug>__inspect_codebase` MCP tool and validate that
+ * the bridge envelope now carries `agent_repos` + `repo_edges` so the
+ * IDE can offer "ask about the connected repo too" follow-ups without
+ * a separate inventory call.
+ *
+ * The query is intentionally trivial — we don't care which wrappers the
+ * agent's LLM chooses to call; the topology fields are added at the
+ * envelope layer regardless of wrapper activity.
+ */
+async function assertInspectCodebaseEnvelope(
+  client: Client,
+  toolName: string,
+): Promise<void> {
+  const res = await client.callTool({
+    name: toolName,
+    arguments: { query: 'list the repos you have access to' },
+  })
+
+  const content = Array.isArray(res.content) ? res.content : []
+  const first = content[0]
+  if (!first || first.type !== 'text' || typeof first.text !== 'string') {
+    check(
+      'inspect_codebase returned a text envelope',
+      false,
+      `unexpected content shape: ${JSON.stringify(content).slice(0, 200)}`,
+    )
+    return
+  }
+
+  let envelope: Record<string, unknown>
+  try {
+    envelope = JSON.parse(first.text) as Record<string, unknown>
+  } catch (err) {
+    check(
+      'inspect_codebase envelope is valid JSON',
+      false,
+      `${err instanceof Error ? err.message : String(err)}; head=${first.text.slice(0, 120)}`,
+    )
+    return
+  }
+
+  if (envelope['ok'] !== true) {
+    check(
+      'inspect_codebase returned ok=true',
+      false,
+      `envelope=${JSON.stringify(envelope).slice(0, 300)}`,
+    )
+    return
+  }
+
+  const repos = Array.isArray(envelope['agent_repos'])
+    ? (envelope['agent_repos'] as Array<Record<string, unknown>>)
+    : null
+  const repoLabels = repos
+    ? repos.map((r) => String(r['label'] ?? '')).sort()
+    : []
+  check(
+    'envelope.agent_repos lists all 3 fixture repos',
+    repos !== null && repoLabels.length === 3,
+    repos === null
+      ? 'agent_repos missing or not an array'
+      : `labels=[${repoLabels.join(', ')}]`,
+  )
+
+  const edges = Array.isArray(envelope['repo_edges'])
+    ? (envelope['repo_edges'] as Array<Record<string, unknown>>)
+    : null
+  const connectors = edges
+    ? edges.map((e) => String(e['connector'] ?? '')).sort()
+    : []
+  // Fixture seeds two edges: frontend->backend (calls), shared->backend
+  // (type-mirror). Check both connectors are present rather than length
+  // alone so a stale fixture surfaces the right error.
+  const hasCalls = connectors.includes('calls')
+  const hasTypeMirror = connectors.includes('type-mirror')
+  check(
+    'envelope.repo_edges includes the two seeded fixture edges',
+    edges !== null && edges.length === 2 && hasCalls && hasTypeMirror,
+    edges === null
+      ? 'repo_edges missing or not an array'
+      : `connectors=[${connectors.join(', ')}]`,
+  )
 }
 
 function maskPassword(url: string): string {

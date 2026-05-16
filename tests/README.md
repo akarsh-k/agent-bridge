@@ -34,19 +34,22 @@ Your dev DB and data root are never touched.
 
 ## Running
 
+Make sure your local embedder is up (e.g. llama-server), then uncomment
+the `SMOKE_*` block in the repo-root `.env` (copy from `.env.example`
+if you haven't already). Embedding dimensions are auto-probed at
+preflight — no need to declare them.
+
 ```sh
-# 1) make sure your local embedder is up (e.g. llama-server)
-# 2) set the embedder coordinates inline:
-export SMOKE_EMBEDDING_URL=http://127.0.0.1:8081/v1
-export SMOKE_EMBEDDING_MODEL=<your-embedding-model-id>
-# Optional — bearer token if your endpoint requires auth (cloud providers).
-# export SMOKE_EMBEDDING_API_KEY=...
-
-# Embedding dimensions are auto-probed from the endpoint at preflight.
-
 pnpm test:fixture:setup     # builds + indexes; ~30-60s
 pnpm test:fixture           # runs the assertions; ~10-20s
+pnpm test:fixture:bridge    # spawns the MCP bridge subprocess; ~10s
 ```
+
+`SMOKE_EMBEDDING_*` is required for setup and the wrapper smoke.
+`SMOKE_CHAT_*` is optional — when set, `test:fixture:bridge` adds an
+end-to-end check that round-trips `inspect_codebase` and asserts the
+envelope carries `agent_repos` + `repo_edges`. Without it, that single
+assertion skips with a `⚠` line.
 
 ## What the smoke asserts
 

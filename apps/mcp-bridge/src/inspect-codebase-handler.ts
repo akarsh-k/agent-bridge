@@ -10,9 +10,16 @@
  * Wire envelope (D17′):
  *
  *   { ok: true,
- *     mini_repos: MiniRepo[],     // from runs.minirepo_json
- *     prose_summary?: string,     // ≤ 1KB; only when no wrapper ran
- *     warnings: string[] }        // populated from inspector telemetry
+ *     mini_repos: MiniRepo[],         // from runs.minirepo_json
+ *     prose_summary?: string,         // ≤ 1KB; only when no wrapper ran
+ *     agent_repos: AgentRepoSummary[],// every repo attached to the agent
+ *     repo_edges: CrossRepoEdge[],    // operator-curated edges between them
+ *     warnings: string[] }            // populated from inspector telemetry
+ *
+ * `agent_repos` + `repo_edges` are included on every call so the IDE
+ * can prompt the user with "you asked about X; also connected: Y
+ * (calls), Z (deploys-to) — want to ask about those too?" without
+ * needing a separate `list_repos` round-trip.
  *
  * The agent's free-form prose stream is NOT forwarded to the IDE
  * unless no wrapper invocation populated `runs.minirepo_json` — in
@@ -28,7 +35,12 @@
 import { randomUUID } from 'node:crypto'
 import { eq } from 'drizzle-orm'
 
-import { dispatchRun } from '@agent-bridge/agents'
+import {
+  dispatchRun,
+  loadAllRepoEdges,
+  loadAttachedRepos,
+  type MiniRepoCrossRepoEdge,
+} from '@agent-bridge/agents'
 import { runsRepo, schema, type AgentBridgeDb } from '@agent-bridge/db'
 import {
   bridgeStreamId,
@@ -202,11 +214,16 @@ export async function executeInspectCodebase(
       ? truncate(finalRow.outputSummary?.trim() ?? '', PROSE_CAP_INSPECT_FALLBACK)
       : ''
 
+  const warnings: string[] = []
+  const topology = await loadAgentTopology(ctx.db, agent.id, warnings)
+
   const envelope: WireEnvelope = {
     ok: true,
     mini_repos: miniRepos,
     ...(proseSummary.length > 0 ? { prose_summary: proseSummary } : {}),
-    warnings: [],
+    agent_repos: topology.agent_repos,
+    repo_edges: topology.repo_edges,
+    warnings,
   }
   return jsonEnvelope(envelope)
 }
@@ -323,11 +340,16 @@ export async function executePhase7Tool(
     PROSE_CAP_PHASE7,
   )
 
+  const warnings: string[] = []
+  const topology = await loadAgentTopology(ctx.db, agent.id, warnings)
+
   const envelope: WireEnvelope = {
     ok: true,
     mini_repos: miniRepos,
     ...(proseSummary.length > 0 ? { prose_summary: proseSummary } : {}),
-    warnings: [],
+    agent_repos: topology.agent_repos,
+    repo_edges: topology.repo_edges,
+    warnings,
   }
   return jsonEnvelope(envelope)
 }
@@ -338,7 +360,72 @@ interface WireEnvelope {
   readonly ok: true
   readonly mini_repos: readonly unknown[]
   readonly prose_summary?: string
+  /**
+   * All repos attached to this agent — included on every call so the IDE
+   * can show the user "you searched X; also connected: Y, Z" and offer a
+   * follow-up. Not scoped to the repos the wrappers actually touched
+   * (cross-reference `mini_repos[*].files[*].repo_id` for that).
+   */
+  readonly agent_repos: readonly AgentRepoSummary[]
+  /**
+   * Operator-curated directed edges between attached repos. Lets the IDE
+   * surface the relationship ("frontend --calls--> backend") so the user
+   * can decide whether to ask about the other side.
+   */
+  readonly repo_edges: readonly MiniRepoCrossRepoEdge[]
   readonly warnings: readonly string[]
+}
+
+interface AgentRepoSummary {
+  readonly repo_id: string
+  readonly label: string
+  readonly role: string | null
+  readonly description: string | null
+  readonly status: string
+}
+
+interface AgentTopology {
+  readonly agent_repos: readonly AgentRepoSummary[]
+  readonly repo_edges: readonly MiniRepoCrossRepoEdge[]
+}
+
+/**
+ * Fetch the agent's repo inventory + cross-repo edges for inclusion in
+ * the response envelope. Failures fold into `warnings` rather than
+ * killing the call — the IDE still gets `mini_repos`, just without the
+ * topology affordance for this turn.
+ */
+async function loadAgentTopology(
+  db: AgentBridgeDb,
+  agentId: string,
+  warnings: string[],
+): Promise<AgentTopology> {
+  try {
+    const attached = await loadAttachedRepos({ db, agentId })
+    let edges: readonly MiniRepoCrossRepoEdge[] = []
+    try {
+      edges = await loadAllRepoEdges({ db, agentId, attached })
+    } catch (err) {
+      warnings.push(
+        `loadAllRepoEdges failed: ${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+    return {
+      agent_repos: attached.map((r) => ({
+        repo_id: r.repo_id,
+        label: r.label,
+        role: r.role,
+        description: r.description,
+        status: r.status,
+      })),
+      repo_edges: edges,
+    }
+  } catch (err) {
+    warnings.push(
+      `loadAttachedRepos failed: ${err instanceof Error ? err.message : String(err)}`,
+    )
+    return { agent_repos: [], repo_edges: [] }
+  }
 }
 
 /**
