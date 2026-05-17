@@ -8,6 +8,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   memoryScopes,
+  type AgentResponse,
   type AgentThreadSummary,
   type MemoryScope,
   type WorkingMemoryResponse,
@@ -24,6 +25,7 @@ import {
 } from '../../lib/rpc'
 import { Link } from '../../lib/link'
 import { RefreshIcon } from '../../ui/icons'
+import { useNavGuard } from '../../lib/use-nav-guard'
 
 // Two scopes Mastra exposes — `thread` and `resource` — translated to
 // the two surfaces a user actually interacts with:
@@ -94,12 +96,13 @@ export function MemoryTab({ agentId }: { agentId: string }) {
   const [srMessageRange, setSrMessageRange] = useState(2)
   const [srScope, setSrScope] = useState<MemoryScope>('thread')
 
-  const [busy, setBusy] = useState(false)
-
-  if (agent && seededFor !== agent.id) {
-    setSeededFor(agent.id)
-    setEnabled(agent.memoryEnabled)
-    const cfg = agent.memoryConfig ?? null
+  // Reset every local field from the persisted agent. Used by the
+  // initial seed-during-render (when the active agent changes) and
+  // by the nav-guard "Discard" handler. Plain function rather than
+  // useCallback so React Compiler can decide on memoization itself.
+  const seedFromAgent = (a: AgentResponse) => {
+    setEnabled(a.memoryEnabled)
+    const cfg = a.memoryConfig ?? null
     if (cfg?.lastMessages === false) {
       setLastMode('off')
       setLastN(20)
@@ -121,6 +124,11 @@ export function MemoryTab({ agentId }: { agentId: string }) {
     setSrScope(cfg?.semanticRecall?.scope ?? 'thread')
   }
 
+  if (agent && seededFor !== agent.id) {
+    setSeededFor(agent.id)
+    seedFromAgent(agent)
+  }
+
   // Semantic recall depends on the workspace embedding provider — the
   // singleton row with `role='embedding'`. Configure one in the
   // provider library to enable recall.
@@ -133,28 +141,68 @@ export function MemoryTab({ agentId }: { agentId: string }) {
   )
   const semanticPossible = !!embeddingDefault
 
-  if (!agent) return null
+  // Dirty diff: compare each piece of local state to the agent's
+  // persisted memory config. Mirrors the save logic exactly so
+  // post-save dirty drops back to false. Cheap — runs on every
+  // render, no IO.
+  const isDirty = useMemo(() => {
+    if (!agent) return false
+    if (seededFor !== agent.id) return false
+    if (enabled !== agent.memoryEnabled) return true
+    const cfg = agent.memoryConfig ?? null
+    const savedLast = cfg?.lastMessages
+    const wantLast = lastMode === 'off' ? false : lastN
+    if (savedLast !== wantLast) return true
+    if ((cfg?.generateTitle ?? false) !== generateTitle) return true
+    const savedWmEnabled = cfg?.workingMemory?.enabled ?? false
+    if (savedWmEnabled !== wmEnabled) return true
+    if (wmEnabled) {
+      if ((cfg?.workingMemory?.template ?? '') !== wmTemplate.trim()) return true
+      if ((cfg?.workingMemory?.scope ?? 'thread') !== wmScope) return true
+    }
+    const savedSrEnabled = cfg?.semanticRecall !== undefined
+    if (savedSrEnabled !== srEnabled) return true
+    if (srEnabled) {
+      if ((cfg?.semanticRecall?.topK ?? 5) !== srTopK) return true
+      if ((cfg?.semanticRecall?.messageRange ?? 2) !== srMessageRange) return true
+      if ((cfg?.semanticRecall?.scope ?? 'thread') !== srScope) return true
+    }
+    return false
+  }, [
+    agent,
+    seededFor,
+    enabled,
+    lastMode,
+    lastN,
+    generateTitle,
+    wmEnabled,
+    wmTemplate,
+    wmScope,
+    srEnabled,
+    srTopK,
+    srMessageRange,
+    srScope,
+  ])
 
   const save = async () => {
-    setBusy(true)
+    if (!agent) return
+    const config: Record<string, unknown> = {}
+    if (lastMode === 'off') config.lastMessages = false
+    else config.lastMessages = lastN
+    if (generateTitle) config.generateTitle = true
+    if (wmEnabled) {
+      const wm: Record<string, unknown> = { enabled: true, scope: wmScope }
+      if (wmTemplate.trim()) wm.template = wmTemplate.trim()
+      config.workingMemory = wm
+    }
+    if (srEnabled) {
+      config.semanticRecall = {
+        topK: srTopK,
+        messageRange: srMessageRange,
+        scope: srScope,
+      }
+    }
     try {
-      const config: Record<string, unknown> = {}
-      if (lastMode === 'off') config.lastMessages = false
-      else config.lastMessages = lastN
-      if (generateTitle) config.generateTitle = true
-      if (wmEnabled) {
-        const wm: Record<string, unknown> = { enabled: true, scope: wmScope }
-        if (wmTemplate.trim()) wm.template = wmTemplate.trim()
-        config.workingMemory = wm
-      }
-      if (srEnabled) {
-        config.semanticRecall = {
-          topK: srTopK,
-          messageRange: srMessageRange,
-          scope: srScope,
-        }
-      }
-
       await patchAgent(agent.id, {
         memoryEnabled: enabled,
         memoryConfig:
@@ -171,10 +219,23 @@ export function MemoryTab({ agentId }: { agentId: string }) {
             ? e.message
             : 'Save failed',
       )
-    } finally {
-      setBusy(false)
+      throw e
     }
   }
+
+  const discard = () => {
+    if (!agent) return
+    seedFromAgent(agent)
+  }
+
+  useNavGuard('agent-memory', {
+    label: 'Memory',
+    dirty: isDirty,
+    save,
+    discard,
+  })
+
+  if (!agent) return null
 
   return (
     <div>
@@ -184,7 +245,19 @@ export function MemoryTab({ agentId }: { agentId: string }) {
           style={{ display: 'flex', alignItems: 'center', gap: 12 }}
         >
           <div style={{ flex: 1 }}>
-            <div className="ab-section-title">Memory</div>
+            <div
+              className="ab-section-title"
+              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+            >
+              Memory
+              {isDirty && (
+                <span
+                  className="ab-dirty-dot"
+                  aria-label="Unsaved changes in this section"
+                  title="Unsaved · saves when you leave or hit Save all"
+                />
+              )}
+            </div>
             <div className="ab-section-sub">
               Master switch for {agent.name}'s memory subsystem. Turn this
               on to enable any of the three strategies below — recent
@@ -454,11 +527,6 @@ export function MemoryTab({ agentId }: { agentId: string }) {
         )}
       </div>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Button variant="primary" onClick={save} disabled={busy}>
-          {busy ? 'Saving…' : 'Save memory settings'}
-        </Button>
-      </div>
     </div>
   )
 }

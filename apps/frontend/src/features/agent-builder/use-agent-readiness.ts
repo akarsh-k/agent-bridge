@@ -30,7 +30,14 @@ export type ReadinessCheckId =
   | 'attachedRepo'
 
 export type ReadinessAction =
-  | { kind: 'tab'; tab: 'configure' | 'resources' }
+  | {
+      kind: 'tab'
+      tab: 'configure' | 'resources'
+      /** Optional DOM id to scroll into view after the tab mounts. The
+       *  card polls for the element via requestAnimationFrame so it
+       *  works through the tab's Suspense boundary. */
+      scrollTo?: string
+    }
   | { kind: 'open-provider-sheet'; defaultRole: 'chat' | 'embedding' }
   | { kind: 'open-attach-repo-sheet' }
   | { kind: 'navigate'; href: string }
@@ -114,7 +121,11 @@ function computeChecks(
           ? 'Open Configure'
           : 'Add chat provider',
       action: llmProviders.some((p) => p.role === 'chat')
-        ? { kind: 'tab', tab: 'configure' }
+        ? {
+            kind: 'tab',
+            tab: 'configure',
+            scrollTo: 'agent-provider-section',
+          }
         : { kind: 'open-provider-sheet', defaultRole: 'chat' },
     },
   ]

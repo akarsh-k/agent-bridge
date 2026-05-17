@@ -21,6 +21,9 @@ import { toast } from '../../../ui/toast-store'
 import { confirmDialog } from '../../../ui/dialog-store'
 import { useAgentReadiness } from '../../../features/agent-builder/use-agent-readiness'
 import { AgentReadinessCard } from '../../../features/agent-builder/agent-readiness-card'
+import { AgentReadyCelebration } from '../../../features/agent-builder/agent-ready-celebration'
+import { hasCelebratedAgentReady } from '../../../features/agent-builder/agent-ready-celebration-flag'
+import { requestNavigation } from '../../../lib/nav-guard'
 // Code-split the heavier tabs: configure pulls in the build / memory
 // forms, resources pulls in the attached-resources panel + tools tab,
 // chat pulls in the run state machine + SSE plumbing.
@@ -85,6 +88,7 @@ export function AgentDetailPage({
   const agent = agents.find((a) => a.id === id)
   const [menuOpen, setMenuOpen] = useState(false)
   const [, setBusy] = useState(false)
+  const [celebrationOpen, setCelebrationOpen] = useState(false)
 
   // Reset the active tab whenever we navigate to a different agent
   // OR the URL's tab segment changes — "adjust state based on
@@ -102,13 +106,20 @@ export function AgentDetailPage({
     setTab(initial)
   }
   const setTabAndUrl = (next: TabId) => {
-    setTab(next)
-    setSeededTab(next)
-    const path =
-      next === 'configure' ? `/agents/${id}` : `/agents/${id}/${next}`
-    if (window.location.pathname !== path) {
-      navigate(path, { replace: true })
-    }
+    // Tab switches change React state AND the URL; both have to flip
+    // together or the UI gets out of sync. Route through the nav
+    // guard once so a dirty form can intercept the whole thing; the
+    // inner navigate uses skipGuard since the outer request already
+    // consulted.
+    requestNavigation(() => {
+      setTab(next)
+      setSeededTab(next)
+      const path =
+        next === 'configure' ? `/agents/${id}` : `/agents/${id}/${next}`
+      if (window.location.pathname !== path) {
+        navigate(path, { replace: true, skipGuard: true })
+      }
+    })
   }
 
   // If the user landed on a legacy URL (`/agents/<id>/build`), rewrite
@@ -179,6 +190,29 @@ export function AgentDetailPage({
   // unconditionally. When the agent isn't loaded yet, the hook
   // returns a zero state and the card / pill simply render nothing.
   const readiness = useAgentReadiness(id)
+
+  // One-time per-agent "your agent is ready" celebration. Fires
+  // when the full readiness checklist passes — system prompt + chat
+  // provider for any agent, plus embedding provider + attached repo
+  // for inspector / coding-helper agents. The flag is per-agent so
+  // each new agent gets its own milestone.
+  //
+  // Implemented via the "adjust state during render" pattern so the
+  // state change batches with the render that flipped readiness.
+  const ready = readiness.ready
+  const [readinessSeededFor, setReadinessSeededFor] = useState(id)
+  const [readinessSeen, setReadinessSeen] = useState(false)
+  if (readinessSeededFor !== id) {
+    // Navigated to a different agent — recheck readiness for that
+    // agent on its next render.
+    setReadinessSeededFor(id)
+    setReadinessSeen(false)
+  } else if (ready && !readinessSeen) {
+    setReadinessSeen(true)
+    if (!hasCelebratedAgentReady(id)) {
+      setCelebrationOpen(true)
+    }
+  }
 
   if (!agent) {
     // Distinguish "still loading" from "doesn't exist". Without this
@@ -298,6 +332,15 @@ export function AgentDetailPage({
       <AgentReadinessCard
         agentId={agent.id}
         onNavigateToTab={(t) => setTabAndUrl(t)}
+      />
+
+      <AgentReadyCelebration
+        open={celebrationOpen}
+        agentId={agent.id}
+        agentName={agent.name}
+        onClose={() => setCelebrationOpen(false)}
+        onOpenChat={() => setTabAndUrl('chat')}
+        onOpenBridge={() => navigate('/bridge')}
       />
 
       <Tabs value={tab} onChange={setTabAndUrl} tabs={TABS} />

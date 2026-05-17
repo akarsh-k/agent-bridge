@@ -2137,6 +2137,104 @@ button.ab-list-row {
   background: var(--success);
 }
 
+/* ---- Save dock + dirty dot ---------------------------------------------- */
+/* Sticky footer that aggregates every dirty section inside the agent
+ * Configure tab. Renders nothing when clean; slides up from the
+ * bottom when any nav-guard is registered. Discard all / Save all
+ * sit inline so the user has a one-click persistence path without
+ * having to navigate to trigger the on-leave modal.
+ *
+ * The dirty-dot below is the section-level companion: a small
+ * warn-coloured circle next to the section title so the user has
+ * point-of-interaction confirmation in addition to the dock's
+ * page-level summary. */
+.ab-configure-tab {
+  position: relative;
+  /* Bottom padding so the sticky dock never covers the last form
+   * field. Matches the dock's height + breathing room. */
+  padding-bottom: 76px;
+}
+.ab-save-dock {
+  position: sticky;
+  bottom: 12px;
+  left: 0;
+  right: 0;
+  margin-top: 18px;
+  z-index: 6;
+  animation: ab-save-dock-in 220ms var(--ease-out);
+}
+.ab-save-dock-inner {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 14px 10px 16px;
+  border-radius: var(--radius-lg);
+  border: 1px solid var(--warn-border);
+  background: color-mix(in srgb, var(--warn-bg) 70%, var(--surface));
+  box-shadow:
+    0 8px 24px -10px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+  backdrop-filter: blur(10px);
+}
+.ab-save-dock-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.ab-save-dock-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 22%, transparent);
+}
+.ab-save-dock-label {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+}
+.ab-save-dock-label strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.ab-save-dock-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+@keyframes ab-save-dock-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Quiet inline dirty marker shown next to a section's title.
+ * Smaller and softer than the previous warn pill so the dock
+ * carries the page-level signal alone — this is just a glance for
+ * the user who's mid-edit. */
+.ab-dirty-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 18%, transparent);
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
 /* ---- Loading row --------------------------------------------------------- */
 /* Tiny "still working…" affordance: pulsing dot + dim label. Used by
  * tab-switch suspense fallbacks and any place we need a one-liner

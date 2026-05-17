@@ -19,6 +19,26 @@ import { useAgentReadiness, type ReadinessAction } from './use-agent-readiness'
 import { AttachRepoSheet } from './attach-repo-sheet'
 import { ProviderCreateSheet } from '../library/provider-create-sheet'
 
+/**
+ * Poll for an element by id and smooth-scroll to it once it mounts.
+ * The target tab is lazy-loaded, so the element doesn't exist on the
+ * frame the tab switch fires — but it will within a few frames. The
+ * 30-frame ceiling (~500ms at 60fps) caps the wait so we don't keep
+ * polling forever if the user clicked away.
+ */
+function scrollIntoViewWhenReady(id: string, maxAttempts = 30): void {
+  let attempts = 0
+  const tick = () => {
+    const el = document.getElementById(id)
+    if (el) {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
+    if (++attempts < maxAttempts) requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
+}
+
 export function AgentReadinessCard({
   agentId,
   onNavigateToTab,
@@ -35,11 +55,16 @@ export function AgentReadinessCard({
   if (ready) return null
 
   const runAction = (action: ReadinessAction) => {
-    if (action.kind === 'tab') onNavigateToTab(action.tab)
-    else if (action.kind === 'open-attach-repo-sheet') setAttachRepoOpen(true)
-    else if (action.kind === 'open-provider-sheet')
+    if (action.kind === 'tab') {
+      onNavigateToTab(action.tab)
+      if (action.scrollTo) scrollIntoViewWhenReady(action.scrollTo)
+    } else if (action.kind === 'open-attach-repo-sheet') {
+      setAttachRepoOpen(true)
+    } else if (action.kind === 'open-provider-sheet') {
       setProviderSheetRole(action.defaultRole)
-    else if (action.kind === 'navigate') navigate(action.href)
+    } else if (action.kind === 'navigate') {
+      navigate(action.href)
+    }
   }
 
   return (

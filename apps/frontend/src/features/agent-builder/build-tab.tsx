@@ -1,17 +1,28 @@
 /**
- * Profile section — Identity + Provider. Identity auto-saves on the
- * 800ms debounce; provider commits via an explicit Save (since the
- * change can affect cost/behavior). The agent does not own a model
- * field — the chosen provider's `defaultModel` is what runs.
+ * Profile section — Identity + Provider. There is no inline Save
+ * affordance: edits stay in local state and only persist when the
+ * user tries to navigate away (in-app tab switch, sidebar nav, or
+ * browser close), at which point the global NavGuardModal asks
+ * Save / Discard / Stay. A small "Unsaved" pill in the section
+ * header is the only ambient indicator that work isn't persisted.
+ *
+ * Why no inline button: per request — we want a quieter editing
+ * surface and use the modal as the single decision point. The
+ * trade-off is that the user has no one-click "save now" in the
+ * page; in practice they save by navigating somewhere and choosing
+ * "Save & continue" on the modal.
+ *
+ * The agent does not own a model field — the chosen provider's
+ * `defaultModel` is what runs.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useWorkspace } from '../../lib/workspace-context'
 import { Dropdown, type DropdownOption } from '../../ui/dropdown'
 import { toast } from '../../ui/toast-store'
 import { ApiError } from '../../lib/rpc'
-import { Button } from '../../ui/button'
 import { Pill } from '../../ui/pill'
+import { useNavGuard } from '../../lib/use-nav-guard'
 import { ContextBudgetCard } from './context-budget-card'
 
 const LOCAL_KINDS = new Set(['llama_cpp', 'ollama', 'openai_compatible'])
@@ -20,22 +31,13 @@ export function BuildTab({ agentId }: { agentId: string }) {
   const { agents, llmProviders, patchAgent } = useWorkspace()
   const agent = agents.find((a) => a.id === agentId)
 
-  // We track the agent id we've reset for; whenever it changes we
-  // re-seed the form via the "adjust state based on props" pattern.
+  // Re-seed via the "adjust state based on props" pattern whenever the
+  // active agent changes — keeps form state in sync without a useEffect.
   const [seededFor, setSeededFor] = useState<string | null>(null)
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [providerId, setProviderId] = useState<string | null>(null)
-
-  // ─── Debounced auto-save ──────────────────────────────────────────
-  // Identity fields auto-save 800ms after the last edit. Provider
-  // change is manual-save (cost/behavior implications).
-  const [autoSaveState, setAutoSaveState] = useState<
-    'idle' | 'pending' | 'saving' | 'saved' | 'error'
-  >('idle')
-  const [savedAt, setSavedAt] = useState<number | null>(null)
-  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const draft = useMemo(
     () => ({
@@ -47,99 +49,68 @@ export function BuildTab({ agentId }: { agentId: string }) {
     [name, slug, systemPrompt, providerId],
   )
 
-  // Identity fields — auto-saved on the 800ms debounce.
-  const isIdentityDirty = useMemo(() => {
+  const isDirty = useMemo(() => {
     if (!agent) return false
     if (seededFor !== agent.id) return false
     return (
       draft.name !== agent.name ||
       draft.slug !== agent.slug ||
-      draft.systemPrompt !== agent.systemPrompt
+      draft.systemPrompt !== agent.systemPrompt ||
+      draft.llmProviderId !== agent.llmProviderId
     )
-  }, [agent, seededFor, draft.name, draft.slug, draft.systemPrompt])
+  }, [agent, seededFor, draft])
 
-  // Provider — manual save only.
-  const isProviderDirty = useMemo(() => {
-    if (!agent) return false
-    if (seededFor !== agent.id) return false
-    return draft.llmProviderId !== agent.llmProviderId
-  }, [agent, seededFor, draft.llmProviderId])
-
-  const [manualSaving, setManualSaving] = useState(false)
-
+  // Browser-tab close / refresh guard. Native prompt only — modern
+  // browsers ignore custom messages.
   useEffect(() => {
-    if (!agent) return
-    if (!isIdentityDirty) return
-    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
-    let cancelled = false
-    autoSaveTimer.current = setTimeout(async () => {
-      if (cancelled) return
+    if (!isDirty) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [isDirty])
+
+  // Register an in-app nav guard while dirty. The modal aggregates
+  // every dirty section under the agent (Identity, Memory, …) and
+  // calls save/discard on each when the user resolves it.
+  useNavGuard('agent-build', {
+    label: 'Identity',
+    dirty: isDirty,
+    save: async () => {
+      if (!agent) return
       if (!draft.name) {
-        setAutoSaveState('error')
-        return
+        toast.error('Name is required before saving.')
+        throw new Error('name required')
       }
-      setAutoSaveState('saving')
       try {
         await patchAgent(agent.id, {
           name: draft.name,
           slug: draft.slug,
           systemPrompt: draft.systemPrompt,
+          llmProviderId: draft.llmProviderId,
         })
-        if (!cancelled) {
-          setAutoSaveState('saved')
-          setSavedAt(Date.now())
-        }
+        toast.success('Identity saved')
       } catch (e) {
-        if (cancelled) return
-        setAutoSaveState('error')
         toast.error(
           e instanceof ApiError
             ? e.message
             : e instanceof Error
               ? e.message
-              : 'Auto-save failed',
+              : 'Save failed',
         )
+        throw e
       }
-    }, 800)
-    queueMicrotask(() => {
-      if (!cancelled) setAutoSaveState('pending')
-    })
-    return () => {
-      cancelled = true
-      if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
-    }
-  }, [
-    agent,
-    isIdentityDirty,
-    draft.name,
-    draft.slug,
-    draft.systemPrompt,
-    patchAgent,
-  ])
-
-  const manualSaveProvider = async (): Promise<void> => {
-    if (!agent) return
-    setManualSaving(true)
-    try {
-      await patchAgent(agent.id, { llmProviderId: providerId })
-      toast.success('Provider saved')
-    } catch (e) {
-      toast.error(
-        e instanceof ApiError
-          ? e.message
-          : e instanceof Error
-            ? e.message
-            : 'Save failed',
-      )
-    } finally {
-      setManualSaving(false)
-    }
-  }
-
-  const discardProviderChanges = (): void => {
-    if (!agent) return
-    setProviderId(agent.llmProviderId)
-  }
+    },
+    discard: () => {
+      if (!agent) return
+      setName(agent.name)
+      setSlug(agent.slug)
+      setSystemPrompt(agent.systemPrompt)
+      setProviderId(agent.llmProviderId)
+    },
+  })
 
   if (agent && seededFor !== agent.id) {
     setSeededFor(agent.id)
@@ -183,32 +154,6 @@ export function BuildTab({ agentId }: { agentId: string }) {
 
   return (
     <div>
-      {isProviderDirty && (
-        <div className="ab-save-bar">
-          <span className="ab-save-bar-status">
-            <span className="ab-pulse-dot" aria-hidden />
-            Unsaved provider change
-          </span>
-          <div className="ab-save-bar-actions">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={discardProviderChanges}
-              disabled={manualSaving}
-            >
-              Discard
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => void manualSaveProvider()}
-              disabled={manualSaving}
-            >
-              {manualSaving ? 'Saving…' : 'Save changes'}
-            </Button>
-          </div>
-        </div>
-      )}
       {/* Identity */}
       <div className="ab-card ab-card-pad ab-form-section">
         <div className="ab-section-head">
@@ -221,6 +166,13 @@ export function BuildTab({ agentId }: { agentId: string }) {
                   : 'Build your own agent'}
               </Pill>
             </span>
+            {isDirty && (
+              <span
+                className="ab-dirty-dot"
+                aria-label="Unsaved changes in this section"
+                title="Unsaved · saves when you leave or hit Save all"
+              />
+            )}
           </div>
           <div className="ab-section-sub">
             How the agent introduces itself when called from your IDE.
@@ -287,43 +239,14 @@ export function BuildTab({ agentId }: { agentId: string }) {
             </span>
           </div>
         </div>
-        <div
-          style={{
-            marginTop: 14,
-            display: 'flex',
-            justifyContent: 'flex-end',
-            alignItems: 'center',
-            gap: 10,
-            fontSize: 12,
-            color: 'var(--text-muted)',
-          }}
-        >
-          {autoSaveState === 'pending' && <span>Saving in a moment…</span>}
-          {autoSaveState === 'saving' && (
-            <>
-              <span className="ab-pulse-dot" />
-              <span>Saving…</span>
-            </>
-          )}
-          {autoSaveState === 'saved' && savedAt !== null && (
-            <SavedAgo since={savedAt} />
-          )}
-          {autoSaveState === 'error' && (
-            <span style={{ color: 'var(--danger)' }}>
-              Auto-save failed
-            </span>
-          )}
-          {autoSaveState === 'idle' && !isIdentityDirty && savedAt !== null && (
-            <SavedAgo since={savedAt} />
-          )}
-          {autoSaveState === 'idle' && !isIdentityDirty && savedAt === null && (
-            <span>All changes saved.</span>
-          )}
-        </div>
       </div>
 
       {/* Provider */}
-      <div className="ab-card ab-card-pad ab-form-section">
+      <div
+        id="agent-provider-section"
+        className="ab-card ab-card-pad ab-form-section"
+        style={{ scrollMarginTop: 80 }}
+      >
         <div className="ab-section-head">
           <div className="ab-section-title">Provider</div>
           <div className="ab-section-sub">
@@ -356,56 +279,9 @@ export function BuildTab({ agentId }: { agentId: string }) {
             )}
           </div>
         </div>
-        {isProviderDirty && (
-          <div
-            style={{
-              marginTop: 14,
-              display: 'flex',
-              gap: 8,
-              justifyContent: 'flex-end',
-              alignItems: 'center',
-            }}
-          >
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={discardProviderChanges}
-              disabled={manualSaving}
-            >
-              Discard
-            </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => void manualSaveProvider()}
-              disabled={manualSaving}
-            >
-              {manualSaving ? 'Saving…' : 'Save changes'}
-            </Button>
-          </div>
-        )}
       </div>
 
       <ContextBudgetCard agentId={agentId} />
     </div>
   )
-}
-
-
-function SavedAgo({ since }: { since: number }) {
-  const [now, setNow] = useState(since)
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 1000)
-    return () => clearInterval(id)
-  }, [])
-  const delta = Math.max(0, now - since)
-  const label =
-    delta < 4_000
-      ? 'Saved just now'
-      : delta < 60_000
-        ? `Saved ${Math.round(delta / 1000)}s ago`
-        : delta < 60 * 60_000
-          ? `Saved ${Math.floor(delta / 60_000)}m ago`
-          : `Saved ${Math.floor(delta / (60 * 60_000))}h ago`
-  return <span style={{ color: 'var(--success)' }}>{label}</span>
 }

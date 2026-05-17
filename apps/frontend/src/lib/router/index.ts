@@ -20,6 +20,7 @@
  */
 
 import { useSyncExternalStore } from 'react'
+import { requestNavigation } from '../nav-guard'
 
 export const PUSH_EVENT = 'agentbridge:pushstate'
 
@@ -41,16 +42,35 @@ export function usePathname(): string {
   )
 }
 
-/** Programmatic navigation. Fires the same event `<Link>` uses internally. */
-export function navigate(to: string, opts: { replace?: boolean } = {}): void {
-  const current = window.location.pathname + window.location.search
-  if (to === current && !opts.replace) return
-  if (opts.replace) {
-    window.history.replaceState({}, '', to)
-  } else {
-    window.history.pushState({}, '', to)
+/**
+ * Programmatic navigation. Fires the same event `<Link>` uses internally.
+ *
+ * Routes through `requestNavigation` so a registered dirty-form guard
+ * (see `lib/nav-guard`) can hold the navigation and surface the global
+ * "unsaved changes" modal. Set `skipGuard: true` to bypass the guard
+ * — used by callers that already consulted the guard themselves (e.g.
+ * the agent detail page's tab switcher, where React state and URL
+ * both have to flip together).
+ */
+export function navigate(
+  to: string,
+  opts: { replace?: boolean; skipGuard?: boolean } = {},
+): void {
+  const apply = () => {
+    const current = window.location.pathname + window.location.search
+    if (to === current && !opts.replace) return
+    if (opts.replace) {
+      window.history.replaceState({}, '', to)
+    } else {
+      window.history.pushState({}, '', to)
+    }
+    window.dispatchEvent(new Event(PUSH_EVENT))
   }
-  window.dispatchEvent(new Event(PUSH_EVENT))
+  if (opts.skipGuard) {
+    apply()
+  } else {
+    requestNavigation(apply)
+  }
 }
 
 /**

@@ -27,6 +27,7 @@ import { Sidebar } from './_chrome/sidebar'
 import { Topbar, type Crumb } from './_chrome/topbar'
 import { ToastHost } from '../ui/toast'
 import { DialogHost } from '../ui/dialog'
+import { NavGuardModal } from '../ui/nav-guard-modal'
 import { CommandPalette } from '../ui/command-palette'
 import { openPalette } from '../ui/command-palette-store'
 import { KeyboardHelp } from '../ui/keyboard-help'
@@ -231,6 +232,7 @@ export function AppLayout() {
       <AppGrid />
       <ToastHost />
       <DialogHost />
+      <NavGuardModal />
       <CommandPalette />
       <KeyboardHelp />
     </WorkspaceProvider>
