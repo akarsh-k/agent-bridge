@@ -30,6 +30,20 @@ export function NavGuardModal() {
 
   useEffect(() => subscribePendingNav(setPending), [])
 
+  // The modal is a global host — it stays mounted and its state
+  // outlives any single show/hide cycle. Reset transient UI state
+  // (busy spinner, prior-failure block) whenever a fresh pending nav
+  // arrives so the next cycle starts clean. "Adjust state based on
+  // props" pattern — no useEffect → no cascading render churn.
+  const [seenPending, setSeenPending] = useState<PendingNav | null>(pending)
+  if (seenPending !== pending) {
+    setSeenPending(pending)
+    if (pending) {
+      setBusy(false)
+      setFailedIds([])
+    }
+  }
+
   useEffect(() => {
     if (!pending) return
     const onKey = (e: KeyboardEvent) => {
@@ -56,13 +70,18 @@ export function NavGuardModal() {
     results.forEach((r, i) => {
       if (r.status === 'rejected') failed.push(pending.guards[i]!.id)
     })
+    // Always reset busy — the modal is a global host (mounted once
+    // at the app shell, hidden via `return null`), so its state
+    // outlives any single show/hide cycle. Without this reset,
+    // success leaves `busy=true` and the next time the modal
+    // re-opens every button is disabled.
+    setBusy(false)
     if (failed.length === 0) {
       pending.proceed()
     } else {
       // Each form's save() should have toasted its own error message;
       // we surface the section ids as a backup hint.
       setFailedIds(failed)
-      setBusy(false)
     }
   }
 
