@@ -18,9 +18,6 @@
 import { hc } from 'hono/client'
 import type { AppType } from 'backend'
 import type {
-  AgentExportBundle,
-  AgentImportInput,
-  AgentImportResponse,
   BridgeToolCreateInput,
   BridgeToolResponse,
   BridgeToolUpdateInput,
@@ -261,32 +258,6 @@ export async function getRepoGraph(
     fetch(url.toString(), { method: 'GET' }),
   )
   return res.graph
-}
-
-// ─── Agent export / import helpers ───────────────────────────────────────
-
-export async function exportAgentBundle(
-  agentId: string,
-): Promise<AgentExportBundle> {
-  const res = await callApi<{ ok: true; bundle: AgentExportBundle }>(
-    fetch(
-      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/export`,
-      { method: 'GET' },
-    ),
-  )
-  return res.bundle
-}
-
-export async function importAgentBundle(
-  input: AgentImportInput,
-): Promise<AgentImportResponse> {
-  return callApi<AgentImportResponse>(
-    fetch(`${apiBaseUrl}/api/agents/import`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(input),
-    }),
-  )
 }
 
 // ─── Bridge tools ────────────────────────────────────────────────────────

@@ -14,7 +14,6 @@ import { secureHeaders } from 'hono/secure-headers'
 import { z } from 'zod'
 import { onUnhandledError, httpError } from './lib/errors.js'
 import { agentConfigEventsRouter } from './routes/agent-config-events.js'
-import { agentExportRouter } from './routes/agent-export.js'
 import { agentTokenEstimateRouter } from './routes/agent-token-estimate.js'
 import { agentWorkingMemoryRouter } from './routes/agent-working-memory.js'
 import { agentMcpToolsRouter } from './routes/agent-mcp-tools.js'
@@ -98,7 +97,6 @@ const api = new Hono()
   })
   .route('/health', healthRouter)
   .route('/agents', agentsRouter)
-  .route('/agents', agentExportRouter)
   .route('/agents/:agentId/repos', agentReposRouter)
   .route('/agents/:agentId/repo-relationships', repoRelationshipsRouter)
   .route('/agents/:agentId/mcp-tools', agentMcpToolsRouter)

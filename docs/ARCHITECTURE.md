@@ -1684,7 +1684,7 @@ working-memory + Jinja interaction on local templates.
 `/api/agents/:agentId/…` (`agents`, `skills`, `tools`, `bridge-tools`,
 `agent-runs`, `agent-threads`, `agent-config-events`,
 `agent-mcp-tools`, `agent-repos`, `agent-token-estimate`,
-`agent-working-memory`, `agent-export`). Workspace-global resources
+`agent-working-memory`). Workspace-global resources
 mount at the API root (`llm-providers`, `mcp-connections`, `repos`,
 `runs`, `worker-jobs`, `bridge`). Read-only system surface lives under
 `/api/system/…` (`system-tools`, `system-skill`). SSE streaming runs

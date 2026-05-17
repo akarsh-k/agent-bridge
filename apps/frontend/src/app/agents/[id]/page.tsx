@@ -9,7 +9,7 @@
 
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useWorkspace } from '../../../lib/workspace-context'
-import { ApiError, exportAgentBundle } from '../../../lib/rpc'
+import { ApiError } from '../../../lib/rpc'
 import { navigate } from '../../../lib/router'
 import { Button } from '../../../ui/button'
 import { Pill } from '../../../ui/pill'
@@ -252,29 +252,6 @@ export function AgentDetailPage({
               />
               <div className="ab-menu" role="menu">
                 <MenuItem
-                  label="Export bundle"
-                  onClick={async () => {
-                    setMenuOpen(false)
-                    setBusy(true)
-                    try {
-                      const bundle = await exportAgentBundle(agent.id)
-                      downloadJson(bundle, `${agent.slug}.json`)
-                      toast.success('Bundle exported')
-                    } catch (e) {
-                      toast.error(
-                        e instanceof ApiError
-                          ? e.message
-                          : e instanceof Error
-                            ? e.message
-                            : 'Export failed',
-                      )
-                    } finally {
-                      setBusy(false)
-                    }
-                  }}
-                />
-                <div className="ab-menu-divider" />
-                <MenuItem
                   label="Delete agent…"
                   danger
                   onClick={async () => {
@@ -421,17 +398,4 @@ function EllipsisIcon() {
   )
 }
 
-function downloadJson(data: unknown, filename: string): void {
-  const blob = new Blob([JSON.stringify(data, null, 2)], {
-    type: 'application/json',
-  })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  setTimeout(() => URL.revokeObjectURL(url), 0)
-}
 
