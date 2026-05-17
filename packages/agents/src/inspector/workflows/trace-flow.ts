@@ -37,7 +37,7 @@ import {
 } from '../gitnexus-callers.js'
 import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
 import { readFileChunkFromDisk } from '../read-source.js'
-import { resolveRepoFromHint } from '../repo-resolve.js'
+import { resolveRepoForWrapper } from '../run-context.js'
 import type {
   MiniRepo,
   MiniRepoChunk,
@@ -92,14 +92,18 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
     return result
   }
 
-  const resolution = resolveRepoFromHint({ repos, hint: repoHint, allowAll: false })
-  if (resolution.ok === false || resolution.ok === 'all') {
+  const resolution = resolveRepoForWrapper({ repos, hint: repoHint, allowAll: false })
+  if (resolution.ok !== true) {
     const message =
       resolution.ok === 'all'
         ? 'trace_flow operates on a single repo; pass `repo_hint`.'
         : resolution.message
+    const summary =
+      resolution.ok === 'clarify'
+        ? `${message}. Pick one: ${resolution.candidates.map((c) => c.label).join(', ')}.`
+        : `Could not resolve repo: ${message}`
     const result = finalizeMiniRepo(emptyDraft({
-      summary: `Could not resolve repo: ${message}`,
+      summary,
       warnings: [message],
     }))
     await emitMinirepoBuilt('trace_flow', result)
@@ -221,6 +225,13 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
     graph_subset: { nodes, edges },
     cross_repo_edges: [],
     warnings,
+    resolved_repo: {
+      repo_id: target.repo_id,
+      label: target.label,
+      matched_signal: resolution.matched_signal,
+    },
+    confidence:
+      nodes.length >= 5 ? 'high' : nodes.length >= 1 ? 'medium' : 'low',
   })
 
   await emitMinirepoBuilt('trace_flow', miniRepo)

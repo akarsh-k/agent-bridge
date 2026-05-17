@@ -38,7 +38,12 @@ import {
   dispatchRun,
   loadAllRepoEdges,
   loadAttachedRepos,
+  resolveRepoFromHint,
+  type IdePreResolvedRepo,
   type MiniRepoCrossRepoEdge,
+  type MultiSignalHint,
+  type RepoResolveResult,
+  type SuggestedReply,
 } from '@agent-bridge/agents'
 import { runsRepo, schema, type AgentBridgeDb } from '@agent-bridge/db'
 import {
@@ -148,12 +153,66 @@ export async function executeInspectCodebase(
     return mcpError('Missing required arg "query" — pass a question or instruction.')
   }
 
-  // Optional hint plumbing: the wrappers each accept their own
-  // `repo_hint`, but if the IDE supplied one we prepend a one-line
-  // hint to the prompt so the agent's LLM picks the right repo on the
-  // first try without round-tripping through `list_repos`.
-  const hintLine = formatHintLine(rawArgs)
-  const userPrompt = hintLine.length > 0 ? `${hintLine}\n\n${query}` : query
+  // ─── Pre-resolve the IDE's structured hint ─────────────────────────
+  // Cursor / Claude Code / Codex pass `remote_url` (from `git remote
+  // get-url origin`), `local_folder`, and a free-form `repo_hint`.
+  // We resolve once here, BEFORE dispatching a run, so:
+  //   1. The most reliable signal (`remote_url`) drives the choice
+  //      without the inspector agent's LLM having to re-extract it
+  //      from a prose hint block (which is where the historical
+  //      quote-mangling failure mode came from).
+  //   2. If the hint is ambiguous in a multi-repo agent, we can
+  //      short-circuit with a structured `clarification` envelope so
+  //      the IDE LLM gets a pre-baked picker instead of watching the
+  //      agent retry the same wrong wrapper call until its step
+  //      budget runs out.
+  const warnings: string[] = []
+  const attached = await loadAttachedReposWithWarning(ctx.db, agent.id, warnings)
+  const ideHint = readIdeHint(rawArgs)
+  let preResolved: IdePreResolvedRepo | null = null
+
+  if (hasAnyHintSignal(ideHint)) {
+    const resolution = resolveRepoFromHint({
+      repos: attached,
+      hint: ideHint,
+      allowAll: false,
+    })
+    if (resolution.ok === 'clarify') {
+      // Short-circuit: don't dispatch a run. Return a clarification
+      // envelope the IDE LLM can act on directly.
+      const topology = await loadAgentTopology(ctx.db, agent.id, warnings)
+      const envelope: WireEnvelope = {
+        ok: true,
+        mini_repos: [],
+        clarification: {
+          kind: resolution.kind,
+          candidates: resolution.candidates.map((r) => agentRepoSummaryFromAttached(r)),
+          allow_all_repos: resolution.allow_all_repos,
+          message: resolution.message,
+          suggested_replies: resolution.suggested_replies,
+        },
+        agent_repos: topology.agent_repos,
+        repo_edges: topology.repo_edges,
+        warnings,
+      }
+      return jsonEnvelope(envelope)
+    }
+    if (resolution.ok === false) {
+      // Only `no_repos` lands here (the resolver promotes `not_found`
+      // / `ambiguous` to `clarify` when a multi-repo agent has any
+      // candidates). `no_repos` is unrecoverable for this call.
+      return mcpError(resolution.message)
+    }
+    if (resolution.ok === true) {
+      preResolved = {
+        repo: resolution.repo,
+        matched_signal: resolution.matched_signal,
+      }
+    }
+    // `resolution.ok === 'all'` is impossible here: we pass
+    // `allowAll: false` because `inspect_codebase` is a coordinator,
+    // not a wrapper. Wrappers themselves opt in to fan-out.
+  }
 
   const runId = randomUUID()
   const streamId = bridgeStreamId(runId)
@@ -171,7 +230,14 @@ export async function executeInspectCodebase(
   // forwards `prompt` verbatim to Mastra. Format intentionally subtle
   // (one italic line, no headings, no `tool:` field) to avoid weak
   // local models misreading it as "tool already invoked, just answer."
-  const prompt = formatCallsiteBlock(callsite) + userPrompt
+  //
+  // Note: we no longer prepend `[IDE hint: …]` to the prompt. The
+  // structured hint flows through `idePreResolvedRepo` on the
+  // dispatcher input — wrappers consume it directly when the LLM
+  // doesn't supply its own `repo_hint`, so the LLM never has to
+  // re-translate the IDE's signal. The historical quote-mangling
+  // failure mode (`"\"react-stripe-js\""`) goes away.
+  const prompt = formatCallsiteBlock(callsite) + query
 
   await runsRepo.createRun(ctx.db, {
     id: runId,
@@ -190,6 +256,7 @@ export async function executeInspectCodebase(
       streamId,
       prompt,
       threadId: ctx.threadId,
+      idePreResolvedRepo: preResolved,
     })
   } catch (err) {
     return mcpError(err instanceof Error ? err.message : 'Bridge dispatch failed')
@@ -213,13 +280,21 @@ export async function executeInspectCodebase(
       ? truncate(finalRow.outputSummary?.trim() ?? '', PROSE_CAP_INSPECT_FALLBACK)
       : ''
 
-  const warnings: string[] = []
   const topology = await loadAgentTopology(ctx.db, agent.id, warnings)
 
   const envelope: WireEnvelope = {
     ok: true,
     mini_repos: miniRepos,
     ...(proseSummary.length > 0 ? { prose_summary: proseSummary } : {}),
+    ...(preResolved
+      ? {
+          resolved_repo: {
+            repo_id: preResolved.repo.repo_id,
+            label: preResolved.repo.label,
+            matched_signal: preResolved.matched_signal,
+          },
+        }
+      : {}),
     agent_repos: topology.agent_repos,
     repo_edges: topology.repo_edges,
     warnings,
@@ -360,9 +435,26 @@ interface WireEnvelope {
   readonly mini_repos: readonly unknown[]
   readonly prose_summary?: string
   /**
-   * All repos attached to this agent — included on every call so the IDE
-   * can show the user "you searched X; also connected: Y, Z" and offer a
-   * follow-up. Not scoped to the repos the wrappers actually touched
+   * The single repo the bridge resolved from the IDE's structured hint
+   * (`remote_url` / `local_folder` / `repo_hint`). Present whenever the
+   * IDE supplied at least one signal AND it resolved to a unique repo.
+   * The IDE can render "asked about X" without re-deriving from
+   * `mini_repos`. Omitted when no hint was supplied or the agent has a
+   * single repo and no hint was needed.
+   */
+  readonly resolved_repo?: ResolvedRepoSlice
+  /**
+   * Set when the IDE's hint was ambiguous in a multi-repo agent. The
+   * bridge skips the run dispatch and surfaces a pre-baked picker so
+   * the IDE LLM can either ask the human or pick a `suggested_replies`
+   * entry and retry. Mutually exclusive with `mini_repos.length > 0`
+   * in practice (we short-circuit before dispatch).
+   */
+  readonly clarification?: ClarificationSlice
+  /**
+   * All repos attached to this agent. Included on every call so the IDE
+   * can show the user "you searched X; also connected: Y, Z" and offer
+   * a follow-up. Not scoped to the repos the wrappers actually touched
    * (cross-reference `mini_repos[*].files[*].repo_id` for that).
    */
   readonly agent_repos: readonly AgentRepoSummary[]
@@ -373,6 +465,21 @@ interface WireEnvelope {
    */
   readonly repo_edges: readonly MiniRepoCrossRepoEdge[]
   readonly warnings: readonly string[]
+}
+
+interface ResolvedRepoSlice {
+  readonly repo_id: string
+  readonly label: string
+  /** Which IDE-supplied signal produced the match (`remote_url` / `role` / etc.). */
+  readonly matched_signal: string
+}
+
+interface ClarificationSlice {
+  readonly kind: 'repo_or_all' | 'single_repo_required'
+  readonly candidates: readonly AgentRepoSummary[]
+  readonly allow_all_repos: boolean
+  readonly message: string
+  readonly suggested_replies: readonly SuggestedReply[]
 }
 
 interface AgentRepoSummary {
@@ -484,16 +591,63 @@ function stringArg(
   return trimmed.length > 0 ? trimmed : null
 }
 
-function formatHintLine(rawArgs: Record<string, unknown>): string {
-  const parts: string[] = []
-  for (const k of ['repo_hint', 'remote_url', 'local_folder', 'branch'] as const) {
-    const v = rawArgs[k]
-    if (typeof v === 'string' && v.trim().length > 0) {
-      parts.push(`${k}=${v.trim()}`)
-    }
+/**
+ * Pull the four structured-hint fields off the IDE's tool args. Returns
+ * a `MultiSignalHint` ready to pass to `resolveRepoFromHint`. Trimming
+ * + emptiness handling is done inside the resolver.
+ */
+function readIdeHint(rawArgs: Record<string, unknown>): MultiSignalHint {
+  return {
+    repo_hint: stringArg(rawArgs, 'repo_hint'),
+    remote_url: stringArg(rawArgs, 'remote_url'),
+    local_folder: stringArg(rawArgs, 'local_folder'),
+    branch: stringArg(rawArgs, 'branch'),
   }
-  if (parts.length === 0) return ''
-  return `[IDE hint: ${parts.join(', ')}]`
+}
+
+function hasAnyHintSignal(h: MultiSignalHint): boolean {
+  return (
+    (h.repo_hint?.length ?? 0) > 0 ||
+    (h.remote_url?.length ?? 0) > 0 ||
+    (h.local_folder?.length ?? 0) > 0
+  )
+}
+
+/**
+ * `loadAttachedRepos` wrapped so a DB failure doesn't kill the call.
+ * The pre-resolution step needs the repo list; if loading fails we
+ * push a warning and return an empty list so the caller's resolver
+ * short-circuits on `no_repos`.
+ */
+async function loadAttachedReposWithWarning(
+  db: AgentBridgeDb,
+  agentId: string,
+  warnings: string[],
+) {
+  try {
+    return await loadAttachedRepos({ db, agentId })
+  } catch (err) {
+    warnings.push(
+      `loadAttachedRepos failed: ${err instanceof Error ? err.message : String(err)}`,
+    )
+    return []
+  }
+}
+
+function agentRepoSummaryFromAttached(r: {
+  readonly repo_id: string
+  readonly label: string
+  readonly role: string | null
+  readonly description: string | null
+  readonly status: string
+}): AgentRepoSummary {
+  return {
+    repo_id: r.repo_id,
+    label: r.label,
+    role: r.role,
+    description: r.description,
+    status: r.status,
+  }
 }
 
 async function refreshAgent(

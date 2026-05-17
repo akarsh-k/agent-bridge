@@ -37,7 +37,7 @@ import {
 } from '../keyword-search.js'
 import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
 import { readFileChunkFromDisk } from '../read-source.js'
-import { resolveRepoFromHint } from '../repo-resolve.js'
+import { resolveRepoForWrapper } from '../run-context.js'
 import type {
   MiniRepo,
   MiniRepoChunk,
@@ -87,10 +87,14 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
     return result
   }
 
-  const resolution = resolveRepoFromHint({ repos, hint: repoHint, allowAll: true })
-  if (resolution.ok === false) {
+  const resolution = resolveRepoForWrapper({ repos, hint: repoHint, allowAll: true })
+  if (resolution.ok === false || resolution.ok === 'clarify') {
+    const summary =
+      resolution.ok === 'clarify'
+        ? `${resolution.message}. Pick one: ${resolution.candidates.map((c) => c.label).join(', ')}.`
+        : `Could not resolve repo: ${resolution.message}`
     const result = finalizeMiniRepo(emptyDraft({
-      summary: `Could not resolve repo: ${resolution.message}`,
+      summary,
       warnings: [resolution.message],
     }))
     await emitMinirepoBuilt('debug_help', result)
@@ -269,6 +273,19 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
     graph_subset: { nodes: [], edges: [] },
     cross_repo_edges: [],
     warnings,
+    // `debug_help` can run in single-repo OR all-repo mode (allowAll:
+    // true). Only stamp `resolved_repo` when the resolver picked one.
+    ...(resolution.ok === true
+      ? {
+          resolved_repo: {
+            repo_id: resolution.repo.repo_id,
+            label: resolution.repo.label,
+            matched_signal: resolution.matched_signal,
+          },
+        }
+      : {}),
+    confidence:
+      files.length >= 3 ? 'high' : files.length >= 1 ? 'medium' : 'low',
   })
   await emitMinirepoBuilt('debug_help', miniRepo)
   await emitToolResult({

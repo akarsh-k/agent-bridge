@@ -50,14 +50,12 @@ import {
   type KeywordHit,
 } from '../keyword-search.js'
 import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
-import {
-  resolveRepoFromHint,
-  type RepoResolveResult,
-} from '../repo-resolve.js'
+import type { RepoResolveResult } from '../repo-resolve.js'
 import {
   emitInspectorEvent,
   getInspectorRunContext,
   previewJson,
+  resolveRepoForWrapper,
 } from '../run-context.js'
 import type {
   MiniRepo,
@@ -129,13 +127,13 @@ export async function runFindInCodebase(
     return result
   }
 
-  const resolution = resolveRepoFromHint({
+  const resolution = resolveRepoForWrapper({
     repos,
     hint: repoHint,
     allowAll: true,
   })
 
-  if (resolution.ok === false) {
+  if (resolution.ok === false || resolution.ok === 'clarify') {
     const result = finalizeMiniRepo(emptyDraft({
       summary: buildResolutionFailureSummary(resolution),
       warnings: [resolution.message],
@@ -398,6 +396,17 @@ export async function runFindInCodebase(
     graph_subset: { nodes: [], edges: [] },
     cross_repo_edges: [],
     warnings,
+    ...(resolution.ok === true
+      ? {
+          resolved_repo: {
+            repo_id: resolution.repo.repo_id,
+            label: resolution.repo.label,
+            matched_signal: resolution.matched_signal,
+          },
+        }
+      : {}),
+    confidence:
+      files.length >= 3 ? 'high' : files.length >= 1 ? 'medium' : 'low',
   })
 
   // The shared `emitMinirepoBuilt` also persists the mini-repo
@@ -472,8 +481,13 @@ function emptyDraft(args: {
 }
 
 function buildResolutionFailureSummary(
-  res: Extract<RepoResolveResult, { ok: false }>,
+  res: Extract<RepoResolveResult, { ok: false } | { ok: 'clarify' }>,
 ): string {
+  if (res.ok === 'clarify') {
+    const labels = res.candidates.map((c) => c.label)
+    const list = labels.length > 0 ? ` Pick one: ${labels.join(', ')}.` : ''
+    return `${res.message}.${list}`.trim()
+  }
   const candidates =
     res.candidates.length > 0
       ? `Available: ${res.candidates.join(', ')}.`

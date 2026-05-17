@@ -26,7 +26,7 @@ import {
 } from '../gitnexus-callers.js'
 import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
 import { readFileChunkFromDisk } from '../read-source.js'
-import { resolveRepoFromHint } from '../repo-resolve.js'
+import { resolveRepoForWrapper } from '../run-context.js'
 import type {
   MiniRepo,
   MiniRepoChunk,
@@ -75,14 +75,18 @@ export async function runUnderstandModule(
     return result
   }
 
-  const resolution = resolveRepoFromHint({ repos, hint: repoHint, allowAll: false })
-  if (resolution.ok === false || resolution.ok === 'all') {
+  const resolution = resolveRepoForWrapper({ repos, hint: repoHint, allowAll: false })
+  if (resolution.ok !== true) {
     const message =
       resolution.ok === 'all'
         ? 'understand_module operates on a single repo; pass `repo_hint`.'
         : resolution.message
+    const summary =
+      resolution.ok === 'clarify'
+        ? `${message}. Pick one: ${resolution.candidates.map((c) => c.label).join(', ')}.`
+        : `Could not resolve repo: ${message}`
     const result = finalizeMiniRepo(emptyDraft({
-      summary: `Could not resolve repo: ${message}`,
+      summary,
       warnings: [message],
     }))
     await emitMinirepoBuilt('understand_module', result)
@@ -252,6 +256,15 @@ export async function runUnderstandModule(
     graph_subset: { nodes: [], edges: [] },
     cross_repo_edges: [],
     warnings,
+    resolved_repo: {
+      repo_id: target.repo_id,
+      label: target.label,
+      matched_signal: resolution.matched_signal,
+    },
+    // "high" when the anchor + at least one dependency landed; "medium"
+    // when only the anchor came back; "low" when nothing did.
+    confidence:
+      files.length >= 2 ? 'high' : files.length >= 1 ? 'medium' : 'low',
   })
 
   await emitMinirepoBuilt('understand_module', miniRepo)

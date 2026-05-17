@@ -23,12 +23,38 @@ import { AsyncLocalStorage } from 'node:async_hooks'
 
 import type { AgentBridgeDb } from '@agent-bridge/db'
 import { runsRepo } from '@agent-bridge/db'
-import type { RunEvent } from '@agent-bridge/shared'
+import type { AttachedRepo, RunEvent } from '@agent-bridge/shared'
 import type { EventBus } from '@agent-bridge/shared/event-bus'
 
 import type { RunRedactor } from '../run-redactor.js'
+import {
+  resolveRepoFromHint,
+  type MatchedSignal,
+  type RepoResolveResult,
+} from './repo-resolve.js'
 
 // ─── Shape ───────────────────────────────────────────────────────────────
+
+/**
+ * Result of the bridge handler's pre-resolution of the IDE's structured
+ * `inspect_codebase` hint. The bridge resolves once at run start (using
+ * `remote_url` / `local_folder` / `repo_hint` from the IDE) and stuffs
+ * the result here; wrappers consult this BEFORE their LLM-supplied
+ * `repo_hint` arg.
+ *
+ * Why: the IDE knows the remote URL from `git remote get-url origin`,
+ * which is the highest-fidelity signal we can get. Passing it through
+ * structured plumbing avoids the LLM-as-translator step (e.g. the
+ * model echoing `repo_hint: "\"react-stripe-js\""` with quote chars).
+ *
+ * `null` for chat-tab runs (no IDE handshake) and bridge runs where the
+ * IDE didn't supply any hint signals. Wrappers fall back to their own
+ * resolution path in that case.
+ */
+export interface IdePreResolvedRepo {
+  readonly repo: AttachedRepo
+  readonly matched_signal: MatchedSignal
+}
 
 export interface InspectorRunContext {
   readonly db: AgentBridgeDb
@@ -40,6 +66,8 @@ export interface InspectorRunContext {
   /** Per-agent fan-out channel `agent:<uuid>` (Activity panel). */
   readonly agentStreamId: string
   readonly agentId: string
+  /** See `IdePreResolvedRepo`. `null` outside the bridge path. */
+  readonly idePreResolvedRepo: IdePreResolvedRepo | null
 }
 
 const storage = new AsyncLocalStorage<InspectorRunContext>()
@@ -117,6 +145,29 @@ export async function emitInspectorEvent(
       err,
     )
   }
+}
+
+// ─── Wrapper-side resolver helper ────────────────────────────────────────
+
+/**
+ * Thin wrapper around `resolveRepoFromHint` that automatically pulls
+ * the bridge-handler pre-resolved repo out of run context and threads
+ * it as a `fallback`. Wrappers call this instead of `resolveRepoFromHint`
+ * directly so the IDE's structured signal flows down without each
+ * wrapper having to know about run context.
+ */
+export function resolveRepoForWrapper(args: {
+  readonly repos: readonly AttachedRepo[]
+  readonly hint: string | null | undefined
+  readonly allowAll?: boolean
+}): RepoResolveResult {
+  const ctx = getInspectorRunContext()
+  return resolveRepoFromHint({
+    repos: args.repos,
+    hint: args.hint,
+    allowAll: args.allowAll,
+    fallback: ctx?.idePreResolvedRepo ?? null,
+  })
 }
 
 // ─── Preview helpers ─────────────────────────────────────────────────────

@@ -90,7 +90,10 @@ import {
 } from '@agent-bridge/shared'
 import type { EventBus } from '@agent-bridge/shared/event-bus'
 import { createRunRedactor, type RunRedactor } from './run-redactor.js'
-import { runWithInspectorContext } from './inspector/run-context.js'
+import {
+  runWithInspectorContext,
+  type IdePreResolvedRepo,
+} from './inspector/run-context.js'
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -135,6 +138,15 @@ export interface DispatchRunInput {
   readonly threadId?: string
   /** Defaults to `agent:<agentId>` if the agent has memory enabled. */
   readonly resourceId?: string
+  /**
+   * Optional IDE-pre-resolved repo. The bridge handler runs the multi-
+   * signal resolver against the IDE's `inspect_codebase` args once at
+   * run start and threads the result through here so wrappers consult
+   * it before falling back to the LLM-supplied `repo_hint`. `null` /
+   * `undefined` for chat-tab runs (no IDE handshake) and bridge runs
+   * where the IDE supplied no hint signals.
+   */
+  readonly idePreResolvedRepo?: IdePreResolvedRepo | null
 }
 
 /**
@@ -383,6 +395,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
         streamId,
         agentStreamId,
         agentId,
+        idePreResolvedRepo: input.idePreResolvedRepo ?? null,
       },
       async () => {
         const output = await builtAgent.stream(prompt, streamOptions)

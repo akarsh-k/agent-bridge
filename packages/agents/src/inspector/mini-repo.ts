@@ -22,6 +22,7 @@
  */
 
 import type {
+  InspectorGroundedness,
   MiniRepo,
   MiniRepoChunk,
   MiniRepoFile,
@@ -142,6 +143,33 @@ export function finalizeMiniRepo(
     tokens_used: tokens,
     tokens_cap: cap,
     warnings,
+    ...(draft.resolved_repo ? { resolved_repo: draft.resolved_repo } : {}),
+    // Default groundedness: count files vs files-with-chunks. Wrappers
+    // can pass an explicit `groundedness` on the draft to override
+    // (e.g. `list_repos` which has no files but isn't ungrounded).
+    ...(draft.groundedness !== undefined
+      ? { groundedness: draft.groundedness }
+      : { groundedness: deriveGroundedness(files) }),
+    ...(draft.confidence ? { confidence: draft.confidence } : {}),
+  }
+}
+
+/**
+ * Compute the default groundedness for a finalized mini-repo. Files are
+ * "grounded" when they carry at least one chunk (actual code content
+ * was surfaced); files with zero chunks were path-only matches.
+ */
+function deriveGroundedness(
+  files: readonly MiniRepoFile[],
+): InspectorGroundedness {
+  let grounded = 0
+  for (const f of files) {
+    if (f.chunks.length > 0) grounded += 1
+  }
+  return {
+    claims: files.length,
+    grounded,
+    ungrounded: files.length - grounded,
   }
 }
 

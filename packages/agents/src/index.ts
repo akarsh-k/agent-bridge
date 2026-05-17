@@ -95,3 +95,12 @@ export {
   INSPECTOR_SYSTEM_PROMPT_VERSION,
   loadInspectorSystemPrompt,
 } from './inspector/system-prompt.js'
+export { resolveRepoFromHint } from './inspector/repo-resolve.js'
+export type {
+  MatchedSignal,
+  MultiSignalHint,
+  RepoResolveResult,
+  ScoreEntry,
+  SuggestedReply,
+} from './inspector/repo-resolve.js'
+export type { IdePreResolvedRepo } from './inspector/run-context.js'

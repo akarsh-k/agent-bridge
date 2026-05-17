@@ -68,6 +68,51 @@ export interface MiniRepoCrossRepoEdge {
 }
 
 /**
+ * Which repo a single-repo wrapper invocation worked on, and which IDE
+ * signal (or fallback) produced the choice. Populated by wrappers that
+ * call `resolveRepoForWrapper` and got back `ok: true`. Lets the chat
+ * card / Logs panel answer "why this repo?" without re-running the
+ * scorer.
+ */
+export interface MiniRepoResolvedRepo {
+  readonly repo_id: string
+  readonly label: string
+  /** Mirrors `MatchedSignal` from repo-resolve.ts (kept as string here
+   *  so this type stays dependency-free and importable from the frontend). */
+  readonly matched_signal: string
+}
+
+/**
+ * Self-graded confidence the wrapper attached to its own result. `low`
+ * MUST co-occur with at least one entry in `MiniRepo.warnings` so the
+ * reader can see WHY the wrapper isn't confident.
+ *
+ * Computed deterministically from observable signals (number of hits,
+ * graph coverage, candidate-extraction success), NOT from an LLM
+ * self-grade. Keeps the value cheap and reproducible.
+ */
+export type InspectorConfidence = 'high' | 'medium' | 'low'
+
+/**
+ * Coarse breakdown of "claims vs evidence" for the wrapper's output.
+ * For inspector wrappers (deterministic, evidence-first) this is a
+ * direct count of files-referenced vs files-with-actual-content:
+ *
+ *   - `claims`: total files in the mini-repo's `files[]`.
+ *   - `grounded`: files with `chunks.length > 0` (actual code excerpts).
+ *   - `ungrounded`: `claims - grounded` (path-only matches with no
+ *     content surfaced).
+ *
+ * Surfaces the difference between "I found 8 candidate files" (claims)
+ * and "I read 3 of them and showed you their code" (grounded).
+ */
+export interface InspectorGroundedness {
+  readonly claims: number
+  readonly grounded: number
+  readonly ungrounded: number
+}
+
+/**
  * The full structured payload one wrapper invocation appends to
  * `runs.minirepo_json` (D17). Counts/sizes also feed the
  * `inspector.minirepo.built` event (A4).
@@ -90,6 +135,21 @@ export interface MiniRepo {
   readonly tokens_used: number
   readonly tokens_cap: number
   readonly warnings: readonly string[]
+  /**
+   * Which repo this wrapper invocation resolved to, with the IDE signal
+   * (or fallback) that drove the choice. Omitted for fan-out calls
+   * (`find_in_codebase` across all repos) where there's no single
+   * resolved repo, and for `list_repos` which doesn't resolve.
+   */
+  readonly resolved_repo?: MiniRepoResolvedRepo
+  /**
+   * Wrapper's self-assessment of result quality. See `InspectorConfidence`.
+   * Optional so wrappers can opt in incrementally; the bridge envelope
+   * surfaces it on each mini-repo when present.
+   */
+  readonly confidence?: InspectorConfidence
+  /** Evidence vs claims breakdown. See `InspectorGroundedness`. */
+  readonly groundedness?: InspectorGroundedness
 }
 
 /** Token cap per-mini-repo (`docs/ARCHITECTURE.md §10` §5). */

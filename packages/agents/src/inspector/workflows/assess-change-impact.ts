@@ -36,7 +36,7 @@ import {
   loadOutgoingRepoEdges,
   type CrossRepoEdgeWithTarget,
 } from '../repo-edges.js'
-import { resolveRepoFromHint } from '../repo-resolve.js'
+import { resolveRepoForWrapper } from '../run-context.js'
 import type {
   MiniRepo,
   MiniRepoCrossRepoEdge,
@@ -101,14 +101,18 @@ export async function runAssessChangeImpact(
     return result
   }
 
-  const resolution = resolveRepoFromHint({ repos, hint: repoHint, allowAll: false })
-  if (resolution.ok === false || resolution.ok === 'all') {
+  const resolution = resolveRepoForWrapper({ repos, hint: repoHint, allowAll: false })
+  if (resolution.ok !== true) {
     const message =
       resolution.ok === 'all'
         ? 'assess_change_impact operates on a single primary repo; pass `repo_hint`.'
         : resolution.message
+    const summary =
+      resolution.ok === 'clarify'
+        ? `${message}. Pick one: ${resolution.candidates.map((c) => c.label).join(', ')}.`
+        : `Could not resolve repo: ${message}`
     const result = finalizeMiniRepo(emptyDraft({
-      summary: `Could not resolve repo: ${message}`,
+      summary,
       warnings: [message],
     }))
     await emitMinirepoBuilt('assess_change_impact', result)
@@ -136,6 +140,15 @@ export async function runAssessChangeImpact(
       graph_subset: { nodes: [], edges: [] },
       cross_repo_edges: [],
       warnings: [],
+      resolved_repo: {
+        repo_id: target.repo_id,
+        label: target.label,
+        matched_signal: resolution.matched_signal,
+      },
+      // "add" is a deterministic empty-blast-radius result; high
+      // confidence that there's nothing to find, not low confidence
+      // that we missed something.
+      confidence: 'high',
     })
     await emitMinirepoBuilt('assess_change_impact', miniRepo)
     await emitToolResult({
@@ -358,6 +371,13 @@ export async function runAssessChangeImpact(
     graph_subset: { nodes: [], edges: [] },
     cross_repo_edges: crossEdges,
     warnings,
+    resolved_repo: {
+      repo_id: target.repo_id,
+      label: target.label,
+      matched_signal: resolution.matched_signal,
+    },
+    confidence:
+      files.length >= 3 ? 'high' : files.length >= 1 ? 'medium' : 'low',
   })
 
   await emitMinirepoBuilt('assess_change_impact', miniRepo)
