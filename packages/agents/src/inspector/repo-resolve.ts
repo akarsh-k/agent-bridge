@@ -118,7 +118,7 @@ export interface ResolveInput {
    * Optional pre-resolved repo to use as a default when `hint` is empty
    * (e.g. the bridge handler's structured-signal pre-resolution lives
    * here). LLM-supplied hints still take precedence so a multi-repo
-   * agent can follow cross-repo edges without being locked to the IDE's
+   * agent can follow cross-repo relationships without being locked to the IDE's
    * pick.
    */
   readonly fallback?: {

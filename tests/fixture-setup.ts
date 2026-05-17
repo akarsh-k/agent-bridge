@@ -14,7 +14,7 @@
  *      into `<source>/`, `git init` + commit, flip status to
  *      `'indexing'`, call the worker's `handleIndexRepoJob` directly
  *      (no BullMQ).
- *   8. Insert `agent_repos` and `repo_edges`.
+ *   8. Insert `agent_repos` and `repo_relationships`.
  *   9. Print a compact status line per step.
  *
  * Required env (configure in the repo-root `.env`; see `.env.example`):
@@ -50,7 +50,7 @@ import {
   FIXTURE_BLANK_AGENT,
   FIXTURE_BLANK_SKILL,
   FIXTURE_CHAT_PROVIDER,
-  FIXTURE_EDGES,
+  FIXTURE_RELATIONSHIPS,
   FIXTURE_EMBEDDING_PROVIDER,
   FIXTURE_REPOS,
   FIXTURE_REPOS_DIR,
@@ -174,7 +174,7 @@ async function main(): Promise<void> {
     const agentId = await seedAgent(db, chatProviderId)
     const repoIds = await seedAndIndexRepos(db)
     await seedAgentRepos(db, agentId, repoIds)
-    await seedRepoEdges(db, agentId, repoIds)
+    await seedRepoRelationships(db, agentId, repoIds)
     // Blank-agent fixture for the bridge-registry smoke. No repos
     // attached, inspector_enabled=false. Verifies the bridge exposes
     // only `<slug>__ask_agent` for these.
@@ -236,7 +236,7 @@ async function wipeAndRecreateDataRoot(): Promise<void> {
 async function wipeFixtureRows(db: AgentBridgeDb): Promise<void> {
   log('▸ clearing prior fixture rows…')
   // Order matters: child rows before parents.
-  await db.pool.query(`DELETE FROM repo_edges`)
+  await db.pool.query(`DELETE FROM repo_relationships`)
   await db.pool.query(`DELETE FROM agent_repos`)
   await db.pool.query(`DELETE FROM run_events`)
   await db.pool.query(`DELETE FROM runs`)
@@ -445,17 +445,17 @@ async function seedAgentRepos(
   }
 }
 
-async function seedRepoEdges(
+async function seedRepoRelationships(
   db: AgentBridgeDb,
   agentId: string,
   repoIds: Map<string, string>,
 ): Promise<void> {
-  log('▸ writing repo_edges…')
-  for (const edge of FIXTURE_EDGES) {
+  log('▸ writing repo_relationships…')
+  for (const edge of FIXTURE_RELATIONSHIPS) {
     const fromId = repoIds.get(edge.fromSlug)
     const toId = repoIds.get(edge.toSlug)
-    if (!fromId || !toId) throw new Error(`edge ${edge.fromSlug}→${edge.toSlug} missing repo id`)
-    await db.db.insert(schema.repoEdges).values({
+    if (!fromId || !toId) throw new Error(`relationship ${edge.fromSlug}→${edge.toSlug} missing repo id`)
+    await db.db.insert(schema.repoRelationships).values({
       agentId,
       fromRepoId: fromId,
       toRepoId: toId,

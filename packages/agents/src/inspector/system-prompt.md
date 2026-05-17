@@ -28,7 +28,7 @@ Each wrapper returns a **mini-repo**: a structured object with:
 - `summary`: one paragraph from the wrapper. cite this in your reply.
 - `files[]`: matched files with `repo_label`, `path`, `chunks[]`, `why`.
 - `graph_subset`: nodes + edges (from `trace_flow`).
-- `cross_repo_edges[]`: operator-curated relationships (from
+- `cross_repo_relationships[]`: operator-curated relationships (from
   `assess_change_impact`).
 - `expansions[]`: term variants the wrapper searched for.
 - `warnings[]`: anything the wrapper could not do.

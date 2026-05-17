@@ -16,9 +16,9 @@
  *
  *   - When `SMOKE_CHAT_URL` + `SMOKE_CHAT_MODEL` are set, run full
  *     `inspect_codebase` calls and assert:
- *       - default envelope OMITS `agent_repos` / `repo_edges`
- *       - envelope INCLUDES `next_actions` when focal repo has edges
- *       - `with_topology: true` brings `agent_repos` / `repo_edges` back
+ *       - default envelope OMITS `agent_repos` / `repo_relationships`
+ *       - envelope INCLUDES `next_actions` when focal repo has relationships
+ *       - `with_topology: true` brings `agent_repos` / `repo_relationships` back
  *       - structured `remote_url` hint resolves with
  *         `matched_signal: 'remote_url'`
  *
@@ -251,7 +251,7 @@ function parseEnvelope(
  * This path is LLM-free: the bridge handler resolves the hint
  * pre-dispatch, sees a multi-repo agent with no matching candidate,
  * and short-circuits with `{clarification: {...}, agent_repos,
- * repo_edges}`. The wire envelope is the only thing under test.
+ * repo_relationships}`. The wire envelope is the only thing under test.
  */
 async function assertClarificationShortCircuit(
   client: Client,
@@ -345,9 +345,9 @@ async function assertDefaultEnvelopeFocused(
     `agent_repos=${String(envelope['agent_repos'])}`,
   )
   check(
-    'default envelope: repo_edges OMITTED',
-    envelope['repo_edges'] === undefined,
-    `repo_edges=${String(envelope['repo_edges'])}`,
+    'default envelope: repo_relationships OMITTED',
+    envelope['repo_relationships'] === undefined,
+    `repo_relationships=${String(envelope['repo_relationships'])}`,
   )
   const resolved = envelope['resolved_repo'] as
     | { label?: unknown; matched_signal?: unknown }
@@ -385,9 +385,9 @@ async function assertDefaultEnvelopeFocused(
 }
 
 /**
- * `with_topology: true` → expect `agent_repos` + `repo_edges` to come
+ * `with_topology: true` → expect `agent_repos` + `repo_relationships` to come
  * back as in the pre-change behavior, AND `next_actions` still present.
- * Same fixture seeds 3 repos + 2 edges; we re-check both connectors.
+ * Same fixture seeds 3 repos + 2 relationships; we re-check both connectors.
  */
 async function assertWithTopologyEnvelope(
   client: Client,
@@ -413,19 +413,19 @@ async function assertWithTopologyEnvelope(
     repos === null ? 'missing' : `count=${repos.length}`,
   )
 
-  const edges = Array.isArray(envelope['repo_edges'])
-    ? (envelope['repo_edges'] as Array<Record<string, unknown>>)
+  const relationships = Array.isArray(envelope['repo_relationships'])
+    ? (envelope['repo_relationships'] as Array<Record<string, unknown>>)
     : null
-  const connectors = edges
-    ? edges.map((e) => String(e['connector'] ?? '')).sort()
+  const connectors = relationships
+    ? relationships.map((e) => String(e['connector'] ?? '')).sort()
     : []
   check(
-    'with_topology: repo_edges includes both seeded fixture edges',
-    edges !== null &&
-      edges.length === 2 &&
+    'with_topology: repo_relationships includes both seeded fixture relationships',
+    relationships !== null &&
+      relationships.length === 2 &&
       connectors.includes('calls') &&
       connectors.includes('type-mirror'),
-    edges === null ? 'missing' : `connectors=[${connectors.join(', ')}]`,
+    relationships === null ? 'missing' : `connectors=[${connectors.join(', ')}]`,
   )
   // next_actions should still be computed alongside the full topology.
   check(

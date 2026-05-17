@@ -84,13 +84,13 @@ function buildListReposMiniRepo(repos: readonly AttachedRepo[]): MiniRepo {
       expansions: [],
       files: [],
       graph_subset: { nodes: [], edges: [] },
-      cross_repo_edges: [],
+      cross_repo_relationships: [],
       warnings: ['no_repos_attached'],
     })
   }
 
   // Render the inventory inline in `summary` so the LLM picks it up
-  // even from a heavily-truncated mini-repo. `cross_repo_edges` is
+  // even from a heavily-truncated mini-repo. `cross_repo_relationships` is
   // left empty here. `assess_change_impact` is responsible for
   // that data when it actually lands.
   const lines = repos.map((r) => {
@@ -114,7 +114,7 @@ function buildListReposMiniRepo(repos: readonly AttachedRepo[]): MiniRepo {
     expansions: [],
     files: [],
     graph_subset: { nodes: [], edges: [] },
-    cross_repo_edges: [],
+    cross_repo_relationships: [],
     warnings: [],
   })
 }

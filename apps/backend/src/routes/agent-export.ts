@@ -4,7 +4,7 @@
  *   - `GET  /api/agents/:id/export`   — returns a JSON bundle of the agent
  *     and its owned resources, suitable for re-import on another install.
  *   - `POST /api/agents/import`        — accepts a bundle and creates the
- *     agent + skills + tools + repo attachments + edges + MCP allowlist
+ *     agent + skills + tools + repo attachments + relationships + MCP allowlist
  *     in one transaction.
  *
  * Bundle shape lives in `@agent-bridge/shared` → `agentExportBundleSchema`.
@@ -65,12 +65,12 @@ export const agentExportRouter = new Hono()
         })
       }
 
-      // Walk skills, tools, attached repos, edges, MCP allowlist, and
+      // Walk skills, tools, attached repos, relationships, MCP allowlist, and
       // Phase 7 bridge tools in parallel — each is independent. We
       // deliberately do NOT pull `llm_providers`: providers carry
       // encrypted secrets and the operator must reattach one after
       // import (see DTO docstring for rationale).
-      const [skills, tools, attachedRepos, repoEdges, mcpAllowlist, bridgeTools] =
+      const [skills, tools, attachedRepos, repoRelationships, mcpAllowlist, bridgeTools] =
         await Promise.all([
           db
             .select({
@@ -112,17 +112,17 @@ export const agentExportRouter = new Hono()
             .select({
               fromRemoteUrl: schema.repos.remoteUrl,
               fromBranch: schema.repos.branch,
-              connector: schema.repoEdges.connector,
-              description: schema.repoEdges.description,
-              toRepoId: schema.repoEdges.toRepoId,
+              connector: schema.repoRelationships.connector,
+              description: schema.repoRelationships.description,
+              toRepoId: schema.repoRelationships.toRepoId,
             })
-            .from(schema.repoEdges)
+            .from(schema.repoRelationships)
             .innerJoin(
               schema.repos,
-              eq(schema.repoEdges.fromRepoId, schema.repos.id),
+              eq(schema.repoRelationships.fromRepoId, schema.repos.id),
             )
-            .where(eq(schema.repoEdges.agentId, id))
-            .orderBy(asc(schema.repoEdges.createdAt)),
+            .where(eq(schema.repoRelationships.agentId, id))
+            .orderBy(asc(schema.repoRelationships.createdAt)),
           db
             .select({
               connectionName: schema.mcpConnections.name,
@@ -150,11 +150,11 @@ export const agentExportRouter = new Hono()
             .orderBy(asc(schema.bridgeTools.name)),
         ])
 
-      // The edges query above only resolved the `from` side via the
+      // The relationships query above only resolved the `from` side via the
       // join — we still need to map `toRepoId` to `(remoteUrl, branch)`.
       // Cheap second SELECT for the unique repo ids encountered, then a
-      // post-process to expand each edge.
-      const toRepoIds = Array.from(new Set(repoEdges.map((e) => e.toRepoId)))
+      // post-process to expand each relationship.
+      const toRepoIds = Array.from(new Set(repoRelationships.map((e) => e.toRepoId)))
       const toRepos =
         toRepoIds.length > 0
           ? await db
@@ -168,7 +168,7 @@ export const agentExportRouter = new Hono()
           : []
       const toRepoById = new Map(toRepos.map((r) => [r.id, r] as const))
 
-      const expandedEdges = repoEdges
+      const expandedRelationships = repoRelationships
         .map((e) => {
           const target = toRepoById.get(e.toRepoId)
           if (!target) return null // FK is `cascade`; missing is unreachable
@@ -200,7 +200,7 @@ export const agentExportRouter = new Hono()
           configJson: t.configJson as Record<string, unknown>,
         })),
         repoAttachments: attachedRepos,
-        repoEdges: expandedEdges,
+        repoRelationships: expandedRelationships,
         mcpAllowlist,
         bridgeTools: bridgeTools.map((t) => ({
           ...t,
@@ -293,7 +293,7 @@ export const agentExportRouter = new Hono()
           }
 
           // 4. Repo attachments. Find-or-create per `(remoteUrl, branch)`.
-          //    Map kept so step 5 (edges) can resolve from-id and to-id
+          //    Map kept so step 5 (relationships) can resolve from-id and to-id
           //    without re-querying.
           const repoIdByKey = new Map<string, string>()
           const keyOf = (url: string, branch: string) => `${url} ${branch}`
@@ -336,31 +336,31 @@ export const agentExportRouter = new Hono()
             })
           }
 
-          // 5. Repo edges. Both endpoints must already be in our
-          //    attachment map (the export endpoint only emits edges
+          // 5. Repo relationships. Both endpoints must already be in our
+          //    attachment map (the export endpoint only emits relationships
           //    rooted in attached repos). If not, skip with a warning —
           //    a torn export is partial-import-friendly.
-          let edgeImported = 0
-          for (const edge of bundle.repoEdges) {
+          let relationshipImported = 0
+          for (const edge of bundle.repoRelationships) {
             const fromKey = keyOf(edge.fromRemoteUrl, edge.fromBranch)
             const toKey = keyOf(edge.toRemoteUrl, edge.toBranch)
             const fromId = repoIdByKey.get(fromKey)
             const toId = repoIdByKey.get(toKey)
             if (!fromId || !toId) {
               warnings.push(
-                `skipping repo edge ${edge.fromRemoteUrl}#${edge.fromBranch} → ` +
+                `skipping repo relationship ${edge.fromRemoteUrl}#${edge.fromBranch} → ` +
                   `${edge.toRemoteUrl}#${edge.toBranch}: endpoint not attached`,
               )
               continue
             }
-            await tx.insert(schema.repoEdges).values({
+            await tx.insert(schema.repoRelationships).values({
               agentId: agent.id,
               fromRepoId: fromId,
               toRepoId: toId,
               connector: edge.connector,
               description: edge.description ?? null,
             })
-            edgeImported++
+            relationshipImported++
           }
 
           // 6. MCP allowlist. Look up each connection by NAME on this
@@ -447,7 +447,7 @@ export const agentExportRouter = new Hono()
               skills: bundle.skills.length,
               tools: bundle.tools.length,
               repoAttachments: bundle.repoAttachments.length,
-              repoEdges: edgeImported,
+              repoRelationships: relationshipImported,
               mcpAllowlist: mcpImported,
               bridgeTools: bridgeToolsImported,
             },

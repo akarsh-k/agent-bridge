@@ -9,7 +9,7 @@
  *   - `jsonb` columns carry compile-time shapes via `.$type<…>()` from
  *     `@agent-bridge/shared`.
  *   - Repos are deduped globally (Option B): unique on `(remote_url, branch)`.
- *     Agents attach via the `agent_repos` join table; edges between repos
+ *     Agents attach via the `agent_repos` join table; relationships between repos
  *     stay per-agent so two agents can model the relationship differently.
  *   - Secrets live in `*_envelope text` columns holding `v1.iv.tag.ct` strings
  *     from `@agent-bridge/shared/crypto`. Parsing never happens in SQL.
@@ -263,7 +263,7 @@ export const repos = pgTable(
      *     the SQL DELETE — without a marker, the worker's cleanup job
      *     would have no way to look up the path after the row is gone.
      *   - Holding the row keeps FK cascades simple (`agent_repos` /
-     *     `repo_edges` continue to reference a real id) until cleanup
+     *     `repo_relationships` continue to reference a real id) until cleanup
      *     finishes; the row only disappears once disk is clean.
      *   - List routes filter `deletion_pending = true` so the UI hides
      *     the repo immediately while cleanup runs in the background.
@@ -286,8 +286,8 @@ export const repos = pgTable(
 
 // ─── agent_repos (join) ───────────────────────────────────────────────────
 // Per-agent attachment. Connector/description for the *repo's role within
-// this agent* lives here. Connector edges between two repos live in
-// `repo_edges` instead.
+// this agent* lives here. Cross-repo relationships between two repos live
+// in `repo_relationships` instead.
 
 export const agentRepos = pgTable(
   'agent_repos',
@@ -323,12 +323,14 @@ export const agentRepos = pgTable(
   (t) => [primaryKey({ columns: [t.agentId, t.repoId] })],
 )
 
-// ─── repo_edges ───────────────────────────────────────────────────────────
-// Agent-scoped directed edges between two attached repos. Two agents can
-// model the same pair of repos differently.
+// ─── repo_relationships ───────────────────────────────────────────────────
+// Agent-scoped directed relationships between two attached repos
+// (operator-curated). Two agents can model the same pair of repos
+// differently. Distinct from `graph_subset.edges` in mini-repos, which
+// are code-symbol graph edges derived from gitnexus.
 
-export const repoEdges = pgTable(
-  'repo_edges',
+export const repoRelationships = pgTable(
+  'repo_relationships',
   {
     id: uuid('id').primaryKey().defaultRandom(),
     agentId: uuid('agent_id')
@@ -346,8 +348,11 @@ export const repoEdges = pgTable(
     updatedAt: updatedAt(),
   },
   (t) => [
-    check('repo_edges_distinct_repos', sql`${t.fromRepoId} <> ${t.toRepoId}`),
-    index('repo_edges_agent_idx').on(t.agentId),
+    check(
+      'repo_relationships_distinct_repos',
+      sql`${t.fromRepoId} <> ${t.toRepoId}`,
+    ),
+    index('repo_relationships_agent_idx').on(t.agentId),
   ],
 )
 
@@ -761,8 +766,8 @@ export type RepoInsert = typeof repos.$inferInsert
 export type AgentRepoRow = typeof agentRepos.$inferSelect
 export type AgentRepoInsert = typeof agentRepos.$inferInsert
 
-export type RepoEdgeRow = typeof repoEdges.$inferSelect
-export type RepoEdgeInsert = typeof repoEdges.$inferInsert
+export type RepoRelationshipRow = typeof repoRelationships.$inferSelect
+export type RepoRelationshipInsert = typeof repoRelationships.$inferInsert
 
 export type McpConnectionRow = typeof mcpConnections.$inferSelect
 export type McpConnectionInsert = typeof mcpConnections.$inferInsert
@@ -804,7 +809,7 @@ export const allTables = [
   tools,
   repos,
   agentRepos,
-  repoEdges,
+  repoRelationships,
   mcpConnections,
   mcpOauthState,
   agentMcpTools,
@@ -828,7 +833,7 @@ export const tableNames = [
   'tools',
   'repos',
   'agent_repos',
-  'repo_edges',
+  'repo_relationships',
   'mcp_connections',
   'mcp_oauth_state',
   'agent_mcp_tools',
@@ -854,7 +859,7 @@ export const tablesWithUpdatedAt = [
   'tools',
   'repos',
   'agent_repos',
-  'repo_edges',
+  'repo_relationships',
   'mcp_connections',
   'mcp_oauth_state',
   'bridge_tools',

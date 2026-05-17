@@ -9,8 +9,8 @@
  * nested as `.repo` in every response.
  *
  * Detach is the one place that needs a transaction: the FKs on
- * `repo_edges` don't know about `agent_repos`, so removing an attachment
- * without also removing the edges that reference it would leave orphan
+ * `repo_relationships` don't know about `agent_repos`, so removing an attachment
+ * without also removing the relationships that reference it would leave orphan
  * connector lines pointing at a non-attached repo. We delete them
  * together, in one atomic txn.
  */
@@ -300,23 +300,23 @@ export const agentReposRouter = new Hono()
       const { agentId, repoId } = c.req.valid('param')
       const { db } = getDb()
 
-      // Transactional detach: drop any edges referencing this repo for
+      // Transactional detach: drop any relationships referencing this repo for
       // this agent before removing the attachment. If we did it in the
-      // other order, a crash between ops would leave dangling edges that
+      // other order, a crash between ops would leave dangling relationships that
       // violate the per-agent membership invariant.
       const result = await db.transaction(async (tx) => {
         const deletedEdges = await tx
-          .delete(schema.repoEdges)
+          .delete(schema.repoRelationships)
           .where(
             and(
-              eq(schema.repoEdges.agentId, agentId),
+              eq(schema.repoRelationships.agentId, agentId),
               or(
-                eq(schema.repoEdges.fromRepoId, repoId),
-                eq(schema.repoEdges.toRepoId, repoId),
+                eq(schema.repoRelationships.fromRepoId, repoId),
+                eq(schema.repoRelationships.toRepoId, repoId),
               ),
             ),
           )
-          .returning({ id: schema.repoEdges.id })
+          .returning({ id: schema.repoRelationships.id })
 
         const [attach] = await tx
           .delete(schema.agentRepos)

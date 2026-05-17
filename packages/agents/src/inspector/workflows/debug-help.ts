@@ -271,7 +271,7 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
     expansions: candidates,
     files,
     graph_subset: { nodes: [], edges: [] },
-    cross_repo_edges: [],
+    cross_repo_relationships: [],
     warnings,
     // `debug_help` can run in single-repo OR all-repo mode (allowAll:
     // true). Only stamp `resolved_repo` when the resolver picked one.
@@ -385,7 +385,7 @@ function emptyDraft(args: {
     expansions: [],
     files: [],
     graph_subset: { nodes: [], edges: [] },
-    cross_repo_edges: [],
+    cross_repo_relationships: [],
     warnings: args.warnings,
   }
 }

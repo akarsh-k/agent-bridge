@@ -63,7 +63,7 @@ IDE coding agent
   → MCP call
     → Agent Bridge agent
       → deterministic inspector tools
-        → GitNexus graph + embeddings + repo edges
+        → GitNexus graph + embeddings + repo relationships
           → structured evidence back to the IDE
 ```
 
@@ -85,14 +85,14 @@ Repo-inspector agents are designed to help Cursor, Claude Code, Codex,
 and other IDE agents research your codebase before making changes.
 
 These agents can attach repos, use GitNexus-backed graph and embedding
-context, follow operator-defined repo edges, and expose code-inspection
+context, follow operator-defined repo relationships, and expose code-inspection
 tools through the MCP bridge. For each repo-inspector agent, the bridge
 exposes:
 
 - `<slug>__inspect_codebase` — structured codebase evidence for
   debugging, tracing, impact analysis, and module understanding.
   Returns a `mini_repos[]` envelope with ranked file hits, graph
-  context, cross-repo edges, and summaries.
+  context, cross-repo relationships, and summaries.
 - `<slug>__ask_agent` — prose answers for architecture, debugging, and
   general codebase questions.
 
@@ -183,7 +183,7 @@ apps/mcp-bridge
 Agent Bridge agent  ─── Mastra agent runtime
                     ├── deterministic inspector wrappers
                     ├── GitNexus graph + embeddings
-                    ├── operator-defined repo edges
+                    ├── operator-defined repo relationships
                     ├── attached skills
                     ├── memory configuration
                     └── optional external MCPs

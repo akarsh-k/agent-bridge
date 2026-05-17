@@ -332,7 +332,7 @@ export const reposRouter = new Hono()
       //   2. Enqueue `delete-repo`. The worker waits for any in-flight
       //      clone/index/wiki on this repo to finish, `rm -rf`s the
       //      on-disk source dir, then hard-deletes the row (which
-      //      cascades to `repo_edges` at that moment).
+      //      cascades to `repo_relationships` at that moment).
       // Idempotent: re-DELETE on a pending row re-enqueues the job
       // (cheap; the worker dedupes by id) and returns the same shape.
       const [row] = await db

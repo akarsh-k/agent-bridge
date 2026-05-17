@@ -1,22 +1,22 @@
 /**
- * `/api/agents/:agentId/repo-edges` — per-agent directed edges between
+ * `/api/agents/:agentId/repo-relationships` — per-agent directed relationships between
  * attached repos.
  *
  * Invariants:
- *   - CHECK constraint `repo_edges_distinct_repos` prevents self-loops at
+ *   - CHECK constraint `repo_relationships_distinct_repos` prevents self-loops at
  *     the DB level (Zod also catches this at the edge, for a nicer error).
  *   - Both `fromRepoId` and `toRepoId` must be in `agent_repos` for this
  *     agent. Enforced here in a transaction so the SELECT + INSERT can't
  *     race. The DB has no way to model this cross-table invariant with a
  *     FK, so it lives in the application.
- *   - Duplicate edges between the same pair are ALLOWED (different connector
+ *   - Duplicate relationships between the same pair are ALLOWED (different connector
  *     labels are a legitimate modelling choice); no unique constraint.
  *
  * Cascade behaviour:
- *   - Deleting an agent cascades to its edges via FK.
- *   - Deleting a repo cascades to any edges that reference it via FK.
+ *   - Deleting an agent cascades to its relationships via FK.
+ *   - Deleting a repo cascades to any relationships that reference it via FK.
  *   - Detaching a repo from an agent (DELETE /api/agents/:id/repos/:repoId)
- *     removes matching edges in the same txn — that logic lives in the
+ *     removes matching relationships in the same txn — that logic lives in the
  *     agent-repos router, not here.
  */
 
@@ -25,11 +25,11 @@ import { and, asc, eq, inArray } from 'drizzle-orm'
 import { Hono } from 'hono'
 import {
   agentIdOnlyParamSchema,
-  repoEdgeCreateInputSchema,
-  repoEdgeParamSchema,
-  repoEdgeResponseSchema,
-  repoEdgeUpdateInputSchema,
-  type RepoEdgeResponse,
+  repoRelationshipCreateInputSchema,
+  repoRelationshipParamSchema,
+  repoRelationshipResponseSchema,
+  repoRelationshipUpdateInputSchema,
+  type RepoRelationshipResponse,
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
@@ -37,10 +37,10 @@ import { publishAgentConfig } from '../lib/agent-events.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 import { isPostgresErrorWithCode, PG } from '../lib/pg-errors.js'
 
-type RepoEdgeRow = typeof schema.repoEdges.$inferSelect
+type RepoRelationshipRow = typeof schema.repoRelationships.$inferSelect
 
-function toRepoEdgeResponse(row: RepoEdgeRow): RepoEdgeResponse {
-  return repoEdgeResponseSchema.parse({
+function toRepoRelationshipResponse(row: RepoRelationshipRow): RepoRelationshipResponse {
+  return repoRelationshipResponseSchema.parse({
     id: row.id,
     agentId: row.agentId,
     fromRepoId: row.fromRepoId,
@@ -52,15 +52,15 @@ function toRepoEdgeResponse(row: RepoEdgeRow): RepoEdgeResponse {
   })
 }
 
-export const repoEdgesRouter = new Hono()
-  // ─── POST /api/agents/:agentId/repo-edges ────────────────────────────────
+export const repoRelationshipsRouter = new Hono()
+  // ─── POST /api/agents/:agentId/repo-relationships ────────────────────────
   .post(
     '/',
     zValidator('param', agentIdOnlyParamSchema, (result, c) => {
       if (!result.success) return httpValidationError(c, result.error)
       return
     }),
-    zValidator('json', repoEdgeCreateInputSchema, (result, c) => {
+    zValidator('json', repoRelationshipCreateInputSchema, (result, c) => {
       if (!result.success) return httpValidationError(c, result.error)
       return
     }),
@@ -92,11 +92,11 @@ export const repoEdgesRouter = new Hono()
           if (!attached.has(body.toRepoId)) missing.push(body.toRepoId)
 
           if (missing.length > 0) {
-            throw new EdgeMembershipError(agentId, missing)
+            throw new RelationshipMembershipError(agentId, missing)
           }
 
           const [inserted] = await tx
-            .insert(schema.repoEdges)
+            .insert(schema.repoRelationships)
             .values({
               agentId,
               fromRepoId: body.fromRepoId,
@@ -119,22 +119,22 @@ export const repoEdgesRouter = new Hono()
         publishAgentConfig({
           agentId,
           action: 'added',
-          resource: 'repo_edge',
+          resource: 'repo_relationship',
           label: row.connector,
         })
         return c.json(
-          { ok: true as const, edge: toRepoEdgeResponse(row) },
+          { ok: true as const, relationship: toRepoRelationshipResponse(row) },
           201,
         )
       } catch (err) {
-        if (err instanceof EdgeMembershipError) {
+        if (err instanceof RelationshipMembershipError) {
           return httpError(c, {
             code: 'conflict',
             message: `repo(s) not attached to agent ${err.agentId}: ${err.missing.join(', ')}`,
           })
         }
         if (isPostgresErrorWithCode(err, PG.CHECK_VIOLATION)) {
-          // `repo_edges_distinct_repos` — Zod already rejects this, so
+          // `repo_relationships_distinct_repos` — Zod already rejects this, so
           // seeing it here means someone bypassed validation.
           return httpError(c, {
             code: 'validation_failed',
@@ -151,7 +151,7 @@ export const repoEdgesRouter = new Hono()
       }
     },
   )
-  // ─── GET /api/agents/:agentId/repo-edges ─────────────────────────────────
+  // ─── GET /api/agents/:agentId/repo-relationships ─────────────────────────
   .get(
     '/',
     zValidator('param', agentIdOnlyParamSchema, (result, c) => {
@@ -168,43 +168,43 @@ export const repoEdgesRouter = new Hono()
       // matters there.
       const rows = await db
         .select()
-        .from(schema.repoEdges)
-        .where(eq(schema.repoEdges.agentId, agentId))
-        .orderBy(asc(schema.repoEdges.createdAt))
+        .from(schema.repoRelationships)
+        .where(eq(schema.repoRelationships.agentId, agentId))
+        .orderBy(asc(schema.repoRelationships.createdAt))
 
       return c.json({
         ok: true as const,
-        edges: rows.map(toRepoEdgeResponse),
+        relationships: rows.map(toRepoRelationshipResponse),
       })
     },
   )
-  // ─── PATCH /api/agents/:agentId/repo-edges/:edgeId ───────────────────────
+  // ─── PATCH /api/agents/:agentId/repo-relationships/:relationshipId ───────
   .patch(
-    '/:edgeId',
-    zValidator('param', repoEdgeParamSchema, (result, c) => {
+    '/:relationshipId',
+    zValidator('param', repoRelationshipParamSchema, (result, c) => {
       if (!result.success) return httpValidationError(c, result.error)
       return
     }),
-    zValidator('json', repoEdgeUpdateInputSchema, (result, c) => {
+    zValidator('json', repoRelationshipUpdateInputSchema, (result, c) => {
       if (!result.success) return httpValidationError(c, result.error)
       return
     }),
     async (c) => {
-      const { agentId, edgeId } = c.req.valid('param')
+      const { agentId, relationshipId } = c.req.valid('param')
       const body = c.req.valid('json')
       const { db } = getDb()
 
-      const patch: Partial<typeof schema.repoEdges.$inferInsert> = {}
+      const patch: Partial<typeof schema.repoRelationships.$inferInsert> = {}
       if ('connector' in body) patch.connector = body.connector
       if ('description' in body) patch.description = body.description ?? null
 
       const [row] = await db
-        .update(schema.repoEdges)
+        .update(schema.repoRelationships)
         .set(patch)
         .where(
           and(
-            eq(schema.repoEdges.id, edgeId),
-            eq(schema.repoEdges.agentId, agentId),
+            eq(schema.repoRelationships.id, relationshipId),
+            eq(schema.repoRelationships.agentId, agentId),
           ),
         )
         .returning()
@@ -212,67 +212,67 @@ export const repoEdgesRouter = new Hono()
       if (!row) {
         return httpError(c, {
           code: 'not_found',
-          message: `edge ${edgeId} not found on agent ${agentId}`,
+          message: `relationship ${relationshipId} not found on agent ${agentId}`,
         })
       }
 
       publishAgentConfig({
         agentId,
         action: 'updated',
-        resource: 'repo_edge',
+        resource: 'repo_relationship',
         label: row.connector,
       })
-      return c.json({ ok: true as const, edge: toRepoEdgeResponse(row) })
+      return c.json({ ok: true as const, relationship: toRepoRelationshipResponse(row) })
     },
   )
-  // ─── DELETE /api/agents/:agentId/repo-edges/:edgeId ──────────────────────
+  // ─── DELETE /api/agents/:agentId/repo-relationships/:relationshipId ──────
   .delete(
-    '/:edgeId',
-    zValidator('param', repoEdgeParamSchema, (result, c) => {
+    '/:relationshipId',
+    zValidator('param', repoRelationshipParamSchema, (result, c) => {
       if (!result.success) return httpValidationError(c, result.error)
       return
     }),
     async (c) => {
-      const { agentId, edgeId } = c.req.valid('param')
+      const { agentId, relationshipId } = c.req.valid('param')
       const { db } = getDb()
 
       const [row] = await db
-        .delete(schema.repoEdges)
+        .delete(schema.repoRelationships)
         .where(
           and(
-            eq(schema.repoEdges.id, edgeId),
-            eq(schema.repoEdges.agentId, agentId),
+            eq(schema.repoRelationships.id, relationshipId),
+            eq(schema.repoRelationships.agentId, agentId),
           ),
         )
         .returning({
-          id: schema.repoEdges.id,
-          connector: schema.repoEdges.connector,
+          id: schema.repoRelationships.id,
+          connector: schema.repoRelationships.connector,
         })
 
       if (!row) {
         return httpError(c, {
           code: 'not_found',
-          message: `edge ${edgeId} not found on agent ${agentId}`,
+          message: `relationship ${relationshipId} not found on agent ${agentId}`,
         })
       }
 
       publishAgentConfig({
         agentId,
         action: 'removed',
-        resource: 'repo_edge',
+        resource: 'repo_relationship',
         label: row.connector,
       })
       return c.json({ ok: true as const, id: row.id })
     },
   )
 
-export type RepoEdgesRouter = typeof repoEdgesRouter
+export type RepoRelationshipsRouter = typeof repoRelationshipsRouter
 
 /**
- * Thrown inside the create-edge transaction so the outer handler can map
+ * Thrown inside the create-relationship transaction so the outer handler can map
  * it to a clean `conflict` response without depending on PG error codes.
  */
-class EdgeMembershipError extends Error {
+class RelationshipMembershipError extends Error {
   readonly agentId: string
   readonly missing: readonly string[]
 
@@ -280,7 +280,7 @@ class EdgeMembershipError extends Error {
     super(
       `repo(s) not attached to agent ${agentId}: ${missing.join(', ')}`,
     )
-    this.name = 'EdgeMembershipError'
+    this.name = 'RelationshipMembershipError'
     this.agentId = agentId
     this.missing = missing
   }

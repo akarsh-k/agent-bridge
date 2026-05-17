@@ -10,7 +10,7 @@
  * Design:
  *   - Cache key: `agentId`. One cached `BuiltAgent` per agent at a time.
  *   - Invalidation: a content hash over the relevant `updated_at` columns
- *     (agent + skills + tools + repos + repo_edges + mcp_connections +
+ *     (agent + skills + tools + repos + repo_relationships + mcp_connections +
  *     allowlist + provider) is recomputed on every `getOrBuild`. If the
  *     hash drifts from the cached entry's, we tear the entry down and
  *     build fresh. Cheap (single SQL round-trip with mostly-aggregate
@@ -208,7 +208,7 @@ export const builtAgentCache = new BuiltAgentCache()
  * BuiltAgent's runtime config changes. Includes:
  *   - The agent's own row (`updated_at`, `llm_provider_id`).
  *   - Max(updated_at) across the agent's skills, tools, attached
- *     `agent_repos` rows, and `repo_edges`.
+ *     `agent_repos` rows, and `repo_relationships`.
  *   - Max(updated_at) across the `repos` rows the agent attaches —
  *     critical for the gitnexus mount, which only fires when at least
  *     one repo is `status='ready'`. A clone/index transition flips that
@@ -237,7 +237,7 @@ async function computeAgentVersion(
     skills_updated: string | null
     tools_updated: string | null
     agent_repos_updated: string | null
-    repo_edges_updated: string | null
+    repo_relationships_updated: string | null
     repos_updated: string | null
     mcp_tools_updated: string | null
     mcp_connections_updated: string | null
@@ -253,7 +253,7 @@ async function computeAgentVersion(
       (SELECT to_char(MAX(ar.updated_at), 'YYYY-MM-DD"T"HH24:MI:SS.US')
          FROM agent_repos ar WHERE ar.agent_id = a.id) AS agent_repos_updated,
       (SELECT to_char(MAX(re.updated_at), 'YYYY-MM-DD"T"HH24:MI:SS.US')
-         FROM repo_edges re WHERE re.agent_id = a.id) AS repo_edges_updated,
+         FROM repo_relationships re WHERE re.agent_id = a.id) AS repo_relationships_updated,
       (SELECT to_char(MAX(r.updated_at), 'YYYY-MM-DD"T"HH24:MI:SS.US')
          FROM repos r
          INNER JOIN agent_repos ar2 ON ar2.repo_id = r.id
@@ -289,7 +289,7 @@ async function computeAgentVersion(
     row.skills_updated ?? '',
     row.tools_updated ?? '',
     row.agent_repos_updated ?? '',
-    row.repo_edges_updated ?? '',
+    row.repo_relationships_updated ?? '',
     row.repos_updated ?? '',
     row.mcp_tools_updated ?? '',
     row.mcp_connections_updated ?? '',

@@ -712,7 +712,7 @@ import type { TokenEstimate } from '@agent-bridge/shared'
 /**
  * Per-call context-budget breakdown for an agent. Returns the
  * estimated token count for every static piece buildAgent ships
- * (system prompt, skills, attached-repos hint, repo edges, gitnexus
+ * (system prompt, skills, attached-repos hint, repo relationships, gitnexus
  * tools, etc) plus the agent's known model context limit. Powers the
  * "Context budget" card on the Configure tab.
  */

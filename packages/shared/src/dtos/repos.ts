@@ -1,11 +1,11 @@
 /**
- * Repo CRUD + agent-attachment + edge DTOs. Browser-safe.
+ * Repo CRUD + agent-attachment + relationship DTOs. Browser-safe.
  *
  * The resource boundary is deliberately split three ways:
  *
- *   /api/repos                         — global deduped store of (url, branch)
- *   /api/agents/:agentId/repos         — per-agent attachments (role / position)
- *   /api/agents/:agentId/repo-edges    — per-agent directed graph edges
+ *   /api/repos                              — global deduped store of (url, branch)
+ *   /api/agents/:agentId/repos              — per-agent attachments (role / position)
+ *   /api/agents/:agentId/repo-relationships — per-agent directed relationships
  *
  * This matches the schema's Option-B dedupe: a single clone/index pass
  * benefits every agent that attaches the same (url, branch). The connector
@@ -385,20 +385,20 @@ export type AgentRepoParam = z.infer<typeof agentRepoParamSchema>
 export const agentIdOnlyParamSchema = z.object({ agentId: z.uuid() })
 export type AgentIdOnlyParam = z.infer<typeof agentIdOnlyParamSchema>
 
-// ─── /api/agents/:agentId/repo-edges ─────────────────────────────────────
+// ─── /api/agents/:agentId/repo-relationships ─────────────────────────────
 
 /**
- * Create a directed edge between two repos attached to the same agent.
+ * Create a directed relationship between two repos attached to the same agent.
  * Invariants enforced server-side:
  *   - Both `fromRepoId` and `toRepoId` must already be in `agent_repos`
  *     for this agent (membership check in a transaction).
  *   - `fromRepoId !== toRepoId` (DB-level CHECK AND Zod refine).
  *
  * No uniqueness constraint on (from, to, connector): the UI may legitimately
- * want multiple parallel edges between the same pair with different
+ * want multiple parallel relationships between the same pair with different
  * connector labels ("reads", "writes").
  */
-export const repoEdgeCreateInputSchema = z
+export const repoRelationshipCreateInputSchema = z
   .object({
     fromRepoId: z.uuid(),
     toRepoId: z.uuid(),
@@ -411,9 +411,9 @@ export const repoEdgeCreateInputSchema = z
     message: 'toRepoId must differ from fromRepoId',
   })
 
-export type RepoEdgeCreateInput = z.infer<typeof repoEdgeCreateInputSchema>
+export type RepoRelationshipCreateInput = z.infer<typeof repoRelationshipCreateInputSchema>
 
-export const repoEdgeUpdateInputSchema = z
+export const repoRelationshipUpdateInputSchema = z
   .object({
     connector: connectorSchema.optional(),
     description: descriptionSchema.nullable().optional(),
@@ -423,9 +423,9 @@ export const repoEdgeUpdateInputSchema = z
     message: 'at least one field is required',
   })
 
-export type RepoEdgeUpdateInput = z.infer<typeof repoEdgeUpdateInputSchema>
+export type RepoRelationshipUpdateInput = z.infer<typeof repoRelationshipUpdateInputSchema>
 
-export const repoEdgeResponseSchema = z.object({
+export const repoRelationshipResponseSchema = z.object({
   id: z.uuid(),
   agentId: z.uuid(),
   fromRepoId: z.uuid(),
@@ -436,10 +436,10 @@ export const repoEdgeResponseSchema = z.object({
   updatedAt: z.iso.datetime(),
 })
 
-export type RepoEdgeResponse = z.infer<typeof repoEdgeResponseSchema>
+export type RepoRelationshipResponse = z.infer<typeof repoRelationshipResponseSchema>
 
-export const repoEdgeParamSchema = z.object({
+export const repoRelationshipParamSchema = z.object({
   agentId: z.uuid(),
-  edgeId: z.uuid(),
+  relationshipId: z.uuid(),
 })
-export type RepoEdgeParam = z.infer<typeof repoEdgeParamSchema>
+export type RepoRelationshipParam = z.infer<typeof repoRelationshipParamSchema>

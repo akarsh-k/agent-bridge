@@ -10,12 +10,12 @@
  *      - Drop chunks bottom-up from the lowest-relevance file (last in
  *        `files`) until under cap.
  *      - If still over, drop graph nodes/edges past depth 2.
- *      - If still over, drop the oldest `cross_repo_edges` entries.
+ *      - If still over, drop the oldest `cross_repo_relationships` entries.
  *      - `summary` is never touched.
  *   3. Stamps `tokens_used` + `tokens_cap` + `warnings`.
  *
  * Truncation order is deliberate: chunks contribute the most weight by
- * a wide margin, the graph subset is medium, cross-repo edges are
+ * a wide margin, the graph subset is medium, cross-repo relationships are
  * tiny but lowest-relevance. Files themselves are NEVER dropped — a
  * file with zero chunks still tells the LLM the path matched, which is
  * useful even without a span.
@@ -55,14 +55,14 @@ export function finalizeMiniRepo(
   let files: readonly MiniRepoFile[] = draft.files
   let nodes = draft.graph_subset.nodes
   let edges = draft.graph_subset.edges
-  let crossRepoEdges = draft.cross_repo_edges
+  let crossRepoRelationships = draft.cross_repo_relationships
 
   let tokens = estimateTokens({
     summary,
     files,
     nodes,
     edges,
-    crossRepoEdges,
+    crossRepoRelationships,
     expansions: draft.expansions,
   })
 
@@ -75,7 +75,7 @@ export function finalizeMiniRepo(
         files: trimmed.snapshot ?? files,
         nodes,
         edges,
-        crossRepoEdges,
+        crossRepoRelationships,
         expansions: draft.expansions,
       })
     }, cap)
@@ -90,7 +90,7 @@ export function finalizeMiniRepo(
       files,
       nodes,
       edges,
-      crossRepoEdges,
+      crossRepoRelationships,
       expansions: draft.expansions,
     })
   }
@@ -113,21 +113,21 @@ export function finalizeMiniRepo(
       files,
       nodes,
       edges,
-      crossRepoEdges,
+      crossRepoRelationships,
       expansions: draft.expansions,
     })
   }
 
-  // Pass 3: cross-repo edges (cheapest signal, dropped last).
-  if (tokens > cap && crossRepoEdges.length > 0) {
-    crossRepoEdges = []
-    warnings.push(`dropped cross-repo edges to fit under ${cap}-token cap`)
+  // Pass 3: cross-repo relationships (cheapest signal, dropped last).
+  if (tokens > cap && crossRepoRelationships.length > 0) {
+    crossRepoRelationships = []
+    warnings.push(`dropped cross-repo relationships to fit under ${cap}-token cap`)
     tokens = estimateTokens({
       summary,
       files,
       nodes,
       edges,
-      crossRepoEdges,
+      crossRepoRelationships,
       expansions: draft.expansions,
     })
   }
@@ -139,7 +139,7 @@ export function finalizeMiniRepo(
     expansions: draft.expansions,
     files,
     graph_subset: { nodes, edges },
-    cross_repo_edges: crossRepoEdges,
+    cross_repo_relationships: crossRepoRelationships,
     tokens_used: tokens,
     tokens_cap: cap,
     warnings,
@@ -183,7 +183,7 @@ export function estimateMiniRepoTokens(draft: MiniRepoDraft): number {
     files: draft.files,
     nodes: draft.graph_subset.nodes,
     edges: draft.graph_subset.edges,
-    crossRepoEdges: draft.cross_repo_edges,
+    crossRepoRelationships: draft.cross_repo_relationships,
     expansions: draft.expansions,
   })
 }
@@ -195,7 +195,7 @@ interface EstimateInput {
   files: readonly MiniRepoFile[]
   nodes: readonly { id: string; kind: string; path: string; name: string }[]
   edges: readonly { from: string; to: string; kind: string }[]
-  crossRepoEdges: readonly {
+  crossRepoRelationships: readonly {
     from_repo: string
     to_repo: string
     connector: string
@@ -217,7 +217,7 @@ function estimateTokens(input: EstimateInput): number {
   for (const e of input.edges) {
     chars += e.from.length + e.to.length + e.kind.length + 8
   }
-  for (const c of input.crossRepoEdges) {
+  for (const c of input.crossRepoRelationships) {
     chars += c.from_repo.length + c.to_repo.length + c.connector.length + 8
     if (c.description) chars += c.description.length
   }

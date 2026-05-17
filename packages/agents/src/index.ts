@@ -23,7 +23,7 @@ export type {
   MountedInspector,
   MountInspectorToolsInput,
 } from './inspector/index.js'
-export type { MiniRepo, MiniRepoFile, MiniRepoChunk, MiniRepoGraphEdge, MiniRepoGraphNode, MiniRepoCrossRepoEdge, InspectorIntent } from './inspector/types.js'
+export type { MiniRepo, MiniRepoFile, MiniRepoChunk, MiniRepoGraphEdge, MiniRepoGraphNode, MiniRepoCrossRepoRelationship, InspectorIntent } from './inspector/types.js'
 export { MINI_REPO_TOKEN_CAP } from './inspector/types.js'
 export { builtAgentCache } from './built-agent-cache.js'
 export type { GitnexusMountMeta } from './mcp/gitnexus-mcp.js'
@@ -84,8 +84,8 @@ export { getCurrentWorkingMemory } from './working-memory.js'
 export type { CurrentWorkingMemory } from './working-memory.js'
 export { loadAttachedRepos } from './inspector/repo-loader.js'
 export type { LoadAttachedReposInput } from './inspector/repo-loader.js'
-export { loadAllRepoEdges } from './inspector/repo-edges.js'
-export type { LoadAllRepoEdgesInput } from './inspector/repo-edges.js'
+export { loadAllRepoRelationships } from './inspector/repo-relationships.js'
+export type { LoadAllRepoRelationshipsInput } from './inspector/repo-relationships.js'
 export {
   normalizeRemoteUrl,
   urlTail,

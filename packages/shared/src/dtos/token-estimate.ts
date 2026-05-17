@@ -47,7 +47,7 @@ export const tokenEstimateSchema = z.object({
     systemSkill: systemSkillEntry.nullable(),
     gitnexusLibrarySkills: gitnexusLibrarySkillsEntry.nullable(),
     attachedReposHint: z.number().int().nonnegative(),
-    repoEdgesHint: z.number().int().nonnegative(),
+    repoRelationshipsHint: z.number().int().nonnegative(),
     tools: z.array(toolEntry),
     toolsTotal: z.number().int().nonnegative(),
   }),

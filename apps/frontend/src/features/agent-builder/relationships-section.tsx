@@ -1,12 +1,12 @@
 /**
- * Repo edges editor — directed relationships between attached repos.
- * Each edge: from → connector → to + optional description. Used by
+ * Repo relationships editor — directed relationships between attached repos.
+ * Each relationship: from → connector → to + optional description. Used by
  * the agent's prompt to describe how the repos relate (e.g. "owns",
  * "depends on", "deploys to").
  */
 
 import { useMemo, useState } from 'react'
-import type { RepoEdgeResponse } from '@agent-bridge/shared'
+import type { RepoRelationshipResponse } from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
 import { Button } from '../../ui/button'
 import { Dropdown, type DropdownOption } from '../../ui/dropdown'
@@ -23,29 +23,29 @@ function shortRepoName(remoteUrl: string): string {
   return m ? m[1]! : remoteUrl
 }
 
-export function EdgesSection({ agentId }: { agentId: string }) {
-  const { agentResources, createRepoEdge, patchRepoEdge, removeRepoEdge } =
+export function RelationshipsSection({ agentId }: { agentId: string }) {
+  const { agentResources, createRepoRelationship, patchRepoRelationship, removeRepoRelationship } =
     useWorkspace()
   const resources = agentResources[agentId]
   const attached = resources?.attachedRepos ?? []
-  const edges = resources?.repoEdges ?? []
+  const relationships = resources?.repoRelationships ?? []
   const [sheetOpen, setSheetOpen] = useState(false)
-  const [editingEdgeId, setEditingEdgeId] = useState<string | null>(null)
-  const editingEdge = editingEdgeId
-    ? (edges.find((e) => e.id === editingEdgeId) ?? null)
+  const [editingRelationshipId, setEditingRelationshipId] = useState<string | null>(null)
+  const editingRelationship = editingRelationshipId
+    ? (relationships.find((e) => e.id === editingRelationshipId) ?? null)
     : null
 
   const openCreate = () => {
-    setEditingEdgeId(null)
+    setEditingRelationshipId(null)
     setSheetOpen(true)
   }
-  const openEdit = (edgeId: string) => {
-    setEditingEdgeId(edgeId)
+  const openEdit = (relationshipId: string) => {
+    setEditingRelationshipId(relationshipId)
     setSheetOpen(true)
   }
   const closeSheet = () => {
     setSheetOpen(false)
-    setEditingEdgeId(null)
+    setEditingRelationshipId(null)
   }
 
   const repoLabel = (id: string): string => {
@@ -53,10 +53,10 @@ export function EdgesSection({ agentId }: { agentId: string }) {
     return a ? shortRepoName(a.repo.remoteUrl) : id.slice(0, 8) + '…'
   }
 
-  const removeEdge = async (edgeId: string, label: string) => {
+  const removeRelationship = async (relationshipId: string, label: string) => {
     if (
       !(await confirmDialog({
-        title: `Delete edge ${label}?`,
+        title: `Delete relationship ${label}?`,
         confirmLabel: 'Delete',
         destructive: true,
       }))
@@ -64,8 +64,8 @@ export function EdgesSection({ agentId }: { agentId: string }) {
       return
     }
     try {
-      await removeRepoEdge(agentId, edgeId)
-      toast.success('Edge removed')
+      await removeRepoRelationship(agentId, relationshipId)
+      toast.success('Relationship removed')
     } catch (e) {
       toast.error(
         e instanceof ApiError
@@ -91,7 +91,7 @@ export function EdgesSection({ agentId }: { agentId: string }) {
         <div style={{ minWidth: 0 }}>
           <div className="ab-section-title">Repo relations</div>
           <div className="ab-section-sub">
-            {edges.length} {edges.length === 1 ? 'edge' : 'edges'} · how
+            {relationships.length} {relationships.length === 1 ? 'relationship' : 'relationships'} · how
             attached repos relate (uses, deploys to, depends on …)
           </div>
         </div>
@@ -103,22 +103,22 @@ export function EdgesSection({ agentId }: { agentId: string }) {
           disabled={attached.length < 2}
           title={
             attached.length < 2
-              ? 'Attach at least two repos to draw edges between them'
+              ? 'Attach at least two repos to draw relationships between them'
               : undefined
           }
         >
-          Add edge
+          Add relationship
         </Button>
       </div>
-      {edges.length === 0 ? (
+      {relationships.length === 0 ? (
         <div className="ab-field-help">
           {attached.length < 2
-            ? 'Attach at least two repositories above before drawing edges between them.'
-            : 'No edges yet. Add one to describe how repos relate — useful for retrieval-heavy agents.'}
+            ? 'Attach at least two repositories above before drawing relationships between them.'
+            : 'No relationships yet. Add one to describe how repos relate — useful for retrieval-heavy agents.'}
         </div>
       ) : (
         <div className="ab-card ab-list-card">
-          {edges.map((e) => (
+          {relationships.map((e) => (
             <div
               className="ab-list-row is-edit"
               key={e.id}
@@ -160,14 +160,14 @@ export function EdgesSection({ agentId }: { agentId: string }) {
                 <RowMenu
                   items={[
                     {
-                      label: 'Edit edge',
+                      label: 'Edit relationship',
                       onClick: () => openEdit(e.id),
                     },
                     {
-                      label: 'Delete edge',
+                      label: 'Delete relationship',
                       destructive: true,
                       onClick: () =>
-                        void removeEdge(
+                        void removeRelationship(
                           e.id,
                           `${repoLabel(e.fromRepoId)} → ${repoLabel(e.toRepoId)}`,
                         ),
@@ -179,37 +179,37 @@ export function EdgesSection({ agentId }: { agentId: string }) {
           ))}
         </div>
       )}
-      <EdgeSheet
+      <RelationshipSheet
         open={sheetOpen}
         agentId={agentId}
         onClose={closeSheet}
         attached={attached}
-        createEdge={createRepoEdge}
-        patchEdge={patchRepoEdge}
-        editingEdge={editingEdge}
+        createRelationship={createRepoRelationship}
+        patchRelationship={patchRepoRelationship}
+        editingRelationship={editingRelationship}
       />
     </div>
   )
 }
 
-interface EdgeSheetProps {
+interface RelationshipSheetProps {
   open: boolean
   agentId: string
   onClose: () => void
   attached: ReadonlyArray<{ repo: { id: string; remoteUrl: string } }>
-  createEdge: ReturnType<typeof useWorkspace>['createRepoEdge']
-  patchEdge: ReturnType<typeof useWorkspace>['patchRepoEdge']
-  editingEdge: RepoEdgeResponse | null
+  createRelationship: ReturnType<typeof useWorkspace>['createRepoRelationship']
+  patchRelationship: ReturnType<typeof useWorkspace>['patchRepoRelationship']
+  editingRelationship: RepoRelationshipResponse | null
 }
 
-function EdgeForm({
+function RelationshipForm({
   agentId,
   onClose,
   attached,
-  createEdge,
-  patchEdge,
-  editingEdge,
-}: Omit<EdgeSheetProps, 'open'>) {
+  createRelationship,
+  patchRelationship,
+  editingRelationship,
+}: Omit<RelationshipSheetProps, 'open'>) {
   const opts: DropdownOption[] = useMemo(
     () =>
       attached.map((a) => ({
@@ -218,16 +218,16 @@ function EdgeForm({
       })),
     [attached],
   )
-  const isEdit = editingEdge !== null
+  const isEdit = editingRelationship !== null
 
   const [from, setFrom] = useState<string | null>(
-    editingEdge?.fromRepoId ?? opts[0]?.value ?? null,
+    editingRelationship?.fromRepoId ?? opts[0]?.value ?? null,
   )
   const [to, setTo] = useState<string | null>(
-    editingEdge?.toRepoId ?? opts[1]?.value ?? null,
+    editingRelationship?.toRepoId ?? opts[1]?.value ?? null,
   )
-  const [connector, setConnector] = useState(editingEdge?.connector ?? 'uses')
-  const [description, setDescription] = useState(editingEdge?.description ?? '')
+  const [connector, setConnector] = useState(editingRelationship?.connector ?? 'uses')
+  const [description, setDescription] = useState(editingRelationship?.description ?? '')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
@@ -243,22 +243,22 @@ function EdgeForm({
     }
     setBusy(true)
     try {
-      if (isEdit && editingEdge) {
+      if (isEdit && editingRelationship) {
         // Endpoints are immutable post-create — only connector + description
         // can be patched. The from/to dropdowns are disabled in edit mode.
-        await patchEdge(agentId, editingEdge.id, {
+        await patchRelationship(agentId, editingRelationship.id, {
           connector: connector.trim() || 'uses',
           description: description.trim() || null,
         })
-        toast.success('Edge updated')
+        toast.success('Relationship updated')
       } else {
-        await createEdge(agentId, {
+        await createRelationship(agentId, {
           fromRepoId: from,
           toRepoId: to,
           connector: connector.trim() || 'uses',
           description: description.trim() || null,
         })
-        toast.success('Edge added')
+        toast.success('Relationship added')
       }
       onClose()
     } catch (e) {
@@ -280,13 +280,13 @@ function EdgeForm({
     <Sheet
       open
       onClose={onClose}
-      title={isEdit ? 'Edit repo edge' : 'Add repo edge'}
+      title={isEdit ? 'Edit repo relationship' : 'Add repo relationship'}
       subtitle={
         isEdit
           ? 'Endpoints are fixed once created — change the connector or description.'
           : 'A directed relationship between two attached repos.'
       }
-      primaryLabel={isEdit ? 'Save changes' : 'Add edge'}
+      primaryLabel={isEdit ? 'Save changes' : 'Add relationship'}
       onPrimary={submit}
       primaryBusy={busy}
       primaryDisabled={!from || !to || from === to}
@@ -350,15 +350,15 @@ function EdgeForm({
   )
 }
 
-function EdgeSheet({
+function RelationshipSheet({
   open,
   onClose,
   agentId,
   attached,
-  createEdge,
-  patchEdge,
-  editingEdge,
-}: EdgeSheetProps) {
+  createRelationship,
+  patchRelationship,
+  editingRelationship,
+}: RelationshipSheetProps) {
   const [openCount, setOpenCount] = useState(0)
   const [prevOpen, setPrevOpen] = useState(open)
   if (prevOpen !== open) {
@@ -367,20 +367,20 @@ function EdgeSheet({
   }
   if (!open) {
     return (
-      <Sheet open={false} onClose={onClose} title="Add repo edge">
+      <Sheet open={false} onClose={onClose} title="Add repo relationship">
         <></>
       </Sheet>
     )
   }
   return (
-    <EdgeForm
-      key={`${openCount}:${editingEdge?.id ?? 'new'}`}
+    <RelationshipForm
+      key={`${openCount}:${editingRelationship?.id ?? 'new'}`}
       agentId={agentId}
       onClose={onClose}
       attached={attached}
-      createEdge={createEdge}
-      patchEdge={patchEdge}
-      editingEdge={editingEdge}
+      createRelationship={createRelationship}
+      patchRelationship={patchRelationship}
+      editingRelationship={editingRelationship}
     />
   )
 }

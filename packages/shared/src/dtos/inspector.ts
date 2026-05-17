@@ -94,7 +94,7 @@ export const INSPECTOR_TOOL_DEFINITIONS: ReadonlyArray<InspectorToolDefinition> 
     {
       name: 'assess_change_impact',
       description:
-        'Compute blast radius for a proposed change (rename / remove / modify / add). Returns a mini-repo where each `files` row classifies a path as `direct` or `transitive` at depth N, plus operator-curated cross-repo edges in `cross_repo_edges`. Single primary repo. Read-only.',
+        'Compute blast radius for a proposed change (rename / remove / modify / add). Returns a mini-repo where each `files` row classifies a path as `direct` or `transitive` at depth N, plus operator-curated cross-repo relationships in `cross_repo_relationships`. Single primary repo. Read-only.',
     },
     {
       name: 'debug_help',
@@ -160,17 +160,19 @@ export const INSPECT_CODEBASE_METADATA: InspectCodebaseMetadata = Object.freeze(
   summary:
     'Ask any question about the agent’s attached codebases. The agent picks the right wrapper internally.',
   description:
-    'One MCP tool per agent. The IDE LLM passes a free-form `query` plus optional repo hints; the agent runs its inspector wrappers (find / trace / impact / debug / understand / list) and returns one of two response shapes:\n\n' +
-    '  • Code question (the agent called at least one wrapper) → ' +
-    '`{ ok, mini_repos: [...], warnings }`. Structured evidence: ' +
-    'file paths, code chunks, graph slices, cross-repo edges. ' +
-    'No `prose_summary` field. The IDE LLM is the synthesizer here. ' +
-    'Read the mini-repos, write the answer.\n' +
-    '  • Chit-chat / clarification (no wrapper ran) → ' +
-    '`{ ok, prose_summary: "≤ 1 KB", warnings }`. The agent\'s ' +
-    'free-form reply. No `mini_repos` field.\n\n' +
-    '`ok` is always `true` (chit-chat is a valid response). ' +
-    'Read-only. Never edits files.',
+    'One MCP tool per agent. Pass `query` plus optional repo hints (`repo_hint`, `remote_url`, `local_folder`, `branch`); the agent runs inspector wrappers (find / trace / impact / debug / understand / list) and returns a structured envelope.\n\n' +
+    'Three response shapes you will see:\n\n' +
+    '  • Resolved query → ' +
+    '`{ ok: true, mini_repos: [...], resolved_repo?, next_actions?, warnings }`. ' +
+    'Structured evidence: file paths, code chunks, graph slices, cross-repo relationships. ' +
+    'Synthesize the answer from `mini_repos`. If `next_actions[]` is present, each entry has an `args_patch` you can fire as a follow-up `inspect_codebase` call (typically to drill into a connected repo).\n\n' +
+    '  • Clarification (multi-repo agent + ambiguous hint) → ' +
+    '`{ ok: true, clarification: { kind, candidates, suggested_replies, ... }, warnings }`. ' +
+    'No `mini_repos`; the bridge did NOT dispatch a run. Either ask the user to pick, or choose a `suggested_replies[i]` yourself and re-issue this tool with its `args_patch` merged into the call args.\n\n' +
+    '  • Chit-chat (no wrapper ran) → ' +
+    '`{ ok: true, prose_summary, warnings }`. The agent\'s free-form reply.\n\n' +
+    'Pass `remote_url` (from `git remote get-url origin`) when available; it is the most reliable repo identifier. Set `with_topology: true` only when you need the full `agent_repos` + `repo_relationships` inventory in this single response.\n\n' +
+    '`ok` is always `true`. Read-only. Never edits files.',
   inputKeys: Object.freeze([
     {
       name: 'query' as const,
@@ -204,7 +206,7 @@ export const INSPECT_CODEBASE_METADATA: InspectCodebaseMetadata = Object.freeze(
       name: 'with_topology' as const,
       required: false,
       description:
-        'When true, the response carries the full repo topology (`agent_repos`, `repo_edges`). Default false: the response is scoped to the resolved repo and exposes `next_actions` instead. Set true when you need the broad view in one shot.',
+        'When true, the response carries the full repo topology (`agent_repos`, `repo_relationships`). Default false: the response is scoped to the resolved repo and exposes `next_actions` instead. Set true when you need the broad view in one shot.',
     },
   ]),
 })

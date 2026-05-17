@@ -161,7 +161,7 @@ export async function getForWorker(
 }
 
 /**
- * Hard-delete a repo row. Cascades drop `agent_repos`, `repo_edges`, and
+ * Hard-delete a repo row. Cascades drop `agent_repos`, `repo_relationships`, and
  * `worker_jobs` (and their `worker_events` via the worker_jobs cascade).
  * Used by the `delete-repo` worker job after the on-disk source dir has
  * been removed; the backend's HTTP DELETE flips `deletion_pending=true`

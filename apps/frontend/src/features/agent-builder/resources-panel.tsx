@@ -28,7 +28,7 @@ import { useDragReorder } from '../../lib/use-drag-reorder'
 import { AttachRepoSheet } from './attach-repo-sheet'
 import { AttachMcpSheet } from './attach-mcp-sheet'
 import { SkillSheet } from './skill-sheet'
-import { EdgesSection } from './edges-section'
+import { RelationshipsSection } from './relationships-section'
 import { EditAttachedRepoSheet } from './edit-attached-repo-sheet'
 
 const REPO_STATUS_PILL: Record<
@@ -402,7 +402,7 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
 
       {/* Repo relations — promoted to its own card so it's visible at
           a glance and the action button lines up with the others. */}
-      <EdgesSection agentId={agentId} />
+      <RelationshipsSection agentId={agentId} />
 
       {/* MCP connections card */}
       <div className="ab-card ab-card-pad ab-form-section">

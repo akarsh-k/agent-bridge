@@ -73,7 +73,7 @@ export function ContextBudgetCard({ agentId }: { agentId: string }) {
         repos: (resources?.attachedRepos ?? []).map(
           (r) => `${r.repo.id}:${r.role ?? ''}:${(r.description ?? '').length}`,
         ),
-        edges: (resources?.repoEdges ?? []).map((e) => e.id),
+        relationships: (resources?.repoRelationships ?? []).map((e) => e.id),
         mcp: (resources?.mcpAllowlist ?? []).length,
       }),
     [agent, resources, providerModel],
@@ -259,7 +259,7 @@ function BudgetBody({
         }
       />
 
-      {/* GitNexus library skills + attached-repos hint + repo-edges
+      {/* GitNexus library skills + attached-repos hint + repo-relationships
           hint were all dropped from the prompt by the wrapper-tool
           architecture (PLAN_v2.md B6 / D9 / D12). The data still
           travels — just inside wrapper responses (`list_repos`,

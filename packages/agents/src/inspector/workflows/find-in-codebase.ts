@@ -21,7 +21,7 @@
  *   - LLM term expansion.
  *   - `gitnexus_context` round-trip for full file slices.
  *   - `graph_subset` (`trace_flow`).
- *   - `cross_repo_edges` (`assess_change_impact`).
+ *   - `cross_repo_relationships` (`assess_change_impact`).
  */
 
 import type { MastraModelConfig } from '@mastra/core/llm'
@@ -394,7 +394,7 @@ export async function runFindInCodebase(
     expansions,
     files,
     graph_subset: { nodes: [], edges: [] },
-    cross_repo_edges: [],
+    cross_repo_relationships: [],
     warnings,
     ...(resolution.ok === true
       ? {
@@ -475,7 +475,7 @@ function emptyDraft(args: {
     expansions: [],
     files: [],
     graph_subset: { nodes: [], edges: [] },
-    cross_repo_edges: [],
+    cross_repo_relationships: [],
     warnings: args.warnings,
   }
 }

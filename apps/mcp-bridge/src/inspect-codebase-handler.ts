@@ -12,10 +12,10 @@
  *     mini_repos: MiniRepo[],         // from runs.minirepo_json
  *     prose_summary?: string,         // ≤ 1KB; only when no wrapper ran
  *     agent_repos: AgentRepoSummary[],// every repo attached to the agent
- *     repo_edges: CrossRepoEdge[],    // operator-curated edges between them
+ *     repo_relationships: CrossRepoRelationship[], // operator-curated relationships between them
  *     warnings: string[] }            // populated from inspector telemetry
  *
- * `agent_repos` + `repo_edges` are included on every call so the IDE
+ * `agent_repos` + `repo_relationships` are included on every call so the IDE
  * can prompt the user with "you asked about X; also connected: Y
  * (calls), Z (deploys-to) — want to ask about those too?" without
  * needing a separate `list_repos` round-trip.
@@ -36,11 +36,11 @@ import { eq } from 'drizzle-orm'
 
 import {
   dispatchRun,
-  loadAllRepoEdges,
+  loadAllRepoRelationships,
   loadAttachedRepos,
   resolveRepoFromHint,
   type IdePreResolvedRepo,
-  type MiniRepoCrossRepoEdge,
+  type MiniRepoCrossRepoRelationship,
   type MultiSignalHint,
   type RepoResolveResult,
   type SuggestedReply,
@@ -196,7 +196,7 @@ export async function executeInspectCodebase(
           suggested_replies: resolution.suggested_replies,
         },
         agent_repos: topology.agent_repos,
-        repo_edges: topology.repo_edges,
+        repo_relationships: topology.repo_relationships,
         warnings,
       }
       return jsonEnvelope(envelope)
@@ -294,12 +294,12 @@ export async function executeInspectCodebase(
   // Always load edges so we can compute `next_actions`. The cost is
   // one query; the win is the IDE getting structured handoffs without
   // a `with_topology: true` round-trip.
-  let allEdges: readonly MiniRepoCrossRepoEdge[] = []
+  let allEdges: readonly MiniRepoCrossRepoRelationship[] = []
   try {
-    allEdges = await loadAllRepoEdges({ db: ctx.db, agentId: agent.id, attached })
+    allEdges = await loadAllRepoRelationships({ db: ctx.db, agentId: agent.id, attached })
   } catch (err) {
     warnings.push(
-      `loadAllRepoEdges failed: ${err instanceof Error ? err.message : String(err)}`,
+      `loadAllRepoRelationships failed: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
   const nextActions = focalRepo
@@ -324,7 +324,7 @@ export async function executeInspectCodebase(
     ...(withTopology
       ? {
           agent_repos: attached.map(agentRepoSummaryFromAttached),
-          repo_edges: allEdges,
+          repo_relationships: allEdges,
         }
       : {}),
     warnings,
@@ -452,7 +452,7 @@ export async function executePhase7Tool(
     mini_repos: miniRepos,
     ...(proseSummary.length > 0 ? { prose_summary: proseSummary } : {}),
     agent_repos: topology.agent_repos,
-    repo_edges: topology.repo_edges,
+    repo_relationships: topology.repo_relationships,
     warnings,
   }
   return jsonEnvelope(envelope)
@@ -499,7 +499,7 @@ interface WireEnvelope {
   /**
    * Full operator-curated edge list. Same gating as `agent_repos`.
    */
-  readonly repo_edges?: readonly MiniRepoCrossRepoEdge[]
+  readonly repo_relationships?: readonly MiniRepoCrossRepoRelationship[]
   readonly warnings: readonly string[]
 }
 
@@ -565,11 +565,11 @@ interface AgentRepoSummary {
 
 interface AgentTopology {
   readonly agent_repos: readonly AgentRepoSummary[]
-  readonly repo_edges: readonly MiniRepoCrossRepoEdge[]
+  readonly repo_relationships: readonly MiniRepoCrossRepoRelationship[]
 }
 
 /**
- * Fetch the agent's repo inventory + cross-repo edges for inclusion in
+ * Fetch the agent's repo inventory + cross-repo relationships for inclusion in
  * the response envelope. Failures fold into `warnings` rather than
  * killing the call — the IDE still gets `mini_repos`, just without the
  * topology affordance for this turn.
@@ -581,12 +581,12 @@ async function loadAgentTopology(
 ): Promise<AgentTopology> {
   try {
     const attached = await loadAttachedRepos({ db, agentId })
-    let edges: readonly MiniRepoCrossRepoEdge[] = []
+    let edges: readonly MiniRepoCrossRepoRelationship[] = []
     try {
-      edges = await loadAllRepoEdges({ db, agentId, attached })
+      edges = await loadAllRepoRelationships({ db, agentId, attached })
     } catch (err) {
       warnings.push(
-        `loadAllRepoEdges failed: ${err instanceof Error ? err.message : String(err)}`,
+        `loadAllRepoRelationships failed: ${err instanceof Error ? err.message : String(err)}`,
       )
     }
     return {
@@ -597,13 +597,13 @@ async function loadAgentTopology(
         description: r.description,
         status: r.status,
       })),
-      repo_edges: edges,
+      repo_relationships: edges,
     }
   } catch (err) {
     warnings.push(
       `loadAttachedRepos failed: ${err instanceof Error ? err.message : String(err)}`,
     )
-    return { agent_repos: [], repo_edges: [] }
+    return { agent_repos: [], repo_relationships: [] }
   }
 }
 
@@ -788,8 +788,8 @@ function pickFocalRepo(
 }
 
 /**
- * Build `next_actions` from operator-curated cross-repo edges touching
- * the focal repo. Outgoing edges first (focal as `from_repo`: "what
+ * Build `next_actions` from operator-curated cross-repo relationships touching
+ * the focal repo. Outgoing relationships first (focal as `from_repo`: "what
  * does X reach?") since they answer "where does this code go from
  * here?" — the most common follow-up. Incoming as fallback.
  *
@@ -802,12 +802,12 @@ const NEXT_ACTIONS_CAP = 3
 function computeNextActions(
   focal: AttachedRepoLike,
   attached: readonly AttachedRepoLike[],
-  edges: readonly MiniRepoCrossRepoEdge[],
+  edges: readonly MiniRepoCrossRepoRelationship[],
 ): NextAction[] {
   const attachedById = new Map(attached.map((r) => [r.repo_id, r]))
 
-  const outgoing: MiniRepoCrossRepoEdge[] = []
-  const incoming: MiniRepoCrossRepoEdge[] = []
+  const outgoing: MiniRepoCrossRepoRelationship[] = []
+  const incoming: MiniRepoCrossRepoRelationship[] = []
   for (const e of edges) {
     if (e.from_repo === focal.repo_id && e.to_repo !== focal.repo_id) {
       outgoing.push(e)
@@ -833,7 +833,7 @@ function computeNextActions(
 function buildNextAction(
   focal: AttachedRepoLike,
   other: AttachedRepoLike,
-  edge: MiniRepoCrossRepoEdge,
+  edge: MiniRepoCrossRepoRelationship,
 ): NextAction {
   // `label` mirrors the connector direction so the IDE can render it
   // verbatim ("Check frontend usage" / "What backend calls this?").

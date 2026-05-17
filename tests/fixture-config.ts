@@ -63,14 +63,14 @@ export const FIXTURE_REPOS: readonly FixtureRepo[] = [
   },
 ] as const
 
-export interface FixtureEdge {
+export interface FixtureRelationship {
   readonly fromSlug: string
   readonly toSlug: string
   readonly connector: string
   readonly description: string
 }
 
-export const FIXTURE_EDGES: readonly FixtureEdge[] = [
+export const FIXTURE_RELATIONSHIPS: readonly FixtureRelationship[] = [
   {
     fromSlug: 'ecommerce-frontend',
     toSlug: 'ecommerce-backend',

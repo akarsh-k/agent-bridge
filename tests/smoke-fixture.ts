@@ -313,8 +313,8 @@ async function main(): Promise<void> {
         'assess_change_impact(Product)',
         impact.wrapper === 'assess_change_impact' &&
           impact.summary.length > 0 &&
-          impact.cross_repo_edges.length >= 1,
-        `${impact.files.length} files, ${impact.cross_repo_edges.length} edges, ` +
+          impact.cross_repo_relationships.length >= 1,
+        `${impact.files.length} files, ${impact.cross_repo_relationships.length} relationships, ` +
           `repos=[${impactRepos.join(', ')}]`,
       )
 

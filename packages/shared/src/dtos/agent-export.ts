@@ -113,7 +113,7 @@ const exportedRepoAttachmentSchema = z
   })
   .strict()
 
-const exportedRepoEdgeSchema = z
+const exportedRepoRelationshipSchema = z
   .object({
     fromRemoteUrl: remoteUrlSchema,
     fromBranch: branchSchema,
@@ -128,7 +128,7 @@ const exportedRepoEdgeSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['toRemoteUrl'],
-        message: 'edge endpoints must be distinct',
+        message: 'relationship endpoints must be distinct',
       })
     }
   })
@@ -192,7 +192,7 @@ export const agentExportBundleSchema = z
     skills: z.array(exportedSkillSchema).max(1_000),
     tools: z.array(exportedToolSchema).max(1_000),
     repoAttachments: z.array(exportedRepoAttachmentSchema).max(1_000),
-    repoEdges: z.array(exportedRepoEdgeSchema).max(10_000),
+    repoRelationships: z.array(exportedRepoRelationshipSchema).max(10_000),
     mcpAllowlist: z.array(exportedMcpAllowlistEntrySchema).max(1_000),
     /**
      * Outbound bridge tools. Optional in the schema so older bundles
@@ -242,7 +242,7 @@ export const agentImportResponseSchema = z.object({
     skills: z.number().int().nonnegative(),
     tools: z.number().int().nonnegative(),
     repoAttachments: z.number().int().nonnegative(),
-    repoEdges: z.number().int().nonnegative(),
+    repoRelationships: z.number().int().nonnegative(),
     mcpAllowlist: z.number().int().nonnegative(),
     bridgeTools: z.number().int().nonnegative(),
   }),

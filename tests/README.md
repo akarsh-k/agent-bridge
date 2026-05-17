@@ -48,7 +48,7 @@ pnpm test:fixture:bridge    # spawns the MCP bridge subprocess; ~10s
 `SMOKE_EMBEDDING_*` is required for setup and the wrapper smoke.
 `SMOKE_CHAT_*` is optional — when set, `test:fixture:bridge` adds an
 end-to-end check that round-trips `inspect_codebase` and asserts the
-envelope carries `agent_repos` + `repo_edges`. Without it, that single
+envelope carries `agent_repos` + `repo_relationships`. Without it, that single
 assertion skips with a `⚠` line.
 
 ## What the smoke asserts

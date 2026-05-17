@@ -85,8 +85,9 @@ What crosses between processes:
   or more `gitnexus_*` calls and returns a structured `MiniRepo`.
 - **MiniRepo** — typed envelope returned by every wrapper invocation
   (`packages/agents/src/inspector/types.ts`). Carries ranked file
-  hits, a graph subset, cross-repo edges, and a one-paragraph prose
-  summary. Capped at 12k tokens.
+  hits, a graph subset, cross-repo relationships, a one-paragraph
+  prose summary, and optional `resolved_repo` / `confidence` /
+  `groundedness` per §10.4. Capped at 12k tokens.
 - **RunEvent** — one row in `run_events` + one published Redis
   message per side-effect during a run (LLM call, tool call,
   gitnexus call, mini-repo built, error, finish). Source of the
@@ -184,9 +185,9 @@ flowchart LR
 
 Tabbed UI per agent — Build, Memory, Logs, Chat — with side-sheet flows for
 attaching repos, MCP connections, and skills. The information *is* a graph
-(agents → repos → cross-repo edges, agents → MCP connections → tools), but
+(agents → repos → cross-repo relationships, agents → MCP connections → tools), but
 the surface that exposes it is a list, not a canvas; see §9.1 for the
-reasoning. React Flow is used only for the small repo-edges visualisation
+reasoning. React Flow is used only for the small repo-relationships visualisation
 inside the Repos tab.
 
 Only imports from `@agent-bridge/shared` at the **browser-safe root entry** —
@@ -469,7 +470,7 @@ JSON-RPC; treating it as ephemeral was the mismatch.
 | Property              | Behaviour                                                                                                                                                                                                            |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Key                   | `agentId`. One cached `BuiltAgent` per agent.                                                                                                                                                                        |
-| Invalidation          | Content hash over `MAX(updated_at)` across `agents`, `skills`, `tools`, `agent_repos`, `repos` (referenced via attachments — repo-status changes drive gitnexus mount), `repo_edges`, `agent_mcp_tools`, `mcp_connections` (referenced via allowlist), and the agent's `llm_provider`. Recomputed every `getOrBuild`; mismatch → tear down + rebuild. |
+| Invalidation          | Content hash over `MAX(updated_at)` across `agents`, `skills`, `tools`, `agent_repos`, `repos` (referenced via attachments — repo-status changes drive gitnexus mount), `repo_relationships`, `agent_mcp_tools`, `mcp_connections` (referenced via allowlist), and the agent's `llm_provider`. Recomputed every `getOrBuild`; mismatch → tear down + rebuild. |
 | In-flight de-dup      | Two concurrent `getOrBuild`s for the same agent share one build promise. Otherwise a chat-tool-call burst could spawn N parallel Notion subprocesses for the same agent.                                             |
 | Eviction              | LRU bounded by `MAX_ENTRIES = 8`; idle entries past `TTL_MS = 30 min` dropped on access.                                                                                                                             |
 | Process exit          | Backend's graceful shutdown (`server.ts`) and mcp-bridge's stdio-close handler both call `builtAgentCache.dispose()` so MCP subprocesses don't outlive the parent.                                                   |
@@ -530,7 +531,7 @@ Everything else. Mastra has no opinion or schema here, so we design freely:
 | Our concept                          | Why Mastra has no schema                      |
 | ------------------------------------ | --------------------------------------------- |
 | `agents` (row, incl. `inspector_enabled`), `skills`, `tools` | Mastra agents + tools are code, not data |
-| `repos`, `agent_repos`, `repo_edges` | Mastra has no notion of attached codebases    |
+| `repos`, `agent_repos`, `repo_relationships` | Mastra has no notion of attached codebases    |
 | `mcp_connections`, `agent_mcp_tools` | Mastra consumes MCP tools at runtime, not DB  |
 | `llm_providers` (incl. `embedding_dims`) | Mastra providers are instantiated, not stored |
 | `bridge_tools`                       | Operator-authored IDE-facing tools (§8.2)     |
@@ -1049,7 +1050,7 @@ Bridge surface:
 The reasoning behind the toolkit (for the repo-inspector case): a
 generic IDE coding agent staring at a 50k-line repo through grep + a
 single open file will rabbit-hole on the wrong thread. We have
-already-indexed graph + embeddings, plus operator-curated repo edges,
+already-indexed graph + embeddings, plus operator-curated repo relationships,
 so we can answer in one tool call with structured evidence (call
 graph, related files across repos, ranked hits) instead of begging
 the IDE LLM to explore the codebase line by line. An earlier design
@@ -1062,24 +1063,39 @@ looping on the same hits.
 
 ```
 IDE / Chat
-   │ user question + (optional) repo hint
+   │ user question + (optional) structured hint
+   │   { query, repo_hint?, remote_url?, local_folder?, branch?, with_topology? }
    ▼
-apps/mcp-bridge      ──► Mastra agent (BuiltAgent cache)
-   ask_agent              tools: { (only when inspector_enabled)    ──► gitnexus MCP
-   inspect_codebase  ←┐     find_in_codebase                              (subprocess,
-   (when inspector    │     trace_flow                                    sandboxed)
-    enabled)          │     assess_change_impact
-                      │     debug_help
-                      │     understand_module
-                      │     list_repos
-                      │     …operator MCPs
-                      │   }
-                      │   ↓ run-context AsyncLocalStorage
-                      │   wrapper telemetry → run_events + minirepo_json
-                      │
-                      └── envelope shape:
-                          ask_agent           → {ok, prose_summary?, warnings}
-                          inspect_codebase    → {ok, mini_repos[], prose_summary?, warnings}
+apps/mcp-bridge
+   │ 1. inspect_codebase handler reads structured hint
+   │ 2. resolveRepoFromHint(...) — multi-signal pre-resolution
+   │      ├─ ok: true     → idePreResolvedRepo threaded into run context
+   │      ├─ ok: 'clarify'→ SHORT-CIRCUIT: clarification envelope, no run
+   │      └─ ok: false    → error envelope (no_repos)
+   │ 3. dispatchRun(...) with idePreResolvedRepo
+   ▼
+Mastra agent (BuiltAgent cache)
+   │ tools: { (only when inspector_enabled)              ──► gitnexus MCP
+   │   find_in_codebase                                       (subprocess,
+   │   trace_flow                                              sandboxed)
+   │   assess_change_impact
+   │   debug_help
+   │   understand_module
+   │   list_repos
+   │   …operator MCPs
+   │ }
+   │   ↓ run-context AsyncLocalStorage (incl. idePreResolvedRepo)
+   │   ↓ wrappers call resolveRepoForWrapper(...) — uses pre-resolved
+   │     repo as fallback when LLM omits repo_hint
+   │ wrapper telemetry → run_events + minirepo_json
+   │
+   ▼
+apps/mcp-bridge (envelope assembly)
+   │ inspect_codebase → {ok, mini_repos[], resolved_repo?,
+   │                     next_actions?, clarification?,
+   │                     prose_summary?, agent_repos?,
+   │                     repo_relationships?, warnings}
+   │ ask_agent        → {ok, prose_summary?, warnings}
 ```
 
 Build-your-own agents (`inspector_enabled = false`) have only
@@ -1091,9 +1107,10 @@ external MCPs.
 
 The chat tab and the IDE bridge converge on the same
 `packages/agents/src/run-dispatcher.ts` path. The only difference is
-the streamId prefix (`run:` vs `bridge:`) and what the bridge does
-with the run's accumulated mini-repos at the end (per the envelope
-shapes above).
+the streamId prefix (`run:` vs `bridge:`), the optional
+`idePreResolvedRepo` (only the bridge ever sets it), and what the
+bridge does with the run's accumulated mini-repos at the end (per
+§10.7).
 
 ### 10.2 Inspector wrapper toolkit
 
@@ -1106,7 +1123,7 @@ the array at 14 KiB total.
 | ---------------------- | --------------------------------------------------- |
 | `find_in_codebase`     | `gitnexus_query` × LLM term expansion (per repo×variant) |
 | `trace_flow`           | `gitnexus_impact downstream` + `gitnexus_context`        |
-| `assess_change_impact` | `gitnexus_impact` (both directions) + `repo_edges` cross-repo expansion |
+| `assess_change_impact` | `gitnexus_impact` (both directions) + `repo_relationships` cross-repo expansion |
 | `debug_help`           | regex extract from `error_text` + `gitnexus_query` + `gitnexus_context` |
 | `understand_module`    | `gitnexus_context` + `gitnexus_impact downstream depth=2`             |
 | `list_repos`           | direct DB read; no gitnexus, no LLM                |
@@ -1130,16 +1147,121 @@ array would exceed 14 KiB serialized, oldest entries drop until it
 fits. Every wrapper writes unconditionally — chat-tab tool-call cards
 and the IDE bridge envelope share one source of truth.
 
+Each `MiniRepo` carries `files[]`, `graph_subset.{nodes,edges}`,
+`cross_repo_relationships[]`, `summary`, `expansions[]`, `warnings[]`,
+`tokens_used`, `tokens_cap` (see `packages/agents/src/inspector/types.ts`).
+Three optional fields the wrappers set when they can:
+
+- **`resolved_repo?`** — `{repo_id, label, matched_signal}` for
+  single-repo wrappers (and `find_in_codebase` / `debug_help` in
+  single-repo mode). Lets the chat card / Logs panel answer "why
+  this repo?" without re-running the resolver. Omitted on fan-out
+  calls and on `list_repos`.
+- **`confidence?`** — `'high' | 'medium' | 'low'`, computed
+  deterministically from observable signals (file count for
+  `find_in_codebase` / `debug_help` / `assess_change_impact` /
+  `understand_module`; graph-node count for `trace_flow`).
+  `low` co-occurs with at least one entry in `warnings`.
+- **`groundedness?`** — `{claims, grounded, ungrounded}` auto-derived
+  in `finalizeMiniRepo` (`claims` = files referenced, `grounded` =
+  files with at least one chunk, `ungrounded` = path-only matches
+  with no content). Surfaces "found 8 candidates, read 3 of them"
+  to the IDE LLM without it having to count.
+
+All three are propagated through `mini_repos[*]` in the wire envelope
+(per §10.7), distinct from the envelope-level `resolved_repo` /
+`confidence` which describe the call's overall focal repo.
+
 ### 10.5 Inspector run-context
 
 `packages/agents/src/inspector/run-context.ts` exposes a
-`node:async_hooks` AsyncLocalStorage holding `{db, eventBus,
-redactor, runId, streamId, agentStreamId, agentId}` for the duration
-of `agent.stream(...)`. The dispatcher wraps the for-await loop in
+`node:async_hooks` AsyncLocalStorage holding:
+
+```ts
+{ db, eventBus, redactor, runId, streamId, agentStreamId, agentId,
+  idePreResolvedRepo: { repo, matched_signal } | null }
+```
+
+The dispatcher wraps the for-await loop in
 `runWithInspectorContext({...}, ...)`; wrappers read the context to
 emit redacted telemetry events and to call `appendMinirepo`. Mastra's
 tool-execute context exposes `agent.toolCallId` but not our
 app-level `runId`, hence the ALS.
+
+The `idePreResolvedRepo` slot is populated by the bridge handler when
+the IDE's structured hint (`remote_url` / `local_folder` /
+`repo_hint`) resolved to a single repo before dispatch (see §10.7
+and the resolver in `inspector/repo-resolve.ts`). Wrappers consume
+it via `resolveRepoForWrapper(...)`, which threads it as a
+`fallback` into `resolveRepoFromHint` — so when the inspector LLM
+calls a wrapper without `repo_hint`, the IDE's structured choice
+becomes the default. The LLM can still override by passing an
+explicit `repo_hint` (e.g. to follow a cross-repo edge), so the
+slot is a fallback, not a lock.
+
+### 10.5b Repo resolver
+
+`packages/agents/src/inspector/repo-resolve.ts` is the single
+function — `resolveRepoFromHint` — both layers consult: the bridge
+handler for its pre-resolution step, and every wrapper via
+`resolveRepoForWrapper`. One implementation keeps the resolution
+contract uniform across surfaces.
+
+Input shape:
+
+```ts
+{ repos: AttachedRepo[],
+  hint:  string | { repo_hint?, remote_url?, local_folder?, branch? } | null,
+  allowAll?: boolean,                  // wrappers opt in
+  fallback?: { repo, matched_signal }  // bridge supplies via run context
+}
+```
+
+The string form is for the LLM-supplied `repo_hint` arg; the
+structured form is for the bridge's pre-resolution. Both flow through
+the same scoring pass. Returns a discriminated union over `ok`:
+
+- `{ok: true, repo, matched_signal, score_table}` — single repo
+  resolved. `matched_signal` is one of `remote_url` (1.0), `role`
+  (0.9), `alias` (0.85), `url_tail` (0.7), `local_folder` (0.55),
+  or `fallback_single_repo` (synthetic; single-repo agent with no
+  signal). Numeric weights produce a strict ranking so a
+  `remote_url` match never loses to a `local_folder` coincidence on
+  a different repo.
+- `{ok: 'all', repos}` — fan-out across every attached repo. Only
+  when `allowAll: true` AND (hint is `__all__` OR hint is empty in
+  a multi-repo agent).
+- `{ok: 'clarify', kind, candidates, allow_all_repos, message,
+  suggested_replies}` — multi-repo agent + ambiguous hint. The
+  `suggested_replies[i].args_patch.repo_hint` is pre-baked from the
+  candidate's label so the IDE LLM (or wrapper LLM, depending on
+  layer) can re-issue without guessing. The bridge short-circuits on
+  this variant; wrappers fold it into a clarification mini-repo
+  whose `summary` lists the candidates.
+- `{ok: false, code, message, candidates}` — unrecoverable. The
+  only code that lands here is `no_repos` (the resolver promotes
+  `not_found` / `ambiguous` to `clarify` when a multi-repo agent
+  has candidates to offer).
+
+Pre-processing the LLM never sees:
+
+- **Quote stripping.** IDE LLMs sometimes stringify a repo name with
+  quote chars wrapping the value (`repo_hint: "\"react-stripe-js\""`).
+  The resolver's `unquote` step strips matching single, double,
+  backtick, and curly/smart quotes — bounded to two iterations so a
+  glitched payload can't spin.
+- **Effectively-empty literals.** `null`, `undefined`, `none`, `n/a`,
+  `-` are treated as no hint (some models stringify the sentinel
+  instead of omitting the field).
+- **Remote URL normalisation.** `normalizeRemoteUrl` collapses
+  `https://`, `git@host:owner/repo`, trailing slash, `.git` suffix
+  to a canonical form so the IDE's `git remote get-url origin` output
+  compares cleanly with whatever scheme the operator stored.
+
+The resolver has zero LLM calls and is exercised by
+`tests/smoke-resolver.ts` (27 deterministic checks pinning every
+path through the scorer, the quote-stripping regression, and the
+clarification + fallback shapes).
 
 ### 10.6 Telemetry events
 
@@ -1162,14 +1284,92 @@ The bridge ships two envelope shapes — one per built-in tool. The
 shape telegraphs the response: structured codebase evidence vs. a
 free-form prose answer.
 
-**`<slug>__inspect_codebase`** (Repo inspectors only):
+**`<slug>__inspect_codebase`** (Repo inspectors only).
+
+Input keys: `query` (required) + optional `repo_hint`, `remote_url`,
+`local_folder`, `branch`, `with_topology` (default false; see below).
+
+Two response shapes share one envelope. The active fields depend on
+what happened during the call:
 
 ```jsonc
 { "ok": true,
   "mini_repos": [ /* one MiniRepo per wrapper invocation, oldest dropped to fit 14 KiB */ ],
-  "prose_summary": "≤ 1 KiB",  // only when mini_repos is empty (chit-chat)
+
+  "prose_summary": "≤ 1 KiB",        // only when no wrapper ran (chit-chat)
+
+  "resolved_repo": {                  // present when the bridge resolved a focal repo
+    "repo_id": "…",
+    "label": "frontend",
+    "matched_signal": "remote_url"    // remote_url | role | alias | url_tail |
+  },                                  // local_folder | fallback_single_repo
+
+  "clarification": {                  // present ONLY when the bridge short-circuited
+    "kind": "repo_or_all" | "single_repo_required",
+    "candidates": [ /* AgentRepoSummary[] */ ],
+    "allow_all_repos": false,
+    "message": "no attached repo matched \"foo\"",
+    "suggested_replies": [
+      { "label": "frontend",
+        "args_patch": { "repo_hint": "frontend" } } /* … */ ]
+  },                                  // no run was dispatched in this case
+
+  "next_actions": [                   // ≤ 3 pre-baked follow-ups for connected repos
+    { "label": "Ask about frontend (which calls backend)",
+      "reason": "frontend --calls--> backend: Frontend hits GET /products on the backend.",
+      "meta": {
+        "connector": "calls",
+        "edge_description": "Frontend hits GET /products on the backend.",
+        "from_repo": { "repo_id": "…", "label": "frontend" },
+        "to_repo":   { "repo_id": "…", "label": "backend" }
+      },
+      "args_patch": {                 // IDE LLM fires verbatim into a follow-up call
+        "repo_hint": "frontend",
+        "remote_url": "https://github.com/owner/frontend.git"
+      } } /* … */ ],
+
+  "agent_repos": [ /* AgentRepoSummary[] */ ],         // only when with_topology: true
+                                                      // OR on clarification short-circuit
+  "repo_relationships": [ /* MiniRepoCrossRepoRelationship[] */ ],
+
   "warnings": [] }
 ```
+
+Rules:
+
+- **Default is *focused*.** When the IDE doesn't pass `with_topology:
+  true`, the envelope omits `agent_repos` / `repo_relationships`. The
+  IDE consumes `next_actions` for follow-up suggestions instead of
+  re-deriving them from raw topology.
+- **`with_topology: true` is the escape hatch.** Restores the topology
+  block alongside `next_actions` for clients that want the broad view
+  in one shot.
+- **Clarification short-circuits the run.** When the IDE's hint is
+  ambiguous in a multi-repo agent, the bridge returns the
+  `clarification` envelope without dispatching a Mastra run — so
+  `mini_repos` is empty and there's no `prose_summary`. The
+  clarification envelope always includes `agent_repos` +
+  `repo_relationships` regardless of `with_topology` (the IDE needs
+  the inventory to render a picker). The IDE LLM picks a
+  `suggested_replies[i]` and re-issues with `args_patch` merged into
+  the original args.
+- **`resolved_repo`** records the bridge-level pre-resolution. The
+  bridge handler reads the IDE's structured hint (`remote_url` →
+  `role`/`alias`/`url_tail` → `local_folder`) and tries to match
+  before dispatch; if a match lands, `idePreResolvedRepo` flows
+  through the dispatcher into the inspector run context so wrappers
+  consult it as a fallback when the inspector LLM doesn't supply its
+  own `repo_hint`. See §10.5.
+- **`next_actions` are envelope-level**, computed post-dispatch from
+  operator-curated `repo_relationships` touching the focal repo
+  (outgoing edges first — "what does X reach?" — incoming second,
+  deduped per connected repo, capped at 3). Each `args_patch` carries
+  both `repo_hint` and `remote_url` so the bridge's pre-resolver
+  picks the connected repo by URL on the follow-up call.
+- **Each `MiniRepo` carries its own optional `resolved_repo`,
+  `confidence`, and `groundedness`** (per §10.4) — those are the
+  per-wrapper view, distinct from the envelope-level `resolved_repo`
+  which describes the call's primary focus.
 
 **`<slug>__ask_agent`** (every agent):
 
@@ -1179,13 +1379,14 @@ free-form prose answer.
   "warnings": [] }
 ```
 
-No `mini_repos` field on `ask_agent`. Even on a Repo-inspector agent,
-when called via `ask_agent` the bridge strips structured evidence
-from the response — the IDE LLM that called this tool wants prose.
-The wrappers may still fire internally during the run (they live in
-the cached BuiltAgent's tool dict and the LLM may choose to call
-them), and their output still lands on `runs.minirepo_json` for
-/logs replay; it just doesn't reach the IDE on this tool.
+No `mini_repos` / `resolved_repo` / `next_actions` on `ask_agent`.
+Even on a Repo-inspector agent, when called via `ask_agent` the
+bridge strips structured evidence from the response — the IDE LLM
+that called this tool wants prose. The wrappers may still fire
+internally during the run (they live in the cached BuiltAgent's tool
+dict and the LLM may choose to call them), and their output still
+lands on `runs.minirepo_json` for /logs replay; it just doesn't
+reach the IDE on this tool.
 
 Operator-authored `bridge_tools` rows wrap into the
 `inspect_codebase` envelope shape with an 8 KiB prose cap (operators
@@ -1205,8 +1406,8 @@ hash. Build script copies the `.md` into `dist/` so production
 resolves the same way as dev.
 
 Earlier auto-attached blocks (gitnexus library skills, repo inventory,
-repo edges) are GONE from the prompt. Repo inventory now travels
-inside `list_repos` mini-repo responses; cross-repo edges return
+repo relationships) are GONE from the prompt. Repo inventory now travels
+inside `list_repos` mini-repo responses; cross-repo relationships return
 inside `assess_change_impact`.
 
 ### 10.9 Operator skill caps
@@ -1489,7 +1690,7 @@ mount at the API root (`llm-providers`, `mcp-connections`, `repos`,
 `/api/system/…` (`system-tools`, `system-skill`). SSE streaming runs
 through `/api/events`. Repo background-job mutations are a secondary
 mount on `repos` (`repo-jobs`, `repo-graph`, `repo-wiki-static`,
-`repo-edges`) so the static-asset handlers and JSON handlers can
+`repo-relationships`) so the static-asset handlers and JSON handlers can
 share the same path namespace without router-precedence games. The
 OAuth callback (§11.3) lives at `/oauth/…`, outside `/api`, because
 the redirect URL is registered with upstreams at dynamic-client-
@@ -1551,4 +1752,4 @@ endpoint). `smoke-bridge-registry.ts` exercises the bridge's tool-
 registry build for both inspector-enabled and blank agents; it runs
 model-free by default and, when `SMOKE_CHAT_*` is set, additionally
 round-trips `inspect_codebase` to assert the wire envelope carries
-`agent_repos` + `repo_edges`.
+`agent_repos` + `repo_relationships`.

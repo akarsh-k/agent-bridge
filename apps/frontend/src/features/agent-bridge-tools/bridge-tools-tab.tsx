@@ -285,7 +285,7 @@ function InspectorToolkitCard({ slug }: { slug: string }) {
         <div className="ab-section-sub">
           Repo inspectors ship one system tool with a structured
           response contract: file paths, code snippets, graph slices,
-          cross-repo edges. The description is system-controlled
+          cross-repo relationships. The description is system-controlled
           (operator agent description + framework note about the
           envelope). Operators can author additional tools below
           via <strong>bridge_tools</strong>.

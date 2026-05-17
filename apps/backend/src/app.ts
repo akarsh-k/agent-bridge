@@ -32,7 +32,7 @@ import { healthRouter } from './routes/health.js'
 import { llmProvidersRouter } from './routes/llm-providers.js'
 import { mcpConnectionsRouter } from './routes/mcp-connections.js'
 import { oauthRouter } from './routes/oauth.js'
-import { repoEdgesRouter } from './routes/repo-edges.js'
+import { repoRelationshipsRouter } from './routes/repo-relationships.js'
 import { repoGraphRouter } from './routes/repo-graph.js'
 import { repoJobsRouter } from './routes/repo-jobs.js'
 import { repoWikiStaticRouter } from './routes/repo-wiki-static.js'
@@ -100,7 +100,7 @@ const api = new Hono()
   .route('/agents', agentsRouter)
   .route('/agents', agentExportRouter)
   .route('/agents/:agentId/repos', agentReposRouter)
-  .route('/agents/:agentId/repo-edges', repoEdgesRouter)
+  .route('/agents/:agentId/repo-relationships', repoRelationshipsRouter)
   .route('/agents/:agentId/mcp-tools', agentMcpToolsRouter)
   .route('/agents/:agentId/skills', skillsRouter)
   .route('/agents/:agentId/tools', toolsRouter)

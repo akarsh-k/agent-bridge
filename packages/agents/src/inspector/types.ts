@@ -60,7 +60,7 @@ export interface MiniRepoGraphEdge {
   readonly kind: string
 }
 
-export interface MiniRepoCrossRepoEdge {
+export interface MiniRepoCrossRepoRelationship {
   readonly from_repo: string
   readonly to_repo: string
   readonly connector: string
@@ -130,7 +130,7 @@ export interface MiniRepo {
     readonly nodes: readonly MiniRepoGraphNode[]
     readonly edges: readonly MiniRepoGraphEdge[]
   }
-  readonly cross_repo_edges: readonly MiniRepoCrossRepoEdge[]
+  readonly cross_repo_relationships: readonly MiniRepoCrossRepoRelationship[]
   /** Char-based estimate. ~4 chars ≈ 1 token; close enough for our budget. */
   readonly tokens_used: number
   readonly tokens_cap: number

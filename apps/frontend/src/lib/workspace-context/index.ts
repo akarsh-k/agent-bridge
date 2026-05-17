@@ -9,7 +9,7 @@
  *   2. Shared resources — `repos`, `mcpConnections`, `llmProviders`. Global;
  *      one row, many attachment edges.
  *   3. Per-agent resources — `skills`, `tools`, `attachedRepos`, `mcpAllowlist`,
- *      `repoEdges`. Keyed by agent id so the canvas can look them up without
+ *      `repoRelationships`. Keyed by agent id so the canvas can look them up without
  *      re-scanning the whole list.
  *
  * Loading is "fetch-on-mount" and parallelised; see `WorkspaceProvider` for
@@ -34,9 +34,9 @@ import type {
   McpConnectionResponse,
   McpConnectionUpdateInput,
   RepoCreateInput,
-  RepoEdgeCreateInput,
-  RepoEdgeResponse,
-  RepoEdgeUpdateInput,
+  RepoRelationshipCreateInput,
+  RepoRelationshipResponse,
+  RepoRelationshipUpdateInput,
   RepoResponse,
   RepoUpdateInput,
   SkillCreateInput,
@@ -55,7 +55,7 @@ export interface AgentResources {
   tools: readonly ToolResponse[]
   attachedRepos: readonly AttachedRepoResponse[]
   mcpAllowlist: readonly AllowlistEntryResponse[]
-  repoEdges: readonly RepoEdgeResponse[]
+  repoRelationships: readonly RepoRelationshipResponse[]
 }
 
 export interface WorkspaceContextValue {
@@ -111,16 +111,16 @@ export interface WorkspaceContextValue {
     patch: AttachRepoUpdateInput,
   ) => Promise<AttachedRepoResponse>
   detachRepo: (agentId: string, repoId: string) => Promise<void>
-  createRepoEdge: (
+  createRepoRelationship: (
     agentId: string,
-    input: RepoEdgeCreateInput,
-  ) => Promise<RepoEdgeResponse>
-  patchRepoEdge: (
+    input: RepoRelationshipCreateInput,
+  ) => Promise<RepoRelationshipResponse>
+  patchRepoRelationship: (
     agentId: string,
-    edgeId: string,
-    patch: RepoEdgeUpdateInput,
-  ) => Promise<RepoEdgeResponse>
-  removeRepoEdge: (agentId: string, edgeId: string) => Promise<void>
+    relationshipId: string,
+    patch: RepoRelationshipUpdateInput,
+  ) => Promise<RepoRelationshipResponse>
+  removeRepoRelationship: (agentId: string, relationshipId: string) => Promise<void>
 
   // Shared-resource mutations (net-new rows usable from any quick-add picker)
   createRepo: (

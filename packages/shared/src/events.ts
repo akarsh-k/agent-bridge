@@ -674,7 +674,7 @@ export const agentConfigResources = [
   'skill',
   'tool',
   'repo',
-  'repo_edge',
+  'repo_relationship',
   'mcp_allowlist',
   // Not a config resource in the literal sense, but it ships through
   // the same persistence + SSE pipeline so the unified Activity log

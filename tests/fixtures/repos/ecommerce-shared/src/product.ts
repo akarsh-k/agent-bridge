@@ -2,7 +2,7 @@
  * Canonical Product shape for the ecommerce demo.
  *
  * Mirrored on the backend as a Pydantic model — they MUST stay in sync.
- * The agent's `repo_edges` row records this correspondence so
+ * The agent's `repo_relationships` row records this correspondence so
  * `assess_change_impact` lights up the backend when the TS interface
  * changes.
  */

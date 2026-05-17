@@ -7,7 +7,7 @@
  *   t=0   kick off 4 top-level fetches in parallel: agents, repos,
  *         mcpConnections, llmProviders.
  *   t=1   once `agents` resolves, fan out per-agent sub-resource fetches
- *         (skills, tools, attachedRepos, mcpAllowlist, repoEdges) in
+ *         (skills, tools, attachedRepos, mcpAllowlist, repoRelationships) in
  *         parallel across every agent.
  *
  * Any of the top-level fetches failing flips `status` to `'error'` (the
@@ -51,9 +51,9 @@ import type {
   McpConnectionResponse,
   McpConnectionUpdateInput,
   RepoCreateInput,
-  RepoEdgeCreateInput,
-  RepoEdgeResponse,
-  RepoEdgeUpdateInput,
+  RepoRelationshipCreateInput,
+  RepoRelationshipResponse,
+  RepoRelationshipUpdateInput,
   RepoResponse,
   RepoUpdateInput,
   SkillCreateInput,
@@ -104,7 +104,7 @@ async function fetchTopLevel(): Promise<TopLevelData> {
 }
 
 async function fetchAgentResources(agentId: string): Promise<AgentResources> {
-  const [skills, tools, attachedRepos, mcpAllowlist, repoEdges] =
+  const [skills, tools, attachedRepos, mcpAllowlist, repoRelationships] =
     await Promise.all([
       callApi<{ ok: true; skills: readonly SkillResponse[] }>(
         rpc.api.agents[':agentId'].skills.$get({ param: { agentId } }),
@@ -118,11 +118,11 @@ async function fetchAgentResources(agentId: string): Promise<AgentResources> {
       callApi<{ ok: true; tools: readonly AllowlistEntryResponse[] }>(
         rpc.api.agents[':agentId']['mcp-tools'].$get({ param: { agentId } }),
       ).then((r) => r.tools),
-      callApi<{ ok: true; edges: readonly RepoEdgeResponse[] }>(
-        rpc.api.agents[':agentId']['repo-edges'].$get({ param: { agentId } }),
-      ).then((r) => r.edges),
+      callApi<{ ok: true; relationships: readonly RepoRelationshipResponse[] }>(
+        rpc.api.agents[':agentId']['repo-relationships'].$get({ param: { agentId } }),
+      ).then((r) => r.relationships),
     ])
-  return { skills, tools, attachedRepos, mcpAllowlist, repoEdges }
+  return { skills, tools, attachedRepos, mcpAllowlist, repoRelationships }
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
@@ -238,7 +238,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           tools: [],
           attachedRepos: [],
           mcpAllowlist: [],
-          repoEdges: [],
+          repoRelationships: [],
         },
       }))
       return agent
@@ -295,7 +295,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           tools: [],
           attachedRepos: [],
           mcpAllowlist: [],
-          repoEdges: [],
+          repoRelationships: [],
         }
         return {
           ...prev,
@@ -321,7 +321,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           tools: [],
           attachedRepos: [],
           mcpAllowlist: [],
-          repoEdges: [],
+          repoRelationships: [],
         }
         return {
           ...prev,
@@ -433,13 +433,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     [],
   )
 
-  const createRepoEdge = useCallback(
+  const createRepoRelationship = useCallback(
     async (
       agentId: string,
-      input: RepoEdgeCreateInput,
-    ): Promise<RepoEdgeResponse> => {
-      const { edge } = await callApi<{ ok: true; edge: RepoEdgeResponse }>(
-        rpc.api.agents[':agentId']['repo-edges'].$post({
+      input: RepoRelationshipCreateInput,
+    ): Promise<RepoRelationshipResponse> => {
+      const { relationship } = await callApi<{ ok: true; relationship: RepoRelationshipResponse }>(
+        rpc.api.agents[':agentId']['repo-relationships'].$post({
           param: { agentId },
           json: input,
         }),
@@ -451,24 +451,24 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           ...prev,
           [agentId]: {
             ...cur,
-            repoEdges: [...cur.repoEdges, edge],
+            repoRelationships: [...cur.repoRelationships, relationship],
           },
         }
       })
-      return edge
+      return relationship
     },
     [],
   )
 
-  const patchRepoEdge = useCallback(
+  const patchRepoRelationship = useCallback(
     async (
       agentId: string,
-      edgeId: string,
-      patch: RepoEdgeUpdateInput,
-    ): Promise<RepoEdgeResponse> => {
-      const { edge } = await callApi<{ ok: true; edge: RepoEdgeResponse }>(
-        rpc.api.agents[':agentId']['repo-edges'][':edgeId'].$patch({
-          param: { agentId, edgeId },
+      relationshipId: string,
+      patch: RepoRelationshipUpdateInput,
+    ): Promise<RepoRelationshipResponse> => {
+      const { relationship } = await callApi<{ ok: true; relationship: RepoRelationshipResponse }>(
+        rpc.api.agents[':agentId']['repo-relationships'][':relationshipId'].$patch({
+          param: { agentId, relationshipId },
           json: patch,
         }),
       )
@@ -479,20 +479,20 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           ...prev,
           [agentId]: {
             ...cur,
-            repoEdges: cur.repoEdges.map((e) => (e.id === edgeId ? edge : e)),
+            repoRelationships: cur.repoRelationships.map((e) => (e.id === relationshipId ? relationship : e)),
           },
         }
       })
-      return edge
+      return relationship
     },
     [],
   )
 
-  const removeRepoEdge = useCallback(
-    async (agentId: string, edgeId: string): Promise<void> => {
+  const removeRepoRelationship = useCallback(
+    async (agentId: string, relationshipId: string): Promise<void> => {
       await callApi<{ ok: true }>(
-        rpc.api.agents[':agentId']['repo-edges'][':edgeId'].$delete({
-          param: { agentId, edgeId },
+        rpc.api.agents[':agentId']['repo-relationships'][':relationshipId'].$delete({
+          param: { agentId, relationshipId },
         }),
       )
       setAgentResources((prev) => {
@@ -502,7 +502,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           ...prev,
           [agentId]: {
             ...cur,
-            repoEdges: cur.repoEdges.filter((e) => e.id !== edgeId),
+            repoRelationships: cur.repoRelationships.filter((e) => e.id !== relationshipId),
           },
         }
       })
@@ -560,8 +560,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
             attachedRepos: cur.attachedRepos.filter(
               (a) => a.repo.id !== repoId,
             ),
-            // Also drop edges referencing the detached repo.
-            repoEdges: cur.repoEdges.filter(
+            // Also drop relationships referencing the detached repo.
+            repoRelationships: cur.repoRelationships.filter(
               (e) => e.fromRepoId !== repoId && e.toRepoId !== repoId,
             ),
           },
@@ -591,7 +591,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           tools: [],
           attachedRepos: [],
           mcpAllowlist: [],
-          repoEdges: [],
+          repoRelationships: [],
         }
         // Replace any existing attachment for the same repo id (shouldn't
         // happen — the server rejects duplicates — but defend against a race).
@@ -725,9 +725,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       repos: prev.repos.filter((r) => r.id !== id),
     }))
     // Mirror the server-side FK cascade in local state. The backend
-    // drops both `agent_repos` (attached-repo entries) AND `repo_edges`
+    // drops both `agent_repos` (attached-repo entries) AND `repo_relationships`
     // that reference the deleted repo; if we only update one, the
-    // edges UI shows orphan rows with no resolvable from/to repo.
+    // relationships UI shows orphan rows with no resolvable from/to repo.
     setAgentResources((prev) => {
       let changed = false
       const next: Record<string, AgentResources> = {}
@@ -735,12 +735,12 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         const filteredAttached = bundle.attachedRepos.filter(
           (a) => a.repo.id !== id,
         )
-        const filteredEdges = bundle.repoEdges.filter(
+        const filteredRelationships = bundle.repoRelationships.filter(
           (e) => e.fromRepoId !== id && e.toRepoId !== id,
         )
         if (
           filteredAttached.length === bundle.attachedRepos.length &&
-          filteredEdges.length === bundle.repoEdges.length
+          filteredRelationships.length === bundle.repoRelationships.length
         ) {
           next[agentId] = bundle
           continue
@@ -749,7 +749,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
         next[agentId] = {
           ...bundle,
           attachedRepos: filteredAttached,
-          repoEdges: filteredEdges,
+          repoRelationships: filteredRelationships,
         }
       }
       return changed ? next : prev
@@ -956,9 +956,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       attachRepo,
       patchAttachedRepo,
       detachRepo,
-      createRepoEdge,
-      patchRepoEdge,
-      removeRepoEdge,
+      createRepoRelationship,
+      patchRepoRelationship,
+      removeRepoRelationship,
       createRepo,
       createLlmProvider,
       patchLlmProvider,
@@ -991,9 +991,9 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       attachRepo,
       patchAttachedRepo,
       detachRepo,
-      createRepoEdge,
-      patchRepoEdge,
-      removeRepoEdge,
+      createRepoRelationship,
+      patchRepoRelationship,
+      removeRepoRelationship,
       createRepo,
       createLlmProvider,
       patchLlmProvider,

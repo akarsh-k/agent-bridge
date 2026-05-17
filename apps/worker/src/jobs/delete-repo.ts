@@ -25,7 +25,7 @@
  *      everything per-repo. The shared gitnexus-home cache directory
  *      is NOT touched (it's process-level state, used across repos).
  *   5. Hard-delete the `repos` row. Cascades drop any remaining
- *      `repo_edges` and `worker_jobs` (and their `worker_events` via
+ *      `repo_relationships` and `worker_jobs` (and their `worker_events` via
  *      the worker_jobs cascade).
  *   6. Publish `repo.delete.ok` (or `repo.delete.fail` from the catch
  *      arm) so the Logs UI shows a terminal state instead of just

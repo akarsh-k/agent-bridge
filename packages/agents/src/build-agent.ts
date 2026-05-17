@@ -483,10 +483,10 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     throw err
   }
 
-  // The auto-attached repo inventory + repo-edges + system-skill +
+  // The auto-attached repo inventory + repo-relationships + system-skill +
   // gitnexus library skills blocks have all been removed
   // (`docs/ARCHITECTURE.md §10` D9, D12, F5). Repo inventory now travels
-  // inside `list_repos` mini-repo responses; edges will return inside
+  // inside `list_repos` mini-repo responses; relationships will return inside
   // `assess_change_impact`. Operators keep their authored
   // prompt + skills.
   const attachedRepoCount = mountedGitnexus
@@ -571,10 +571,10 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
  * Operator's `system_prompt` is the anchor; each operator-authored skill
  * contributes a markdown section underneath. Empty bodies are dropped.
  *
- * Repo inventory travels inside `list_repos` mini-repo responses;
- * edges return inside `assess_change_impact`. Size caps on operator
- * skills (≤ 4KB / 200 lines per skill, ≤ 12KB total) and the ≤80-line
- * system prompt are enforced separately.
+ * Repo inventory travels inside `list_repos` mini-repo responses; cross-
+ * repo relationships return inside `assess_change_impact`. Size caps on
+ * operator skills (≤ 4KB / 200 lines per skill, ≤ 12KB total) and the
+ * ≤80-line inspector system prompt are enforced separately.
  */
 async function composeInstructions(
   basePrompt: string,

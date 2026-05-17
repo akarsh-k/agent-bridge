@@ -223,7 +223,7 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
     expansions: [anchor],
     files,
     graph_subset: { nodes, edges },
-    cross_repo_edges: [],
+    cross_repo_relationships: [],
     warnings,
     resolved_repo: {
       repo_id: target.repo_id,
@@ -255,7 +255,7 @@ function emptyDraft(args: {
     expansions: [],
     files: [],
     graph_subset: { nodes: [], edges: [] },
-    cross_repo_edges: [],
+    cross_repo_relationships: [],
     warnings: args.warnings,
   }
 }

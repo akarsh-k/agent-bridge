@@ -11,10 +11,10 @@
  *   - `transitive (depth=N)`          — N hops away
  *
  * Cross-repo expansion ("always-explain-bounds" rule, baked into code):
- * for every operator-curated `repo_edges`
+ * for every operator-curated `repo_relationships`
  * row originating from the resolved repo, run gitnexus_impact upstream
  * on each anchor against the target repo too. Hits are added to
- * `mini_repo.cross_repo_edges` AND folded into `files` with the
+ * `mini_repo.cross_repo_relationships` AND folded into `files` with the
  * cross-repo target's label.
  *
  * `add` change_kind: blast radius is empty by definition (nothing
@@ -32,14 +32,14 @@ import {
 } from '../gitnexus-callers.js'
 import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
 import {
-  loadIncomingRepoEdges,
-  loadOutgoingRepoEdges,
-  type CrossRepoEdgeWithTarget,
-} from '../repo-edges.js'
+  loadIncomingRepoRelationships,
+  loadOutgoingRepoRelationships,
+  type CrossRepoRelationshipWithTarget,
+} from '../repo-relationships.js'
 import { resolveRepoForWrapper } from '../run-context.js'
 import type {
   MiniRepo,
-  MiniRepoCrossRepoEdge,
+  MiniRepoCrossRepoRelationship,
   MiniRepoFile,
 } from '../types.js'
 import {
@@ -138,7 +138,7 @@ export async function runAssessChangeImpact(
       expansions: trimmedAnchors,
       files: [],
       graph_subset: { nodes: [], edges: [] },
-      cross_repo_edges: [],
+      cross_repo_relationships: [],
       warnings: [],
       resolved_repo: {
         repo_id: target.repo_id,
@@ -195,34 +195,34 @@ export async function runAssessChangeImpact(
     }
   }
 
-  // Cross-repo expansion: load operator-curated edges originating from
+  // Cross-repo expansion: load operator-curated relationships originating from
   // the target repo, fan upstream on each anchor against each target.
-  // We use upstream because edges semantically read
+  // We use upstream because relationships semantically read
   // "<from> deploys-to <to>" / "<from> calls <to>" — meaning code in
   // <to> depends on or consumes <from>'s outputs. Asking gitnexus
   // "what in <to> would be affected by changing <anchor> in <from>?"
   // requires running upstream impact in the TARGET repo using the
   // anchor name as the symbol. Not perfect (relies on shared symbol
-  // names across repos) but the operator's repo_edges block and the
+  // names across repos) but the operator's repo_relationships block and the
   // LLM's use of `related_repos` cover the gaps.
-  const crossEdges: MiniRepoCrossRepoEdge[] = []
+  const crossEdges: MiniRepoCrossRepoRelationship[] = []
   const crossHits: Array<{
     repo: AttachedRepo
     rows: readonly GitnexusImpactRow[]
   }> = []
 
-  // Walk both edge directions. Outgoing edges point AT consumers the
-  // change reaches; incoming edges point AT us from callers/importers.
-  // Without the incoming sweep, an asymmetric edge like
+  // Walk both relationship directions. Outgoing relationships point AT consumers the
+  // change reaches; incoming relationships point AT us from callers/importers.
+  // Without the incoming sweep, an asymmetric relationship like
   // `frontend --calls--> backend` is invisible when the change is in
-  // `backend` (backend has no outgoing edges to frontend, but frontend
+  // `backend` (backend has no outgoing relationships to frontend, but frontend
   // is still affected). Dedupe by (from_repo, to_repo) — operators
-  // sometimes record a logical relationship as two opposing edges and
+  // sometimes record a logical relationship as two opposing relationships and
   // we want one cross-repo expansion per pair.
-  let outgoingEdges: CrossRepoEdgeWithTarget[] = []
-  let incomingEdges: CrossRepoEdgeWithTarget[] = []
+  let outgoingEdges: CrossRepoRelationshipWithTarget[] = []
+  let incomingEdges: CrossRepoRelationshipWithTarget[] = []
   try {
-    outgoingEdges = await loadOutgoingRepoEdges({
+    outgoingEdges = await loadOutgoingRepoRelationships({
       db,
       agentId,
       fromRepoId: target.repo_id,
@@ -230,11 +230,11 @@ export async function runAssessChangeImpact(
     })
   } catch (err) {
     warnings.push(
-      `loadOutgoingRepoEdges failed: ${err instanceof Error ? err.message : String(err)}`,
+      `loadOutgoingRepoRelationships failed: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
   try {
-    incomingEdges = await loadIncomingRepoEdges({
+    incomingEdges = await loadIncomingRepoRelationships({
       db,
       agentId,
       toRepoId: target.repo_id,
@@ -242,11 +242,11 @@ export async function runAssessChangeImpact(
     })
   } catch (err) {
     warnings.push(
-      `loadIncomingRepoEdges failed: ${err instanceof Error ? err.message : String(err)}`,
+      `loadIncomingRepoRelationships failed: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
 
-  const expansionTargets = new Map<string, CrossRepoEdgeWithTarget>()
+  const expansionTargets = new Map<string, CrossRepoRelationshipWithTarget>()
   for (const e of [...outgoingEdges, ...incomingEdges]) {
     const key = `${e.edge.from_repo}::${e.edge.to_repo}`
     if (!expansionTargets.has(key)) expansionTargets.set(key, e)
@@ -356,10 +356,10 @@ export async function runAssessChangeImpact(
     outgoingEdges.length === 0
       ? repos.length === 1
         ? 'Single repo attached; no cross-repo expansion applicable.'
-        : `Agent has ${repos.length} repos but no repo_edges originate from ${target.label}; cross-repo expansion skipped.`
+        : `Agent has ${repos.length} repos but no repo_relationships originate from ${target.label}; cross-repo expansion skipped.`
       : crossCount === 0
-        ? `Followed ${outgoingEdges.length} repo_edge(s) from ${target.label}; no cross-repo consumers found.`
-        : `Followed ${outgoingEdges.length} repo_edge(s); ${crossCount} cross-repo consumer(s) included.`
+        ? `Followed ${outgoingEdges.length} repo_relationship(s) from ${target.label}; no cross-repo consumers found.`
+        : `Followed ${outgoingEdges.length} repo_relationship(s); ${crossCount} cross-repo consumer(s) included.`
   const summary = `${changeKind.toUpperCase()} of ${trimmedAnchors.length} anchor(s) in ${target.label}: ${sameRepoCount} same-repo + ${crossCount} cross-repo file(s) affected. ${crossSummary}`
 
   const miniRepo = finalizeMiniRepo({
@@ -369,7 +369,7 @@ export async function runAssessChangeImpact(
     expansions: trimmedAnchors,
     files,
     graph_subset: { nodes: [], edges: [] },
-    cross_repo_edges: crossEdges,
+    cross_repo_relationships: crossEdges,
     warnings,
     resolved_repo: {
       repo_id: target.repo_id,
@@ -401,7 +401,7 @@ function emptyDraft(args: {
     expansions: [],
     files: [],
     graph_subset: { nodes: [], edges: [] },
-    cross_repo_edges: [],
+    cross_repo_relationships: [],
     warnings: args.warnings,
   }
 }

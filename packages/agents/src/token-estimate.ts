@@ -1,7 +1,7 @@
 /**
  * Per-call context-budget estimator. Walks every component buildAgent
  * injects into a chat-completions request — system prompt, skills,
- * attached-repo hints, repo edges, gitnexus tool dict, external MCP
+ * attached-repo hints, repo relationships, gitnexus tool dict, external MCP
  * tools, custom tools — and returns a structured token breakdown so
  * the UI can show "you're sending 16k tokens before the user types,
  * 87% of headroom" before the user hits the wall.
@@ -162,7 +162,7 @@ export interface TokenEstimate {
      */
     readonly gitnexusLibrarySkills: TokenEstimateGitnexusLibrarySkills | null
     readonly attachedReposHint: number
-    readonly repoEdgesHint: number
+    readonly repoRelationshipsHint: number
     readonly tools: ReadonlyArray<TokenEstimateTool>
     readonly toolsTotal: number
   }
@@ -188,7 +188,7 @@ function describeInspectorWrapper(name: string): string {
     case 'trace_flow':
       return 'Walk the call/import graph from a starting anchor toward a goal. Returns mini-repo with graph_subset + chunks.'
     case 'assess_change_impact':
-      return 'Compute blast radius for a proposed change (rename / remove / modify / add). Returns direct + transitive dependents and operator-curated cross-repo edges.'
+      return 'Compute blast radius for a proposed change (rename / remove / modify / add). Returns direct + transitive dependents and operator-curated cross-repo relationships.'
     case 'debug_help':
       return 'Diagnose a bug from raw error text. Extracts file paths and symbols, finds suspect call sites with chunks.'
     case 'understand_module':
@@ -257,8 +257,8 @@ export async function estimateAgentTokens(
 
   const edgeRows = await db
     .select()
-    .from(schema.repoEdges)
-    .where(eq(schema.repoEdges.agentId, agentId))
+    .from(schema.repoRelationships)
+    .where(eq(schema.repoRelationships.agentId, agentId))
 
   const enc = loadEncoding(modelId)
 
@@ -305,8 +305,8 @@ export async function estimateAgentTokens(
   }
 
   // Previously auto-attached blocks (gitnexus library skills,
-  // attached-repos inventory, repo-edges) are gone from the prompt
-  // under the wrapper-tool architecture. Repos + edges now travel
+  // attached-repos inventory, repo-relationships) are gone from the prompt
+  // under the wrapper-tool architecture. Repos + relationships now travel
   // inside wrapper responses (`list_repos`, `assess_change_impact`)
   // where they're actionable; library skills are dead weight without
   // the direct gitnexus_* tool surface. Fields kept on the response
@@ -314,7 +314,7 @@ export async function estimateAgentTokens(
   // values stay `null`/`0` permanently (unused in the new prompt).
   const gitnexusLibrarySkills: TokenEstimateGitnexusLibrarySkills | null = null
   const attachedReposHint = 0
-  const repoEdgesHint = 0
+  const repoRelationshipsHint = 0
   void edgeRows // computed above for future use; intentionally unused now
 
   // Tools — the inspector wrapper toolkit. Six tools registered per
@@ -356,7 +356,7 @@ export async function estimateAgentTokens(
       systemSkill,
       gitnexusLibrarySkills,
       attachedReposHint,
-      repoEdgesHint,
+      repoRelationshipsHint,
       tools,
       toolsTotal,
     },
