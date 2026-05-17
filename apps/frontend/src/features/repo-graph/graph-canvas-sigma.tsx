@@ -31,6 +31,7 @@ import { useEffect, useRef } from 'react'
 import Sigma from 'sigma'
 import Graph from 'graphology'
 import forceAtlas2 from 'graphology-layout-forceatlas2'
+import { EdgeCurvedArrowProgram } from '@sigma/edge-curve'
 import type {
   RepoGraph,
   RepoGraphEdge,
@@ -128,8 +129,13 @@ export function GraphCanvasSigma({
       // Only render labels for the higher-degree nodes so dense
       // clusters don't fight for screen real estate.
       labelRenderedSizeThreshold: 6,
-      // Default arrowed edges so calls/imports/etc. read as directed.
-      defaultEdgeType: 'arrow',
+      // Curved + arrowed edges so calls/imports/etc. read as directed
+      // AND don't overlap when nodes sit close together — matches the
+      // visual style of gitnexus's own viewer.
+      defaultEdgeType: 'curved-arrow',
+      edgeProgramClasses: {
+        'curved-arrow': EdgeCurvedArrowProgram,
+      },
       renderEdgeLabels: false,
       // Subtle hover ring instead of sigma's default heavy halo.
       enableEdgeEvents: false,
@@ -319,8 +325,6 @@ export function GraphCanvasSigma({
 
   // Selection — bumps the selected node's size + halo, and computes
   // the neighbour set the reducers use to dim the rest of the graph.
-  // When nothing is selected the reducers fall through to plain
-  // attrs (no dim).
   useEffect(() => {
     const g = graphRef.current
     const sig = sigmaRef.current
