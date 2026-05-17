@@ -106,6 +106,13 @@ export function AgentDetailPage({
     setTab(initial)
   }
   const setTabAndUrl = (next: TabId) => {
+    // Same-tab "navigations" (e.g. the readiness card's
+    // "Open Configure" button clicked while already on Configure)
+    // shouldn't fire the nav guard — nothing is actually changing.
+    // Callers that need a scroll-to-section still get it because
+    // the scrollIntoViewWhenReady helper runs alongside this call,
+    // not inside it.
+    if (next === tab) return
     // Tab switches change React state AND the URL; both have to flip
     // together or the UI gets out of sync. Route through the nav
     // guard once so a dirty form can intercept the whole thing; the

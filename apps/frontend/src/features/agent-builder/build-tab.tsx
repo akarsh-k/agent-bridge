@@ -227,7 +227,11 @@ export function BuildTab({ agentId }: { agentId: string }) {
               </span>
             )}
           </div>
-          <div className="ab-field ab-field-col">
+          <div
+            id="agent-prompt-section"
+            className="ab-field ab-field-col"
+            style={{ scrollMarginTop: 80 }}
+          >
             <label className="ab-field-label" htmlFor="b-prompt">
               System prompt
             </label>

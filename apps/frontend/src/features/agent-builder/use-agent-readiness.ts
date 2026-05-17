@@ -109,7 +109,11 @@ function computeChecks(
       body: 'Tells the agent what it is and how to behave. Without one, replies fall back to a generic assistant tone.',
       done: hasSystemPrompt,
       actionLabel: 'Open Configure',
-      action: { kind: 'tab', tab: 'configure' },
+      action: {
+        kind: 'tab',
+        tab: 'configure',
+        scrollTo: 'agent-prompt-section',
+      },
     },
     {
       id: 'chatProvider',
