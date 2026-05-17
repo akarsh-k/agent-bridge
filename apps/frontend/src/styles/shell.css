@@ -521,57 +521,8 @@
   }
 }
 
-/* Burst rays for the first-run completion celebration. */
-@keyframes ab-burst {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, -50%) rotate(var(--rot, 0deg)) translateY(-10px)
-      scaleY(0.3);
-  }
-  40% {
-    opacity: 0.9;
-  }
-  100% {
-    opacity: 0;
-    transform: translate(-50%, -50%) rotate(var(--rot, 0deg)) translateY(-44px)
-      scaleY(1);
-  }
-}
 .ab-firstrun-hero {
   position: relative;
-}
-.ab-firstrun-hero[data-celebrating] {
-  animation: ab-celebrate-pulse 1200ms var(--ease-out);
-}
-@keyframes ab-celebrate-pulse {
-  0% {
-    box-shadow: var(--shadow-glow);
-  }
-  40% {
-    box-shadow:
-      0 0 0 2px rgba(52, 211, 153, 0.45),
-      0 12px 36px -8px rgba(52, 211, 153, 0.42);
-  }
-  100% {
-    box-shadow: var(--shadow-glow);
-  }
-}
-.ab-celebrate-glow {
-  animation: ab-celebrate-glow 1400ms var(--ease-out) forwards;
-}
-@keyframes ab-celebrate-glow {
-  0% {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.6);
-  }
-  40% {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1.4);
-  }
-  100% {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(2);
-  }
 }
 .ab-page-header {
   display: flex;

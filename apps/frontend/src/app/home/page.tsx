@@ -35,16 +35,12 @@ export function HomePage() {
       new Date(a.updatedAt ?? 0).getTime(),
   )[0]
 
-  // Cold-start triggers the checklist when nothing's been wired up
-  // anywhere yet. The repo step is optional — agents work without
-  // any repo attached — so we don't gate "create agent" on it.
-  const isFirstRun =
-    agents.length === 0 &&
-    llmProviders.length === 0 &&
-    repos.length === 0 &&
-    mcpConnections.length === 0
-
-  if (isFirstRun) {
+  // Show the setup checklist whenever no agent exists — even if the
+  // user has already added providers or repos. The first agent is
+  // what unlocks the IDE bridge, so until that lands we keep guiding
+  // them. Checked steps stay checked, so a partially-set-up
+  // workspace just sees fewer remaining items.
+  if (agents.length === 0) {
     return <FirstRun />
   }
 
@@ -136,31 +132,48 @@ function Stat({ label, value }: { label: string; value: number }) {
 
 function FirstRun() {
   const { llmProviders, repos, agents } = useWorkspace()
-  const [providerSheet, setProviderSheet] = useState(false)
+  const [providerSheetRole, setProviderSheetRole] = useState<
+    'chat' | 'embedding' | null
+  >(null)
   const [repoSheet, setRepoSheet] = useState(false)
   const [agentSheet, setAgentSheet] = useState(false)
 
-  const providerDone = llmProviders.length > 0
+  const chatProviderDone = llmProviders.some((p) => p.role === 'chat')
+  const embeddingProviderDone = llmProviders.some(
+    (p) => p.role === 'embedding',
+  )
   const repoDone = repos.length > 0
   const agentDone = agents.length > 0
 
-  // Step 3 (agent) needs at least one provider to actually run, but
-  // we let the user create a draft agent without one — the agent
-  // detail page will surface the missing-provider banner.
+  // Required vs optional: chat provider + agent are gates (no agent
+  // runs without them); embedding + repo are recommended (needed
+  // only for coding-helper / inspector agents). Order goes
+  // chat → embedding → repo → agent so each step builds on the
+  // previous one.
   const steps: ReadonlyArray<Step> = [
     {
       n: 1,
-      title: 'Add an LLM provider',
-      body: 'Connect Anthropic, OpenAI, or any OpenAI-compatible endpoint. Your agent borrows its model from a provider.',
-      cta: 'Add provider',
+      title: 'Add a chat provider',
+      body: 'Anthropic, OpenAI, or any OpenAI-compatible endpoint. Answers every turn the agent takes.',
+      cta: 'Add chat provider',
       Icon: ProvidersIcon,
-      done: providerDone,
-      onClick: () => setProviderSheet(true),
+      done: chatProviderDone,
+      onClick: () => setProviderSheetRole('chat'),
     },
     {
       n: 2,
+      title: 'Add an embedding provider',
+      body: 'Workspace-wide. Powers code search for coding-helper agents. Skip if you only plan to build non-code helpers.',
+      cta: 'Add embedding provider',
+      Icon: ProvidersIcon,
+      done: embeddingProviderDone,
+      optional: true,
+      onClick: () => setProviderSheetRole('embedding'),
+    },
+    {
+      n: 3,
       title: 'Attach a repository',
-      body: 'Optional but recommended — once cloned, your agent can read source, generate a wiki, and answer questions about the code.',
+      body: 'Optional but recommended — once cloned, a coding-helper can read source, generate a wiki, and answer questions about the code.',
       cta: 'Add repository',
       Icon: ReposIcon,
       done: repoDone,
@@ -168,7 +181,7 @@ function FirstRun() {
       onClick: () => setRepoSheet(true),
     },
     {
-      n: 3,
+      n: 4,
       title: 'Create your first agent',
       body: 'Name it, give it a system prompt, pick a provider. It becomes callable from your IDE through the bridge.',
       cta: 'Create agent',
@@ -178,21 +191,17 @@ function FirstRun() {
     },
   ]
 
-  const allCriticalDone = providerDone && agentDone
-
   return (
     <div className="ab-page">
       <PageHeader
         title="Welcome to Agent Bridge"
-        subtitle="Three steps to your first IDE-callable agent. Walks through provider, repo (optional), and agent."
+        subtitle="A few steps to your first IDE-callable agent. Coding helpers need both a chat provider AND an embedding provider — non-code agents only need the chat one."
       />
 
       <div
         className="ab-card ab-card-pad ab-card-featured ab-firstrun-hero"
-        data-celebrating={allCriticalDone || undefined}
         style={{ marginBottom: 18 }}
       >
-        {allCriticalDone && <CelebrateBurst />}
         <div
           style={{
             display: 'flex',
@@ -202,39 +211,18 @@ function FirstRun() {
             zIndex: 1,
           }}
         >
-          <div
-            className={
-              allCriticalDone ? 'ab-glyph ab-glyph-green' : 'ab-glyph ab-glyph-violet'
-            }
-            style={{ transition: 'background var(--dur-3) var(--ease-out)' }}
-          >
-            {allCriticalDone ? (
-              <CheckIcon strokeWidth={2.6} />
-            ) : (
-              <BridgeIcon />
-            )}
+          <div className="ab-glyph ab-glyph-violet">
+            <BridgeIcon />
           </div>
           <div style={{ flex: 1 }}>
             <div className="ab-section-title">
-              {allCriticalDone
-                ? 'You’re wired up — connect your IDE'
-                : 'Get your first agent running'}
+              Get your first agent running
             </div>
             <div className="ab-section-sub" style={{ marginTop: 4 }}>
-              {allCriticalDone
-                ? 'Provider + agent are live. Drop the MCP config into Cursor / Claude Code / Codex and you’ll see your agent show up as a callable tool.'
-                : 'Each step takes a minute. You can come back here any time — every action lives under Library and Agents in the sidebar too.'}
+              Each step takes a minute. You can come back here any time — every
+              action lives under Library and Agents in the sidebar too.
             </div>
           </div>
-          {allCriticalDone && (
-            <Button
-              variant="primary"
-              onClick={() => navigate('/bridge')}
-              trailing={<ArrowRightIcon strokeWidth={2.4} />}
-            >
-              Open Bridge
-            </Button>
-          )}
         </div>
       </div>
 
@@ -252,8 +240,9 @@ function FirstRun() {
       </div>
 
       <ProviderCreateSheet
-        open={providerSheet}
-        onClose={() => setProviderSheet(false)}
+        open={providerSheetRole !== null}
+        defaultRole={providerSheetRole ?? 'chat'}
+        onClose={() => setProviderSheetRole(null)}
       />
       <RepoCreateSheet
         open={repoSheet}
@@ -276,56 +265,6 @@ interface Step {
   done: boolean
   optional?: boolean
   onClick: () => void
-}
-
-function CelebrateBurst() {
-  // Six accent-coloured rays fanning out from behind the glyph.
-  const rays = [0, 60, 120, 180, 240, 300]
-  return (
-    <div
-      aria-hidden="true"
-      style={{
-        position: 'absolute',
-        inset: 0,
-        pointerEvents: 'none',
-        overflow: 'hidden',
-        borderRadius: 'inherit',
-      }}
-    >
-      <div
-        className="ab-celebrate-glow"
-        style={{
-          position: 'absolute',
-          left: 36,
-          top: '50%',
-          width: 80,
-          height: 80,
-          transform: 'translate(-50%, -50%)',
-          borderRadius: '50%',
-          background:
-            'radial-gradient(closest-side, rgba(52, 211, 153, 0.45), transparent 70%)',
-        }}
-      />
-      {rays.map((angle, i) => (
-        <span
-          key={angle}
-          className="ab-celebrate-ray"
-          style={{
-            position: 'absolute',
-            left: 36,
-            top: '50%',
-            width: 1,
-            height: 24,
-            transform: `translate(-50%, -50%) rotate(${angle}deg) translateY(-22px)`,
-            background: 'var(--success)',
-            borderRadius: 1,
-            opacity: 0,
-            animation: `ab-burst 700ms ${i * 30}ms var(--ease-out) forwards`,
-          }}
-        />
-      ))}
-    </div>
-  )
 }
 
 function StepCard({ step }: { step: Step }) {

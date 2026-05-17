@@ -18,34 +18,46 @@ import { confirmDialog } from '../../ui/dialog-store'
 import { ApiError } from '../../lib/rpc'
 import { agentGlyphKind } from '../../lib/agent-helpers'
 import { CreateAgentSheet } from '../../features/agent-builder/create-agent-sheet'
+import { computeReadiness } from '../../features/agent-builder/use-agent-readiness'
 import { toast } from '../../ui/toast-store'
 import { navigate } from '../../lib/router'
 
-type Filter = 'all' | 'active' | 'draft' | 'archived'
+type Filter = 'all' | 'ready' | 'setup' | 'archived'
 
 const filters: ReadonlyArray<{ value: Filter; label: string }> = [
   { value: 'all', label: 'All' },
-  { value: 'active', label: 'Active' },
-  { value: 'draft', label: 'Draft' },
+  { value: 'ready', label: 'Ready' },
+  { value: 'setup', label: 'Setup needed' },
   { value: 'archived', label: 'Archived' },
 ]
 
-function isDraft(a: AgentResponse): boolean {
-  return !a.systemPrompt || a.systemPrompt.trim().length === 0
-}
-
 export function AgentsListPage() {
-  const { agents, removeAgent } = useWorkspace()
+  const { agents, removeAgent, llmProviders, repos, agentResources } =
+    useWorkspace()
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<Filter>('all')
   const [sheetOpen, setSheetOpen] = useState(false)
+
+  const readinessById = useMemo(() => {
+    const out: Record<string, ReturnType<typeof computeReadiness>> = {}
+    for (const a of agents) {
+      out[a.id] = computeReadiness(
+        a,
+        llmProviders,
+        repos,
+        agentResources[a.id]?.attachedRepos ?? [],
+      )
+    }
+    return out
+  }, [agents, llmProviders, repos, agentResources])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return agents
       .filter((a) => {
-        if (filter === 'active' && isDraft(a)) return false
-        if (filter === 'draft' && !isDraft(a)) return false
+        const ready = readinessById[a.id]?.ready ?? false
+        if (filter === 'ready' && !ready) return false
+        if (filter === 'setup' && ready) return false
         if (filter === 'archived') return false
         return true
       })
@@ -57,7 +69,7 @@ export function AgentsListPage() {
           (a.description ?? '').toLowerCase().includes(q)
         )
       })
-  }, [agents, filter, query])
+  }, [agents, filter, query, readinessById])
 
   const sorted = useMemo(
     () =>
@@ -142,6 +154,8 @@ export function AgentsListPage() {
                   key={a.id}
                   agent={a}
                   featured={a.id === featuredId}
+                  ready={readinessById[a.id]?.ready ?? false}
+                  remaining={readinessById[a.id]?.remaining ?? 0}
                   onDelete={async () => {
                     if (
                       !(await confirmDialog({
@@ -181,13 +195,16 @@ export function AgentsListPage() {
 function AgentCard({
   agent,
   featured,
+  ready,
+  remaining,
   onDelete,
 }: {
   agent: AgentResponse
   featured: boolean
+  ready: boolean
+  remaining: number
   onDelete: () => void
 }) {
-  const draft = isDraft(agent)
   const ctxItems = [
     { label: 'Open agent', onClick: () => navigate(`/agents/${agent.id}`) },
     {
@@ -211,10 +228,13 @@ function AgentCard({
             Most recent
           </div>
         )}
-        {!featured && draft && (
-          <div className="ab-agent-state ab-agent-state-draft">
+        {!featured && !ready && (
+          <div
+            className="ab-agent-state ab-agent-state-draft"
+            title={`${remaining} setup step${remaining === 1 ? '' : 's'} remaining — open the agent to finish.`}
+          >
             <span className="ab-agent-state-dot" aria-hidden="true" />
-            Draft
+            {remaining} step{remaining === 1 ? '' : 's'} left
           </div>
         )}
         <div className="ab-agent-head">

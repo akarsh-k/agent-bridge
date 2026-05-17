@@ -19,6 +19,8 @@ import { agentGlyphKind } from '../../../lib/agent-helpers'
 import { useTimeAgo } from '../../../lib/use-time-ago'
 import { toast } from '../../../ui/toast-store'
 import { confirmDialog } from '../../../ui/dialog-store'
+import { useAgentReadiness } from '../../../features/agent-builder/use-agent-readiness'
+import { AgentReadinessCard } from '../../../features/agent-builder/agent-readiness-card'
 // Code-split the heavier tabs: configure pulls in the build / memory
 // forms, resources pulls in the attached-resources panel + tools tab,
 // chat pulls in the run state machine + SSE plumbing.
@@ -173,6 +175,10 @@ export function AgentDetailPage({
   // run it inside the not-found / loading branches.
   const updatedAt = agent ? new Date(agent.updatedAt) : null
   const updatedLabel = useTimeAgo(updatedAt)
+  // Same reasoning: readiness needs to call useWorkspace / useMemo
+  // unconditionally. When the agent isn't loaded yet, the hook
+  // returns a zero state and the card / pill simply render nothing.
+  const readiness = useAgentReadiness(id)
 
   if (!agent) {
     // Distinguish "still loading" from "doesn't exist". Without this
@@ -198,8 +204,6 @@ export function AgentDetailPage({
     )
   }
 
-  const isDraft = !agent.systemPrompt || agent.systemPrompt.trim().length === 0
-
   return (
     <div className="ab-page">
       <div className="ab-detail-header">
@@ -215,11 +219,10 @@ export function AgentDetailPage({
           <div className="ab-detail-meta">
             <span className="ab-mono">{agent.slug}</span>
             <span>Updated {updatedLabel}</span>
-            {isDraft ? (
-              <Pill kind="warn">Draft</Pill>
-            ) : (
-              <Pill kind="success" dot>
-                Active
+            {!readiness.ready && (
+              <Pill kind="warn">
+                {readiness.remaining} step
+                {readiness.remaining === 1 ? '' : 's'} left
               </Pill>
             )}
           </div>
@@ -292,27 +295,10 @@ export function AgentDetailPage({
         </div>
       </div>
 
-      {!agent.llmProviderId && (
-        // role="status" (polite live region) instead of role="alert" so
-        // screen readers don't re-announce on every parent re-render —
-        // this is a persistent advisory, not a transient warning.
-        <div role="status" className="ab-alert ab-alert-warn">
-          <span className="ab-alert-dot" aria-hidden="true" />
-          <div className="ab-alert-body">
-            <div className="ab-alert-title">No LLM provider assigned</div>
-            <div className="ab-alert-sub">
-              {agent.name} can't run yet. Pick a provider on the Configure
-              tab, or add one in Library if you haven't.
-            </div>
-          </div>
-          <Button
-            variant="secondary"
-            onClick={() => setTabAndUrl('configure')}
-          >
-            Configure
-          </Button>
-        </div>
-      )}
+      <AgentReadinessCard
+        agentId={agent.id}
+        onNavigateToTab={(t) => setTabAndUrl(t)}
+      />
 
       <Tabs value={tab} onChange={setTabAndUrl} tabs={TABS} />
 

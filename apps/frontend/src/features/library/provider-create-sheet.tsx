@@ -225,6 +225,27 @@ function ProviderCreateForm({
           Encrypted at rest with your master key.
         </span>
       </div>
+      {role === 'chat' && !embeddingExists && (
+        <div
+          className="ab-field-help"
+          style={{
+            display: 'flex',
+            gap: 8,
+            alignItems: 'flex-start',
+            padding: '8px 10px',
+            border: '1px dashed var(--border)',
+            borderRadius: 'var(--radius)',
+            background: 'var(--surface-hi)',
+            color: 'var(--text-dim)',
+          }}
+        >
+          <span aria-hidden="true">·</span>
+          <span>
+            Coding-helper agents also need an embedding provider for code
+            search. Add one (one per workspace) after you finish this.
+          </span>
+        </div>
+      )}
       {err && (
         <div
           className="ab-field-help"

@@ -21,6 +21,25 @@ export function ProvidersPage() {
   const { llmProviders, removeLlmProvider } = useWorkspace()
   const { defaultProviderId } = useDefaultProviderId()
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [sheetDefaultRole, setSheetDefaultRole] = useState<
+    'chat' | 'embedding'
+  >('chat')
+
+  const hasChat = llmProviders.some((p) => p.role === 'chat')
+  const hasEmbedding = llmProviders.some((p) => p.role === 'embedding')
+  const missingRole: 'chat' | 'embedding' | null =
+    llmProviders.length === 0
+      ? null
+      : !hasChat
+        ? 'chat'
+        : !hasEmbedding
+          ? 'embedding'
+          : null
+
+  const openSheet = (defaultRole: 'chat' | 'embedding' = 'chat') => {
+    setSheetDefaultRole(defaultRole)
+    setSheetOpen(true)
+  }
 
   const remove = async (id: string, label: string) => {
     if (
@@ -51,28 +70,52 @@ export function ProvidersPage() {
     <div className="ab-page">
       <PageHeader
         title="LLM providers"
-        subtitle="Connect Anthropic, OpenAI, or any OpenAI-compatible endpoint. Each provider becomes an option in your agents' model picker."
+        subtitle="Connect Anthropic, OpenAI, or any OpenAI-compatible endpoint. Coding-helper agents need both a chat provider (answers each turn) and an embedding provider (powers code search)."
         actions={
           <Button
             variant="primary"
             leading={<PlusIcon strokeWidth={2.4} />}
-            onClick={() => setSheetOpen(true)}
+            onClick={() => openSheet('chat')}
           >
             New provider
           </Button>
         }
       />
 
+      {missingRole && (
+        <div role="status" className="ab-alert ab-alert-warn">
+          <span className="ab-alert-dot" aria-hidden="true" />
+          <div className="ab-alert-body">
+            <div className="ab-alert-title">
+              {missingRole === 'chat'
+                ? 'No chat provider yet'
+                : 'No embedding provider yet'}
+            </div>
+            <div className="ab-alert-sub">
+              {missingRole === 'chat'
+                ? 'Agents need a chat provider to answer turns. Add one to wire your first agent up.'
+                : 'Coding-helper agents need a workspace-wide embedding provider to search code. Without one, inspector tools fall back to keyword-only search.'}
+            </div>
+          </div>
+          <Button
+            variant="secondary"
+            onClick={() => openSheet(missingRole)}
+          >
+            {missingRole === 'chat' ? 'Add chat provider' : 'Add embedding provider'}
+          </Button>
+        </div>
+      )}
+
       {llmProviders.length === 0 ? (
         <EmptyState
           glyph={<ProvidersIcon />}
           title="No providers yet"
-          body="Add a provider to give your agents a brain. Anthropic, OpenAI, and OpenAI-compatible endpoints are all supported."
+          body="Add a provider to give your agents a brain. Anthropic, OpenAI, and OpenAI-compatible endpoints are all supported. Coding-helper agents need both a chat provider and an embedding provider."
           action={
             <Button
               variant="primary"
               leading={<PlusIcon strokeWidth={2.4} />}
-              onClick={() => setSheetOpen(true)}
+              onClick={() => openSheet('chat')}
             >
               Add your first provider
             </Button>
@@ -134,6 +177,7 @@ export function ProvidersPage() {
       )}
       <ProviderCreateSheet
         open={sheetOpen}
+        defaultRole={sheetDefaultRole}
         onClose={() => setSheetOpen(false)}
       />
     </div>
