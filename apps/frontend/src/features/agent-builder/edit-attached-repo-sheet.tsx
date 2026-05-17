@@ -3,7 +3,7 @@
  * for a repo already attached to this agent. The repo entry itself is
  * managed in Library; this only touches the per-agent attachment.
  *
- * Aliases are operator-curated extra names the coding-agent toolkit
+ * Aliases are operator-curated extra names the inspector toolkit
  * uses to fuzzy-match an IDE coding agent's `repo_hint` /
  * `local_folder` (`docs/ARCHITECTURE.md` §10.3-10.4). Examples:
  * local folder names (`web-app`), short codes (`fe`, `bff`), legacy

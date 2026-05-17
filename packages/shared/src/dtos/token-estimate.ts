@@ -38,11 +38,11 @@ export const tokenEstimateSchema = z.object({
     skills: z.array(skillEntry),
     skillsTotal: z.number().int().nonnegative(),
     /**
-     * Coding-agent system skill. auto-appended to every agent's
+     * Inspector system skill. Auto-appended to every inspector agent's
      * instructions in `composeInstructions`. `null` when the build
-     * artifact (`system-skill.md` in `dist/src/coding-agent/`) is
-     * missing or unreadable; the budget card surfaces that as a
-     * config gap distinct from "0 tokens".
+     * artifact (`system-prompt.md` in `dist/src/inspector/`) is missing
+     * or unreadable; the budget card surfaces that as a config gap
+     * distinct from "0 tokens".
      */
     systemSkill: systemSkillEntry.nullable(),
     gitnexusLibrarySkills: gitnexusLibrarySkillsEntry.nullable(),

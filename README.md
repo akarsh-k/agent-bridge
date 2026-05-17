@@ -79,14 +79,14 @@ the files, symbols, relationships, and repo boundaries that matter.
 Agent Bridge is not limited to codebase inspection. It supports two
 main modes.
 
-### 1. Coding-helper agents
+### 1. Repo-inspector agents
 
-Coding-helper agents are designed to help Cursor, Claude Code, Codex,
+Repo-inspector agents are designed to help Cursor, Claude Code, Codex,
 and other IDE agents research your codebase before making changes.
 
 These agents can attach repos, use GitNexus-backed graph and embedding
 context, follow operator-defined repo edges, and expose code-inspection
-tools through the MCP bridge. For each coding-helper agent, the bridge
+tools through the MCP bridge. For each repo-inspector agent, the bridge
 exposes:
 
 - `<slug>__inspect_codebase` — structured codebase evidence for
@@ -212,7 +212,7 @@ Open http://127.0.0.1:3001. Then:
 1. Add a model provider.
 2. Add or clone a repo.
 3. Wait for clone and indexing to finish.
-4. Create an agent (Coding-helper for the sidecar use case, or Blank
+4. Create an agent (Repo-inspector for the sidecar use case, or Blank
    for a custom agent).
 5. Attach repos, skills, and MCP tools as needed.
 6. Open Settings and copy the MCP bridge config into your IDE.
@@ -288,7 +288,7 @@ For Cursor (`~/.cursor/mcp.json`) the production block looks like:
 Restart your IDE. The bridge advertises:
 
 - `<slug>__ask_agent` for every agent.
-- `<slug>__inspect_codebase` for Coding-helper agents with inspection
+- `<slug>__inspect_codebase` for Repo-inspector agents with inspection
   enabled.
 - Operator-authored bridge tools when you've added them to an agent.
 

@@ -217,7 +217,7 @@ export function BuildTab({ agentId }: { agentId: string }) {
             <span style={{ marginLeft: 10 }}>
               <Pill kind={agent.inspectorEnabled ? 'accent' : 'neutral'}>
                 {agent.inspectorEnabled
-                  ? 'Coding helper'
+                  ? 'Repo inspector'
                   : 'Build your own agent'}
               </Pill>
             </span>

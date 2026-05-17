@@ -29,14 +29,13 @@ export type GitnexusSystemToolsResponse = z.infer<
 >
 
 /**
- * Coding-agent system skill. the markdown body Agent Bridge
- * auto-attaches to every agent's instructions, plus its version
- * (drives BuiltAgent cache invalidation) and heading marker
- * (operators authoring an override skill use this exact heading
- * to suppress the auto-attach). Surfaced read-only on the
- * Resources tab.
+ * Inspector system skill. The markdown body Agent Bridge auto-attaches
+ * to every inspector agent's instructions, plus its version (drives
+ * BuiltAgent cache invalidation) and heading marker (operators
+ * authoring an override skill use this exact heading to suppress the
+ * auto-attach). Surfaced read-only on the Resources tab.
  */
-export const codingAgentSystemSkillResponseSchema = z.discriminatedUnion(
+export const inspectorSystemSkillResponseSchema = z.discriminatedUnion(
   'ok',
   [
     z.object({
@@ -51,8 +50,8 @@ export const codingAgentSystemSkillResponseSchema = z.discriminatedUnion(
     }),
   ],
 )
-export type CodingAgentSystemSkillResponse = z.infer<
-  typeof codingAgentSystemSkillResponseSchema
+export type InspectorSystemSkillResponse = z.infer<
+  typeof inspectorSystemSkillResponseSchema
 >
 
 /**

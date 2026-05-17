@@ -82,25 +82,16 @@ export type {
 } from './token-estimate.js'
 export { getCurrentWorkingMemory } from './working-memory.js'
 export type { CurrentWorkingMemory } from './working-memory.js'
-export { loadAttachedRepos } from './coding-agent/repo-loader.js'
-export type { LoadAttachedReposInput } from './coding-agent/repo-loader.js'
+export { loadAttachedRepos } from './inspector/repo-loader.js'
+export type { LoadAttachedReposInput } from './inspector/repo-loader.js'
 export { loadAllRepoEdges } from './inspector/repo-edges.js'
 export type { LoadAllRepoEdgesInput } from './inspector/repo-edges.js'
 export {
   normalizeRemoteUrl,
   urlTail,
-} from './coding-agent/url-normalize.js'
+} from './inspector/url-normalize.js'
 export {
   INSPECTOR_SYSTEM_PROMPT_HEADING,
   INSPECTOR_SYSTEM_PROMPT_VERSION,
   loadInspectorSystemPrompt,
 } from './inspector/system-prompt.js'
-// Removed in cleanup:
-//   - `CODING_AGENT_SYSTEM_SKILL_*` + `loadCodingAgentSystemSkill` (replaced by inspector prompt above).
-//   - `CODING_AGENT_VIRTUAL_BRIDGE_TOOLS` + `VirtualBridgeToolDefinition` (replaced by inspector wrappers).
-//   - `loadGitnexusLibrarySkills` + `GitnexusLibrarySkill*` (no longer auto-attached).
-//   - `mountWikiTools` + `MountedWikiTools` + `MountWikiToolsInput` + `WikiRepoLabel` (wiki tools no longer in agent dict).
-//   - `resolveRepoHint` + helpers (the IDE bridge no longer needs the multi-signal resolver; `inspector/repo-resolve.ts` covers wrapper-internal use).
-// Removed later (this commit):
-//   - `emptyWikiMountMeta` + `WikiMountMeta` (the always-empty stub left over from
-//     backwards-compat). `BuiltAgentMeta.wiki` was removed at the same time.

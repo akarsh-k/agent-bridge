@@ -1,19 +1,18 @@
 /**
  * Resolve a single-string `repo_hint` against the agent's attached repos
- * (`docs/ARCHITECTURE.md §10`). Simpler than the IDE-side
- * `coding-agent/repo-resolver.ts`. inputs are a string, not a multi-signal
- * object; outputs are a single repo or a clear "ambiguous"/"miss" reason
- * the workflow can surface to the LLM.
+ * (`docs/ARCHITECTURE.md §10`). Inputs are a string; outputs are a
+ * single repo or a clear "ambiguous"/"miss" reason the workflow can
+ * surface to the LLM.
  *
- * We deliberately keep this lightweight: wrapper tools are called from
- * inside our own Mastra agent, which already has access to the attached
- * repo inventory and can re-prompt the user. The full resolver's score
+ * Lightweight by design: wrapper tools are called from inside our own
+ * Mastra agent, which already has access to the attached repo inventory
+ * and can re-prompt the user. A full multi-signal resolver with score
  * table + clarification round-trip is overkill here.
  */
 
 import type { AttachedRepo } from '@agent-bridge/shared'
 
-import { urlTail } from '../coding-agent/url-normalize.js'
+import { urlTail } from './url-normalize.js'
 
 export type RepoResolveResult =
   | { ok: true; repo: AttachedRepo }
@@ -49,6 +48,40 @@ function isEffectivelyEmpty(hint: string | null | undefined): boolean {
   return EMPTY_HINT_LITERALS.has(trimmed.toLowerCase())
 }
 
+/**
+ * Strip matching surrounding quote characters from a hint. IDE LLMs
+ * (Cursor, Codex) sometimes stringify a repo name with the quotes
+ * left in, producing `repo_hint: "\"react-stripe-js\""`. The hint
+ * arrives as a 16-char string whose first and last chars are `"`.
+ * Without this, the resolver compares `"react-stripe-js"` (with
+ * quotes) against `react-stripe-js` and returns `not_found`, the
+ * model retries the same wrong call, and the run wastes its step
+ * budget. Strip in a loop to handle the (rarer) double-wrapped case.
+ */
+function unquote(s: string): string {
+  let out = s
+  // Bound the loop so a malicious / glitched LLM payload can't spin
+  // here. Two iterations covers the realistic double-wrap case.
+  for (let i = 0; i < 2; i++) {
+    if (out.length < 2) return out
+    const first = out[0]
+    const last = out[out.length - 1]
+    if (
+      (first === '"' && last === '"') ||
+      (first === "'" && last === "'") ||
+      (first === '`' && last === '`') ||
+      // Curly/smart quotes — `“…”` and `‘…’`. Some models swap them in.
+      (first === '“' && last === '”') ||
+      (first === '‘' && last === '’')
+    ) {
+      out = out.slice(1, -1).trim()
+      continue
+    }
+    return out
+  }
+  return out
+}
+
 export function resolveRepoFromHint(input: ResolveInput): RepoResolveResult {
   const { repos, hint, allowAll = false } = input
 
@@ -74,7 +107,20 @@ export function resolveRepoFromHint(input: ResolveInput): RepoResolveResult {
     }
   }
 
-  const trimmed = hint!.trim()
+  const trimmed = unquote(hint!.trim())
+  if (isEffectivelyEmpty(trimmed)) {
+    // The hint was just quotes / whitespace once unwrapped. Treat
+    // the same as no hint instead of falling through to a bogus
+    // "no attached repo matches \"\"" message.
+    if (repos.length === 1) return { ok: true, repo: repos[0]! }
+    if (allowAll) return { ok: 'all', repos }
+    return {
+      ok: false,
+      code: 'ambiguous',
+      message: `agent has ${repos.length} repos attached; pass repo_hint`,
+      candidates: repos.map((r) => r.label),
+    }
+  }
   const lower = trimmed.toLowerCase()
 
   if (trimmed === ALL_SENTINEL) {

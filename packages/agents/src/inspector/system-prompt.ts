@@ -2,14 +2,13 @@
  * Loader for the inspector toolkit's auto-attached system prompt
  * (`docs/ARCHITECTURE.md §10`).
  *
- * Replaces a previous 860-line coding-agent system skill with a focused
- * ≤80-line guide. Composed into every agent's instructions by
+ * Composed into every inspector agent's instructions by
  * `build-agent.ts:composeInstructions`, AFTER the operator's base
- * system prompt and BEFORE operator-authored skills — so skills get
+ * system prompt and BEFORE operator-authored skills, so skills get
  * the last-word position and can override wrapper-call defaults.
  *
- * Cache strategy mirrors the old loader: read once per process, cache
- * the resolved string. The file size is ~3 KB, so memory is fine.
+ * Cache strategy: read once per process, cache the resolved string.
+ * The file size is ~3 KB, so memory is fine.
  *
  * Idempotency: `composeInstructions` checks for the heading marker
  * below before auto-attaching. An operator skill whose body already

@@ -571,15 +571,10 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
  * Operator's `system_prompt` is the anchor; each operator-authored skill
  * contributes a markdown section underneath. Empty bodies are dropped.
  *
- * Auto-attached blocks REMOVED:
- *   - The 860-line coding-agent `system-skill.md` (D9).
- *   - The gitnexus library skills (D12).
- *   - The repo inventory + repo-edges blocks (D12).
- *
- * Repo inventory now travels inside `list_repos` mini-repo responses;
- * edges will return inside `assess_change_impact`. Size caps on
- * operator skills (≤ 4KB / 200 lines per skill, ≤ 12KB total) and the
- * ≤80-line system prompt are enforced separately.
+ * Repo inventory travels inside `list_repos` mini-repo responses;
+ * edges return inside `assess_change_impact`. Size caps on operator
+ * skills (≤ 4KB / 200 lines per skill, ≤ 12KB total) and the ≤80-line
+ * system prompt are enforced separately.
  */
 async function composeInstructions(
   basePrompt: string,

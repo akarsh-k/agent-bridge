@@ -732,7 +732,7 @@ const JSON_BLOCK_PREVIEW_LINES = 12
 
 /** True when the entire trimmed string parses to a JSON object/array.
  *  Used to detect when an assistant message is a JSON-only payload
- *  (e.g. coding-agent toolkit output) so we render it as a code block
+ *  (e.g. inspector toolkit output) so we render it as a code block
  *  instead of feeding it to the markdown renderer. */
 function tryParseJson(text: string): unknown {
   const t = text.trim()

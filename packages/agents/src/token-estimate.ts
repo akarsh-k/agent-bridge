@@ -280,11 +280,9 @@ export async function estimateAgentTokens(
   const skillsTotal = skills.reduce((sum, s) => sum + s.tokens, 0)
 
   // Inspector toolkit's auto-appended system prompt
-  // (`docs/ARCHITECTURE.md §10`). The wrapper-tool architecture
-  // replaced the previous 860-line coding-agent skill with this
-  // ~70-line guide. Fail-silent contract: a load failure (missing .md
-  // in `dist/src/inspector/`) gives a null entry, which the budget
-  // card surfaces as a config gap. The shared
+  // (`docs/ARCHITECTURE.md §10`). Fail-silent contract: a load failure
+  // (missing .md in `dist/src/inspector/`) gives a null entry, which
+  // the budget card surfaces as a config gap. The shared
   // `TokenEstimateSystemSkill` type is kept so the frontend's budget
   // card doesn't have to re-shape on this change.
   //

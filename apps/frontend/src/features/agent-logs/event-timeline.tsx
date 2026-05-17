@@ -524,7 +524,7 @@ function groupMatches(group: EventGroup, filter: TimelineFilter): boolean {
     case 'model':
       return group === 'model' || group === 'lifecycle'
     case 'inspector':
-      return group === 'inspector' || group === 'resolver'
+      return group === 'inspector'
     default:
       return false
   }

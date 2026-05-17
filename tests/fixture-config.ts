@@ -86,7 +86,7 @@ export const FIXTURE_EDGES: readonly FixtureEdge[] = [
   },
 ] as const
 
-/** Coding-helper agent fixture identity. Has all three repos attached
+/** Repo-inspector agent fixture identity. Has all three repos attached
  *  and inspector_enabled=true. */
 export const FIXTURE_AGENT = {
   slug: 'fixture-ecommerce',

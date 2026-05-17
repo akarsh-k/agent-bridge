@@ -1,8 +1,11 @@
 /**
- * "New agent" side-sheet — slides in from the right. Two-step flow:
- *   1. Template picker — Coding helper / Build your own agent. The
- *      choice sets `inspector_enabled` on insert (true / false).
- *   2. Identity form — name, slug, provider, description.
+ * "New agent" side-sheet. Two-step flow:
+ *   1. Template picker. Radio-card selection between Repo inspector
+ *      and Build your own agent. Selection sets `inspector_enabled`
+ *      on insert (true / false).
+ *   2. Identity form. Name, slug, provider, description, plus a live
+ *      preview of the IDE tool name the operator will see in
+ *      Cursor / Claude Code / Codex.
  *
  * The inner form is mounted/unmounted with a `key` derived from the
  * sheet's open count so each open starts on Step 1 with fresh state.
@@ -11,6 +14,16 @@
 import { useMemo, useState } from 'react'
 import { Sheet } from '../../ui/sheet'
 import { Dropdown, type DropdownOption } from '../../ui/dropdown'
+import { Pill } from '../../ui/pill'
+import { EmptyState } from '../../ui/empty'
+import { Button } from '../../ui/button'
+import {
+  AgentsIcon,
+  ToolIcon,
+  ArrowRightIcon,
+  ChevronRightIcon,
+  ProvidersIcon,
+} from '../../ui/icons'
 import { useWorkspace } from '../../lib/workspace-context'
 import { navigate } from '../../lib/router'
 import { toast } from '../../ui/toast-store'
@@ -28,6 +41,13 @@ function slugify(name: string): string {
     .slice(0, 64)
 }
 
+/** Slug → bridge_tool safe form. Mirrors `slugToBridgeToolPrefix` in
+ *  `apps/backend/src/routes/agents.ts`. Dashes become underscores so
+ *  the auto-created `<safeSlug>__ask_agent` passes the CHECK constraint. */
+function toSafeBridgeSlug(slug: string): string {
+  return slug.replace(/-/g, '_')
+}
+
 type AgentTemplate = 'coding' | 'blank'
 
 interface TemplateMeta {
@@ -37,47 +57,222 @@ interface TemplateMeta {
   readonly bullets: readonly string[]
   /** Maps to `inspector_enabled` on insert. */
   readonly inspectorEnabled: boolean
+  /** Suffix the bridge appends to `<slug>__` for this template. */
+  readonly toolSuffix: 'inspect_codebase' | 'ask_agent'
+  /** Glyph tone. `violet` matches the brand accent; `neutral` is the
+   *  default surface-hi tile from `ab-glyph` with no tone modifier. */
+  readonly glyph: 'violet' | 'neutral'
+  /** Recommended path for the headline sidecar use case. */
+  readonly recommended?: boolean
 }
 
 const TEMPLATES: readonly TemplateMeta[] = [
   {
     id: 'coding',
-    title: 'Coding helper',
+    title: 'Repo inspector',
     tagline: 'Q&A across the repos you attach. The agent reads code for you.',
     bullets: [
-      'Built-in code search, call-graph walks, change-impact analysis, debugging hints',
-      'In your IDE this agent appears as one MCP tool: <slug>__inspect_codebase',
+      'Built-in code search, call-graph walks, change-impact analysis, debug hints',
       'Replies are structured: file paths, code snippets, related files across repos',
-      'Needs one embedding provider configured in the workspace (any model — local or cloud)',
+      'Needs one embedding provider in the workspace (any model, local or cloud)',
     ],
     inspectorEnabled: true,
+    toolSuffix: 'inspect_codebase',
+    glyph: 'violet',
+    recommended: true,
   },
   {
     id: 'blank',
     title: 'Build your own agent',
-    tagline: 'Empty starting point. For helpers that aren\'t about code.',
+    tagline: 'Empty starting point. For helpers that are not about code.',
     bullets: [
-      'No built-in tools — you bring the skills, system prompt, and any external MCP servers',
-      'In your IDE this agent appears as one MCP tool: <slug>__ask_agent (free-form Q&A)',
-      'Replies are plain prose — no file paths or structured code evidence',
-      'No embedding provider needed',
-      'You can turn on the code-search toolkit later from the Tools tab if you change your mind',
+      'No built-in tools. Bring your own skills, system prompt, and external MCPs',
+      'Replies are plain text. No file paths or structured code evidence',
+      'You can switch on the inspector toolkit later from the Tools tab',
     ],
     inspectorEnabled: false,
+    toolSuffix: 'ask_agent',
+    glyph: 'neutral',
   },
 ] as const
+
+// ─── Step 1 — Template card ──────────────────────────────────────────────
+
+function TemplateCard({
+  meta,
+  selected,
+  onSelect,
+}: {
+  meta: TemplateMeta
+  selected: boolean
+  onSelect: () => void
+}) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onSelect}
+      className={'ab-card ab-card-pad' + (selected ? ' ab-card-featured' : '')}
+      style={{
+        width: '100%',
+        textAlign: 'left',
+        cursor: 'pointer',
+        font: 'inherit',
+        display: 'block',
+        position: 'relative',
+        // Subtle lift on hover for unselected cards. Selected cards already
+        // carry the accent glow via `ab-card-featured`.
+        transition:
+          'border-color var(--dur-2) var(--ease-out), background var(--dur-2) var(--ease-out)',
+      }}
+      onMouseEnter={(e) => {
+        if (!selected)
+          (e.currentTarget as HTMLElement).style.borderColor =
+            'var(--border-strong)'
+      }}
+      onMouseLeave={(e) => {
+        if (!selected)
+          (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'
+      }}
+    >
+      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+        <div
+          className={
+            'ab-glyph' +
+            (meta.glyph === 'violet' ? ' ab-glyph-violet' : '')
+          }
+          style={{ flexShrink: 0 }}
+          aria-hidden="true"
+        >
+          {meta.id === 'coding' ? (
+            <ToolIcon width={18} height={18} />
+          ) : (
+            <AgentsIcon width={18} height={18} />
+          )}
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginBottom: 4,
+              flexWrap: 'wrap',
+            }}
+          >
+            <span className="ab-section-title" style={{ marginBottom: 0 }}>
+              {meta.title}
+            </span>
+            {meta.recommended && <Pill kind="accent">Recommended</Pill>}
+          </div>
+          <div className="ab-section-sub" style={{ marginBottom: 10 }}>
+            {meta.tagline}
+          </div>
+          <ul
+            style={{
+              margin: 0,
+              padding: 0,
+              listStyle: 'none',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 6,
+              fontSize: 12.5,
+              lineHeight: 1.5,
+              color: 'var(--text-dim)',
+            }}
+          >
+            {meta.bullets.map((b) => (
+              <li
+                key={b}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 8,
+                }}
+              >
+                <span
+                  aria-hidden="true"
+                  style={{
+                    marginTop: 7,
+                    width: 3,
+                    height: 3,
+                    borderRadius: '50%',
+                    background: 'var(--text-muted)',
+                    flexShrink: 0,
+                  }}
+                />
+                <span>{b}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </button>
+  )
+}
+
+// ─── Step 2 — Tool preview card ──────────────────────────────────────────
+
+/** Live preview of the MCP tool name the operator will see in their IDE
+ *  once this agent is created. The biggest "what am I actually getting?"
+ *  question this form has to answer, so it gets its own card. */
+function ToolPreviewCard({
+  slug,
+  slugValid,
+  toolSuffix,
+}: {
+  slug: string
+  slugValid: boolean
+  toolSuffix: TemplateMeta['toolSuffix']
+}) {
+  const safeSlug = toSafeBridgeSlug(slug || 'your-slug')
+  const fullName = slugValid
+    ? `${safeSlug}__${toolSuffix}`
+    : `<slug>__${toolSuffix}`
+  return (
+    <div
+      className="ab-card ab-card-pad"
+      style={{ background: 'var(--surface-hi)', marginTop: 4 }}
+    >
+      <div className="ab-eyebrow">In your IDE</div>
+      <div
+        className="ab-mono"
+        style={{
+          fontSize: 13,
+          color: slugValid ? 'var(--text)' : 'var(--text-muted)',
+          wordBreak: 'break-all',
+          lineHeight: 1.4,
+        }}
+      >
+        {fullName}
+      </div>
+      <div className="ab-field-help" style={{ marginTop: 8 }}>
+        {toolSuffix === 'inspect_codebase'
+          ? 'Structured envelope: file paths, code snippets, related repos.'
+          : 'Free-form Q&A. Replies in plain text.'}
+      </div>
+    </div>
+  )
+}
+
+// ─── Inner form ──────────────────────────────────────────────────────────
 
 function CreateAgentForm({ onClose }: { onClose: () => void }) {
   const { llmProviders, createAgent } = useWorkspace()
   const { defaultProviderId } = useDefaultProviderId()
+
+  // Two-step nav. `step` advances on Continue; the recap row in step 2
+  // returns to step 1 without nuking name/slug/description so the
+  // operator can revise the template choice without re-typing.
+  const [step, setStep] = useState<'pick' | 'fill'>('pick')
   const [template, setTemplate] = useState<AgentTemplate | null>(null)
+
   const [name, setName] = useState('')
   const [slug, setSlug] = useState('')
   const [slugTouched, setSlugTouched] = useState(false)
   const [description, setDescription] = useState('')
   const [providerId, setProviderId] = useState<string | null>(
-    // Pre-select the workspace-default provider if one's been chosen
-    // and still exists. Falls through to null otherwise.
     defaultProviderId &&
       llmProviders.some((p) => p.id === defaultProviderId)
       ? defaultProviderId
@@ -86,8 +281,11 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
   const [busy, setBusy] = useState(false)
 
   const effectiveSlug = slugTouched ? slug : slugify(name)
+  const slugValid = effectiveSlug.length > 0 && SLUG_RE.test(effectiveSlug)
+  const slugInvalid = effectiveSlug.length > 0 && !slugValid
 
-  // Only chat-role providers with a model set are eligible.
+  const chosen = TEMPLATES.find((t) => t.id === template) ?? null
+
   const providerOpts: DropdownOption[] = useMemo(
     () =>
       llmProviders
@@ -96,7 +294,6 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
     [llmProviders],
   )
 
-  const slugValid = SLUG_RE.test(effectiveSlug)
   const canSubmit =
     template !== null && name.trim().length > 0 && slugValid
 
@@ -108,9 +305,7 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
   const guardedClose = useDirtyClose(dirty && !busy, onClose)
 
   const submit = async () => {
-    if (!canSubmit || template === null) return
-    const tmpl = TEMPLATES.find((t) => t.id === template)
-    if (!tmpl) return
+    if (!canSubmit || chosen === null) return
     setBusy(true)
     try {
       const created = await createAgent({
@@ -120,7 +315,7 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
         systemPrompt: '',
         llmProviderId: providerId ?? null,
         memoryEnabled: false,
-        inspectorEnabled: tmpl.inspectorEnabled,
+        inspectorEnabled: chosen.inspectorEnabled,
       })
       toast.success(`Created ${created.name}`)
       onClose()
@@ -134,16 +329,21 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
     }
   }
 
-  // ─── Step 1 — template picker ────────────────────────────────────
-  if (template === null) {
+  // ─── Step 1 — template picker ──────────────────────────────────────────
+  if (step === 'pick') {
     return (
       <Sheet
         open
         onClose={guardedClose}
         title="New agent"
-        subtitle="Pick a template. You can change anything about the agent after creation — including switching templates."
+        subtitle="Pick a template. You can change anything after creation, including switching templates."
+        primaryLabel="Continue"
+        onPrimary={() => template !== null && setStep('fill')}
+        primaryDisabled={template === null}
       >
         <div
+          role="radiogroup"
+          aria-label="Agent template"
           style={{
             display: 'flex',
             flexDirection: 'column',
@@ -151,135 +351,173 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
           }}
         >
           {TEMPLATES.map((t) => (
-            <button
+            <TemplateCard
               key={t.id}
-              type="button"
-              onClick={() => setTemplate(t.id)}
-              className="ab-card ab-card-pad"
-              style={{
-                width: '100%',
-                textAlign: 'left',
-                cursor: 'pointer',
-                background: 'var(--surface)',
-                borderColor: 'var(--border)',
-                font: 'inherit',
-              }}
-            >
-              <div className="ab-section-title" style={{ marginBottom: 4 }}>
-                {t.title}
-              </div>
-              <div
-                className="ab-section-sub"
-                style={{ marginBottom: 10 }}
-              >
-                {t.tagline}
-              </div>
-              <ul
-                style={{
-                  margin: 0,
-                  paddingLeft: 18,
-                  fontSize: 13,
-                  lineHeight: 1.55,
-                  color: 'var(--text-dim)',
-                }}
-              >
-                {t.bullets.map((b) => (
-                  <li key={b}>{b}</li>
-                ))}
-              </ul>
-            </button>
+              meta={t}
+              selected={template === t.id}
+              onSelect={() => setTemplate(t.id)}
+            />
           ))}
         </div>
       </Sheet>
     )
   }
 
-  // ─── Step 2 — identity form ──────────────────────────────────────
-  const chosen = TEMPLATES.find((t) => t.id === template)
+  // ─── Step 2 — identity form ────────────────────────────────────────────
+  if (chosen === null) {
+    // Should be unreachable; guard against navigating to step 2 without
+    // a selected template (a future routing change could break this).
+    setStep('pick')
+    return null
+  }
+
   return (
     <Sheet
       open
       onClose={guardedClose}
       title="New agent"
-      subtitle={`Two minutes. You can edit everything later.`}
+      subtitle="Two minutes. You can edit everything later."
       primaryLabel="Create agent"
       onPrimary={submit}
       primaryBusy={busy}
       primaryDisabled={!canSubmit}
     >
-      <div
+      {/* Template recap. Click to revise the choice without losing
+          identity fields. */}
+      <button
+        type="button"
+        onClick={() => setStep('pick')}
+        disabled={busy}
         className="ab-card ab-card-pad"
         style={{
-          marginBottom: 14,
+          width: '100%',
+          textAlign: 'left',
+          cursor: busy ? 'default' : 'pointer',
           background: 'var(--surface-hi)',
+          font: 'inherit',
           display: 'flex',
           alignItems: 'center',
-          justifyContent: 'space-between',
           gap: 12,
+          marginBottom: 18,
+          padding: '12px 14px',
         }}
+        aria-label={`Template: ${chosen.title}. Click to change.`}
       >
-        <div style={{ minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 11,
-              letterSpacing: '0.06em',
-              textTransform: 'uppercase',
-              color: 'var(--text-muted)',
-              marginBottom: 2,
-            }}
-          >
+        <div
+          className={
+            'ab-glyph' +
+            (chosen.glyph === 'violet' ? ' ab-glyph-violet' : '')
+          }
+          style={{ flexShrink: 0, width: 32, height: 32, fontSize: 14 }}
+          aria-hidden="true"
+        >
+          {chosen.id === 'coding' ? (
+            <ToolIcon width={16} height={16} />
+          ) : (
+            <AgentsIcon width={16} height={16} />
+          )}
+        </div>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <div className="ab-eyebrow" style={{ marginBottom: 2 }}>
             Template
           </div>
-          <div style={{ fontWeight: 600 }}>{chosen?.title}</div>
+          <div style={{ fontWeight: 600, fontSize: 13 }}>{chosen.title}</div>
         </div>
-        <button
-          type="button"
-          onClick={() => setTemplate(null)}
-          className="ab-btn ab-btn-secondary ab-btn-sm"
-          disabled={busy}
+        <span
+          aria-hidden="true"
+          style={{
+            color: 'var(--text-muted)',
+            fontSize: 12,
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 4,
+          }}
         >
           Change
-        </button>
-      </div>
-      <div className="ab-field">
-        <label className="ab-field-label" htmlFor="ca-name">
-          Name
-        </label>
-        <input
-          id="ca-name"
-          className="ab-input"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="e.g. Atlas, Pilot, Forge…"
-          autoFocus
-        />
-        <span className="ab-field-help">
-          Shows up as the tool name in your IDE.
+          <ChevronRightIcon width={14} height={14} />
         </span>
+      </button>
+
+      {/* Name + Slug share a row on wider sheets; stack at narrow widths. */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
+          gap: 14,
+          marginBottom: 14,
+        }}
+      >
+        <div className="ab-field">
+          <label className="ab-field-label" htmlFor="ca-name">
+            Name
+          </label>
+          <input
+            id="ca-name"
+            className="ab-input"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Atlas, Pilot, Forge…"
+            autoFocus
+          />
+        </div>
+        <div className="ab-field">
+          <div className="ab-field-label-row">
+            <label className="ab-field-label" htmlFor="ca-slug">
+              Slug
+            </label>
+            {slugTouched && (
+              <button
+                type="button"
+                className="ab-inline-action"
+                onClick={() => {
+                  setSlugTouched(false)
+                  setSlug('')
+                }}
+              >
+                Reset to auto
+              </button>
+            )}
+          </div>
+          <input
+            id="ca-slug"
+            className="ab-input ab-mono"
+            value={effectiveSlug}
+            onChange={(e) => {
+              setSlug(e.target.value)
+              setSlugTouched(true)
+            }}
+            placeholder="auto from name"
+            aria-invalid={slugInvalid || undefined}
+            style={
+              slugInvalid
+                ? {
+                    borderColor: 'var(--danger-border)',
+                    background: 'var(--danger-bg)',
+                  }
+                : undefined
+            }
+          />
+          {slugInvalid && (
+            <span className="ab-field-help" style={{ color: 'var(--danger)' }}>
+              Lowercase letters, digits, and dashes only.
+            </span>
+          )}
+        </div>
       </div>
-      <div className="ab-field">
-        <label className="ab-field-label" htmlFor="ca-slug">
-          Slug
-        </label>
-        <input
-          id="ca-slug"
-          className="ab-input ab-mono"
-          value={effectiveSlug}
-          onChange={(e) => {
-            setSlug(e.target.value)
-            setSlugTouched(true)
-          }}
-          placeholder="auto-generated from name"
-        />
-        {effectiveSlug && !slugValid && (
-          <span className="ab-field-help" style={{ color: 'var(--danger)' }}>
-            Slug must be lowercase alphanumeric with dashes only.
-          </span>
-        )}
-      </div>
-      <div className="ab-field">
+
+      <ToolPreviewCard
+        slug={effectiveSlug}
+        slugValid={slugValid}
+        toolSuffix={chosen.toolSuffix}
+      />
+
+      <div className="ab-field" style={{ marginTop: 18 }}>
         <label className="ab-field-label" htmlFor="ca-desc">
-          What does this agent do?
+          Description
+          <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+            {' '}
+            (optional)
+          </span>
         </label>
         <textarea
           id="ca-desc"
@@ -287,42 +525,60 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
           value={description}
           onChange={(e) => setDescription(e.target.value)}
           placeholder="One sentence. Helps you tell agents apart later."
+          rows={2}
         />
       </div>
-      <div className="ab-field">
+
+      <div className="ab-field" style={{ marginTop: 14 }}>
         <span className="ab-field-label">Provider</span>
         {providerOpts.length === 0 ? (
           <div
-            className="ab-input"
-            style={{
-              color: 'var(--text-muted)',
-              display: 'flex',
-              alignItems: 'center',
-            }}
+            className="ab-card ab-card-pad"
+            style={{ background: 'var(--surface-hi)' }}
           >
-            No chat-capable providers yet — add one in Library
+            <EmptyState
+              glyph={<ProvidersIcon width={20} height={20} />}
+              title="No chat-capable providers yet"
+              body="Add a provider with a default chat model in Library. You can attach it to this agent later."
+              action={
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  trailing={<ArrowRightIcon width={14} height={14} />}
+                  onClick={() => {
+                    onClose()
+                    navigate('/library/providers')
+                  }}
+                >
+                  Go to providers
+                </Button>
+              }
+            />
           </div>
         ) : (
-          <Dropdown
-            value={providerId}
-            onChange={setProviderId}
-            options={providerOpts}
-            placeholder="Pick a provider"
-          />
+          <>
+            <Dropdown
+              value={providerId}
+              onChange={setProviderId}
+              options={providerOpts}
+              placeholder="Pick a provider"
+            />
+            <span className="ab-field-help">
+              The provider's default model is what the agent uses. Skip for
+              now if you want to wire one up later.
+            </span>
+          </>
         )}
-        <span className="ab-field-help">
-          The provider's default model is what the agent uses.
-        </span>
       </div>
     </Sheet>
   )
 }
 
 /**
- * Wrapper — bumps an internal counter when `open` transitions from
- * false to true so the form remounts on every fresh open. The bump
- * happens during render via a ref guard, which is a recognised
- * "derived state from props" pattern (no useEffect needed).
+ * Wrapper. Bumps an internal counter when `open` transitions from false
+ * to true so the form remounts on every fresh open. The bump happens
+ * during render via a ref guard, which is a recognised "derived state
+ * from props" pattern (no useEffect needed).
  */
 export function CreateAgentSheet({
   open,
@@ -331,9 +587,6 @@ export function CreateAgentSheet({
   open: boolean
   onClose: () => void
 }) {
-  // "Adjust state based on props" — see React docs. We track the
-  // previous `open` value in state and bump a remount key whenever
-  // it transitions false → true, so the inner form starts fresh.
   const [openCount, setOpenCount] = useState(0)
   const [prevOpen, setPrevOpen] = useState(open)
   if (prevOpen !== open) {

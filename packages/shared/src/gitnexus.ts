@@ -75,9 +75,9 @@ export function resolveGitnexusCli(fromModuleUrl: string): ResolvedGitnexusCli {
  * `gitnexus-exploring.md`, `gitnexus-debugging.md`,
  * `gitnexus-impact-analysis.md`, `gitnexus-refactoring.md`,
  * `gitnexus-pr-review.md`. These are LLM-targeted skill files with
- * YAML frontmatter and markdown bodies — vendor content the
- * coding-agent toolkit auto-attaches to every agent's instructions
- * so the model knows the right gitnexus tool-call shapes.
+ * YAML frontmatter and markdown bodies. Vendor content the inspector
+ * toolkit auto-attaches to every inspector agent's instructions so the
+ * model knows the right gitnexus tool-call shapes.
  *
  * Reading from the npm package (rather than from a per-repo
  * `.claude/skills/` copy) means the content is available before

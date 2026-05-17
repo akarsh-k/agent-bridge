@@ -133,7 +133,7 @@ export const agentsRouter = new Hono()
             llmProviderId: body.llmProviderId ?? null,
             memoryEnabled: body.memoryEnabled ?? false,
             memoryConfig: body.memoryConfig ?? null,
-            // Defaults to true at the column level (Coding-helper). Pass
+            // Defaults to true at the column level (Repo-inspector). Pass
             // through verbatim when the operator chose Build-your-own-agent
             // at creation; otherwise the schema default applies.
             ...(body.inspectorEnabled !== undefined

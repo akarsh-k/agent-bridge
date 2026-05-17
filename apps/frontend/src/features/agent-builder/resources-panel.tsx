@@ -8,7 +8,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import type { CodingAgentSystemSkillResponse } from '@agent-bridge/shared'
+import type { InspectorSystemSkillResponse } from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
 import { Button } from '../../ui/button'
 import { Pill, type PillKind } from '../../ui/pill'
@@ -21,7 +21,7 @@ import { confirmDialog } from '../../ui/dialog-store'
 import { RowMenu } from '../../ui/row-menu'
 import {
   ApiError,
-  getCodingAgentSystemSkill,
+  getInspectorSystemSkill,
 } from '../../lib/rpc'
 import { navigate } from '../../lib/router'
 import { useDragReorder } from '../../lib/use-drag-reorder'
@@ -711,7 +711,7 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
 
 type SystemSkillState =
   | { status: 'loading' }
-  | { status: 'ready'; data: CodingAgentSystemSkillResponse }
+  | { status: 'ready'; data: InspectorSystemSkillResponse }
   | { status: 'error'; message: string }
 
 /**
@@ -736,7 +736,7 @@ function SystemSkillRow() {
     let cancelled = false
     void (async () => {
       try {
-        const data = await getCodingAgentSystemSkill()
+        const data = await getInspectorSystemSkill()
         if (!cancelled) setState({ status: 'ready', data })
       } catch (err) {
         if (!cancelled) {

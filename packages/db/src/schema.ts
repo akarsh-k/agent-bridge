@@ -150,7 +150,7 @@ export const agents = pgTable(
     memoryConfig: jsonb('memory_config').$type<AgentMemoryConfig>(),
     /**
      * Opt-in to the auto-mounted Inspector toolkit (`docs/ARCHITECTURE.md`
-     * §10). When `true` (default — Coding helper template):
+     * §10). When `true` (default — Repo inspector template):
      *   - `mountInspectorTools` mounts the six wrappers + gitnexus subprocess
      *   - `composeInstructions` auto-attaches the Inspector toolkit prompt
      *   - the bridge auto-derives `<slug>__inspect_codebase` for the IDE
@@ -303,10 +303,10 @@ export const agentRepos = pgTable(
     description: text('description'),
     /**
      * Operator-curated extra names this repo answers to: local folder
-     * names, short codes, legacy names. Used by the coding-agent
-     * toolkit's `resolveRepoHint` to fuzzy-match a coding agent's
-     * `repo_hint` / `local_folder` against operator-known synonyms
-     * (`packages/agents/src/coding-agent/repo-resolver.ts`).
+     * names, short codes, legacy names. Used by the inspector toolkit's
+     * `resolveRepoHint` to fuzzy-match a coding agent's `repo_hint` /
+     * `local_folder` against operator-known synonyms
+     * (`packages/agents/src/inspector/repo-resolve.ts`).
      *
      * Always populated as `[]` rather than NULL so consumers don't
      * have to nullsafe every read. Strings are operator-trimmed,

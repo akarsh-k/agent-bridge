@@ -1,13 +1,10 @@
 /**
- * IDE-facing MCP bridge — wrapper-tool architecture
- * (`docs/ARCHITECTURE.md §10`).
+ * IDE-facing MCP bridge (`docs/ARCHITECTURE.md §10`).
  *
- * Spawned by the IDE (Cursor / Claude Code) over stdio. Each agent
- * exposes ONE MCP tool named `<slug>__inspect_codebase` (replaces the
- * `query_<slug>` AND the v1 coding-agent toolkit's six
- * virtuals — `<slug>__plan_feature`, `__plan_bugfix`, etc.). Operator-
- * authored `bridge_tools` rows continue to register alongside
- * with their authored names.
+ * Spawned by the IDE (Cursor / Claude Code) over stdio. Each
+ * inspector agent exposes ONE MCP tool named
+ * `<slug>__inspect_codebase`. Operator-authored `bridge_tools` rows
+ * register alongside with their authored names.
  *
  * Tool execution per call:
  *   1. Mint `runId = randomUUID()`, `streamId = bridgeStreamId(runId)`.
@@ -17,13 +14,6 @@
  *      `runs.minirepo_json` (G3).
  *   3. After dispatch settles, read `minirepo_json` + `output_summary`
  *      and wrap into the D17′ envelope. Return as MCP text content.
- *
- * The 6 v1 virtuals (`plan_feature`, `plan_bugfix`, `ask_general`,
- * `investigate_codebase`, `assess_impact`, `list_repos`) are GONE
- * from the bridge surface — the agent's wrapper toolkit subsumes
- * them. Old `runs.bridge_tool_name` rows from past calls remain
- * intact; new runs leave it NULL for inspect_codebase calls and
- * stamp the operator-chosen name for explicit `bridge_tools` calls.
  *
  * Source tagging via the `bridge:` streamId prefix (vs `run:` for
  * UI chat) is unchanged.
@@ -148,7 +138,7 @@ async function listExposableAgents(db: AgentBridgeDb): Promise<AgentRow[]> {
  * Build the bridge's tool registry. Per agent:
  *   - `<slug>__inspect_codebase` (system tool, mini-repo envelope) is
  *     registered automatically when `agents.inspector_enabled = true`
- *     (Coding-helper template). Description: operator's
+ *     (Repo-inspector template). Description: operator's
  *     `agents.description` + a system note about the structured envelope.
  *   - Zero or more operator-authored `bridge_tools` rows are registered
  *     verbatim for both kinds. Operator picks the name,

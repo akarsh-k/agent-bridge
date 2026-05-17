@@ -1,6 +1,6 @@
 /**
- * Single source of truth for "what repos does this agent see?". used
- * by both the bridge's `list_repos` tool (P4) and the resolver
+ * Single source of truth for "what repos does this agent see?". Used
+ * by the inspector toolkit (`list_repos` wrapper) and the resolver
  * (`resolveRepoHint`). One query per tool call; the result is the
  * candidate set for `resolveRepoHint` AND the user-facing repo list
  * for `list_repos`.
@@ -11,12 +11,7 @@
  * Repos in any status are returned. the resolver downgrades non-ready
  * repos to a `repo_not_ready` outcome rather than dropping them, so an
  * IDE call against a repo that's still indexing surfaces a clear
- * error instead of "repo not found". This matches the doc's §7.3 step 6.
- *
- * `aliases` is hard-coded to `[]` until P5 lands the
- * `agent_repos.aliases jsonb` column. The resolver scoring already
- * tolerates an empty alias list; once P5 is wired, swap the literal
- * for `r.aliases ?? []`.
+ * error instead of "repo not found".
  */
 
 import { and, eq } from 'drizzle-orm'

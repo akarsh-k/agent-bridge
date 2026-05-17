@@ -119,7 +119,7 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
   return (
     <div>
       {(agent?.inspectorEnabled ?? true) && (
-        <CodingAgentToolkitCard slug={slug} />
+        <InspectorToolkitCard slug={slug} />
       )}
 
       <div className="ab-card ab-card-pad ab-form-section">
@@ -268,7 +268,7 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
 }
 
 /**
- * Read-only card showing the single system MCP tool coding-helper
+ * Read-only card showing the single system MCP tool repo-inspector
  * agents auto-expose: `<slug>__inspect_codebase`. Description is
  * system-controlled (operator agent description + framework note
  * about the structured envelope). Blank agents do NOT render this
@@ -276,14 +276,14 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
  * `bridge_tools` and shows up in the regular custom-tools list
  * below as a fully-editable row.
  */
-function CodingAgentToolkitCard({ slug }: { slug: string }) {
+function InspectorToolkitCard({ slug }: { slug: string }) {
   const fullName = `${slug}__${INSPECT_CODEBASE_METADATA.nameSuffix}`
   return (
     <div className="ab-card ab-card-pad ab-form-section">
       <div className="ab-section-head" style={{ marginBottom: 6 }}>
         <div className="ab-section-title">Built-in tool · system</div>
         <div className="ab-section-sub">
-          Coding helpers ship one system tool with a structured
+          Repo inspectors ship one system tool with a structured
           response contract: file paths, code snippets, graph slices,
           cross-repo edges. The description is system-controlled
           (operator agent description + framework note about the

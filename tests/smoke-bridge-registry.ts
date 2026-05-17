@@ -3,7 +3,7 @@
  * subprocess pointed at the test DB + test data root, connects via
  * stdio MCP, lists tools, and asserts the per-kind built-in surface:
  *
- *   - Coding-helper fixture (`fixture-ecommerce`):
+ *   - Repo-inspector fixture (`fixture-ecommerce`):
  *       <slug>__inspect_codebase ONLY (no ask_agent)
  *   - Blank fixture         (`fixture-blank`):
  *       <slug>__ask_agent ONLY (no inspect_codebase)
@@ -13,7 +13,7 @@
  * per agent kind" rule.
  *
  * Additionally, when `SMOKE_CHAT_URL` + `SMOKE_CHAT_MODEL` are set,
- * round-trips a `callTool` against the coding helper's inspect tool
+ * round-trips a `callTool` against the repo inspector's inspect tool
  * and asserts the wire envelope carries `agent_repos` + `repo_edges`
  * (so the IDE can offer "ask about the connected repo too" follow-ups
  * without a separate inventory call).
@@ -138,12 +138,12 @@ async function main(): Promise<void> {
     const blankInspect = `${FIXTURE_BLANK_AGENT.slug}__inspect_codebase`
 
     check(
-      'coding helper has inspect_codebase (system built-in)',
+      'repo inspector has inspect_codebase (system built-in)',
       toolNames.includes(codingInspect),
       codingInspect,
     )
     check(
-      'coding helper does NOT have auto-created ask_agent',
+      'repo inspector does NOT have auto-created ask_agent',
       !toolNames.includes(codingAutoAsk),
       `expected absent: ${codingAutoAsk}`,
     )

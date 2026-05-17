@@ -109,7 +109,7 @@ function swapDatabaseName(url: string, dbName: string): string {
 
 const { createDb } = await import('@agent-bridge/db')
 const schema = await import('@agent-bridge/db/schema')
-const { loadAttachedRepos } = await import('../packages/agents/src/coding-agent/repo-loader.js')
+const { loadAttachedRepos } = await import('../packages/agents/src/inspector/repo-loader.js')
 const { mountGitnexusMcp } = await import('../packages/agents/src/mcp/gitnexus-mcp.js')
 const { runFindInCodebase } = await import(
   '../packages/agents/src/inspector/workflows/find-in-codebase.js'

@@ -171,7 +171,7 @@ function ToolsCard() {
         <div className="ab-section-title">Exposed tools</div>
         <div className="ab-section-sub">
           {exposed.length} agent{exposed.length === 1 ? '' : 's'} exposed
-          to your IDE. Coding helpers ship{' '}
+          to your IDE. Repo inspectors ship{' '}
           <span className="ab-mono">
             &lt;slug&gt;__{INSPECT_CODEBASE_METADATA.nameSuffix}
           </span>{' '}
@@ -231,7 +231,7 @@ function ExposedAgentRow({
   highlight: boolean
   defaultOpen: boolean
 }) {
-  // System built-in (only on coding helpers): <slug>__inspect_codebase.
+  // System built-in (only on repo inspectors): <slug>__inspect_codebase.
   // Blank agents have NO built-in here — their auto-created
   // `<slug>__ask_agent` lives in `bridge_tools` and renders below as
   // a regular custom tool. Operator-authored rows from `bridge_tools`
@@ -363,7 +363,7 @@ function ExposedAgentRow({
           {builtInName && (
             <ToolGroup
               label="Inspector (system)"
-              sub="System tool shipped on coding helpers. Returns structured codebase evidence (mini_repos[])."
+              sub="System tool shipped on repo inspectors. Returns structured codebase evidence (mini_repos[])."
               tools={[
                 {
                   name: builtInName,
@@ -428,10 +428,10 @@ interface ToolGroupTool {
 
 /**
  * Compact list-of-tools renderer used twice in the expanded agent
- * row. once for the always-on coding-agent toolkit and once for
- * operator-authored explicit `bridge_tools` rows. Same visual
- * shape so the two sources read as a single conceptual list ("all
- * the tools your IDE sees").
+ * row: once for the always-on inspector toolkit and once for
+ * operator-authored explicit `bridge_tools` rows. Same visual shape
+ * so the two sources read as a single conceptual list ("all the
+ * tools your IDE sees").
  */
 function ToolGroup({
   label,

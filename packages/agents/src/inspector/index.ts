@@ -34,7 +34,7 @@ import {
   type AttachedRepo,
 } from '@agent-bridge/shared'
 
-import { loadAttachedRepos } from '../coding-agent/repo-loader.js'
+import { loadAttachedRepos } from './repo-loader.js'
 
 import type { ToolDict } from './gitnexus-callers.js'
 import {

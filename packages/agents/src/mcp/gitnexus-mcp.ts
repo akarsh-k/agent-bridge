@@ -50,7 +50,7 @@ import {
 } from '@agent-bridge/shared/gitnexus'
 import { repoDirName } from '@agent-bridge/shared/paths'
 import { buildSandboxedEnv } from '@agent-bridge/shared/spawn'
-import { normalizeRemoteUrl } from '../coding-agent/url-normalize.js'
+import { normalizeRemoteUrl } from '../inspector/url-normalize.js'
 import { MCPClient } from '@mastra/mcp'
 import type { Tool } from '@mastra/core/tools'
 import { and, eq } from 'drizzle-orm'
@@ -104,11 +104,9 @@ export interface GitnexusRepoLabel {
   /**
    * Operator-curated extra names this repo answers to: local folder
    * names, short codes, legacy names. Read by the resolver
-   * (`coding-agent/repo-resolver.ts`) and rendered into the system
-   * prompt's repo inventory so the LLM can map idiomatic names to
-   * the right repo. Always `[]` until the P5 migration adds
-   * `agent_repos.aliases`; the field is plumbed through ahead of
-   * time so P5 is a one-line swap.
+   * (`inspector/repo-resolve.ts`) and rendered into the system prompt's
+   * repo inventory so the LLM can map idiomatic names to the right
+   * repo.
    */
   readonly aliases?: readonly string[]
 }

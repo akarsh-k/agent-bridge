@@ -11,9 +11,9 @@
  *   git@github.com:owner/repo.git
  *   ssh://git@github.com/owner/repo
  *
- * Anything we can't parse is returned as the trimmed lowercase input -
- * the resolver still falls through to fuzzy matching, so a weird URL
- * never blows up the call. We deliberately do NOT call `new URL(...)`
+ * Anything we can't parse is returned as the trimmed lowercase input. The
+ * resolver still falls through to fuzzy matching, so a weird URL never
+ * blows up the call. We deliberately do NOT call `new URL(...)`
  * unconditionally because it rejects the SSH `git@host:owner/repo`
  * form.
  *

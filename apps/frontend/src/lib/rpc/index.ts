@@ -731,7 +731,7 @@ export async function getAgentTokenEstimate(
 // ─── System tools (read-only catalog of auto-mounted MCP tools) ─────────
 
 import type {
-  CodingAgentSystemSkillResponse,
+  InspectorSystemSkillResponse,
   GitnexusLibrarySkillsResponse,
   GitnexusSystemToolsResponse,
 } from '@agent-bridge/shared'
@@ -789,17 +789,17 @@ export async function getGitnexusSystemTools(): Promise<GitnexusSystemToolsRespo
 }
 
 /**
- * Fetch the coding-agent system-skill body. Read-only, identical
- * across every agent (build-time artifact). Same `{ ok: false }`-
+ * Fetch the inspector system-skill body. Read-only, identical across
+ * every inspector agent (build-time artifact). Same `{ ok: false }`-
  * is-not-an-error contract as `getGitnexusSystemTools` so the
- * resources panel can render a graceful notice if the .md fails
- * to load (most likely cause: forgot to rebuild the agents
- * package after editing the markdown).
+ * resources panel can render a graceful notice if the .md fails to
+ * load (most likely cause: forgot to rebuild the agents package after
+ * editing the markdown).
  */
-export async function getCodingAgentSystemSkill(): Promise<CodingAgentSystemSkillResponse> {
+export async function getInspectorSystemSkill(): Promise<InspectorSystemSkillResponse> {
   let res: Response
   try {
-    res = await fetch(`${apiBaseUrl}/api/system/skill/coding-agent`, {
+    res = await fetch(`${apiBaseUrl}/api/system/skill/inspector`, {
       method: 'GET',
     })
   } catch (err) {
@@ -833,7 +833,7 @@ export async function getCodingAgentSystemSkill(): Promise<CodingAgentSystemSkil
       details: parsed,
     })
   }
-  return parsed as CodingAgentSystemSkillResponse
+  return parsed as InspectorSystemSkillResponse
 }
 
 /**

@@ -64,9 +64,9 @@ const connectorSchema = z.string().trim().min(1).max(60)
 
 /**
  * Operator-curated extra names for an attached repo. Used by the
- * coding-agent toolkit's `resolveRepoHint` to fuzzy-match an IDE
- * coding agent's `repo_hint` / `local_folder` against synonyms the
- * operator knows about (folder names, short codes, legacy names).
+ * inspector toolkit's `resolveRepoHint` to fuzzy-match an IDE coding
+ * agent's `repo_hint` / `local_folder` against synonyms the operator
+ * knows about (folder names, short codes, legacy names).
  *
  * Validation: per-entry trim + lowercase + non-empty + max 60 chars,
  * dedupe across the array, max 20 aliases per repo. The

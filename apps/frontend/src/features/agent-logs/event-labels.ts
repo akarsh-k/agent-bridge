@@ -25,11 +25,10 @@ export type EventGroup =
   | 'lifecycle' // run.started / run.finished / run.error
   | 'model' // run.step.started / run.step.finished
   | 'token' // run.token / run.token.batch
-  | 'tool' // run.tool.called / run.tool.result / coding-agent.tool.completed
+  | 'tool' // run.tool.called / run.tool.result
   | 'mcp' // run.mcp.log
   | 'inspector' // inspector.* wrapper telemetry
   | 'worker' // repo.clone / index / embed / wiki / worker.*
-  | 'resolver' // coding-agent.repo.*
   | 'config' // agent.config.changed
   | 'other'
 
@@ -265,63 +264,6 @@ export function summarizeEvent(
         tone: level === 'error' ? 'danger' : level === 'warn' ? 'warn' : 'neutral',
         group: 'mcp',
         isError: level === 'error',
-      }
-    }
-
-    // ─── coding-agent.* (bridge resolver + completion) ──────────────
-    case 'coding-agent.repo.resolved': {
-      const tool = str(p['tool']) ?? 'tool'
-      const scope = str(p['scope'])
-      const picked = isObject(p['picked']) ? p['picked'] : null
-      const label = picked ? str(picked['label']) : null
-      const sig = picked ? str(picked['matched_signal']) : null
-      const conf = picked ? str(picked['confidence']) : null
-      const title =
-        scope === 'all' || !picked
-          ? `Resolver: ${tool} → all repos`
-          : `Resolver: ${tool} → ${label ?? 'repo'}`
-      const parts: string[] = []
-      if (sig) parts.push(sig)
-      if (conf) parts.push(conf)
-      return {
-        title,
-        summary: parts.length > 0 ? parts.join(' · ') : null,
-        tone: 'neutral',
-        group: 'resolver',
-        isError: false,
-      }
-    }
-    case 'coding-agent.repo.clarification_requested': {
-      const tool = str(p['tool']) ?? 'tool'
-      const kindStr = str(p['kind'])
-      const candidates = num(p['candidate_count'])
-      const parts: string[] = []
-      if (kindStr) parts.push(kindStr)
-      if (candidates !== null)
-        parts.push(`${candidates} candidate${candidates === 1 ? '' : 's'}`)
-      return {
-        title: `Resolver: ${tool} → clarification`,
-        summary: parts.length > 0 ? parts.join(' · ') : null,
-        tone: 'warn',
-        group: 'resolver',
-        isError: false,
-      }
-    }
-    case 'coding-agent.tool.completed': {
-      const tool = str(p['tool']) ?? 'tool'
-      const dur = num(p['duration_ms'])
-      const conf = str(p['confidence'])
-      const unmatched = bool(p['schema_unmatched']) ?? false
-      const parts: string[] = []
-      if (dur !== null) parts.push(formatDurationMs(dur))
-      if (conf) parts.push(conf)
-      if (unmatched) parts.push('schema-unmatched')
-      return {
-        title: `Coding tool: ${tool}`,
-        summary: parts.length > 0 ? parts.join(' · ') : null,
-        tone: unmatched ? 'warn' : 'success',
-        group: 'tool',
-        isError: false,
       }
     }
 

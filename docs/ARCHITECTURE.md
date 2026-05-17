@@ -227,7 +227,7 @@ to Cursor / Claude Code / Codex / any MCP-compatible IDE:
 - `<slug>__ask_agent` is always exposed — free-form Q&A, prose-only
   envelope. Handler: `ask-agent-handler.ts`.
 - `<slug>__inspect_codebase` is additionally exposed when the agent
-  has `inspector_enabled = true` (Coding-helper template). Mini-repo
+  has `inspector_enabled = true` (Repo-inspector template). Mini-repo
   envelope carrying structured codebase evidence (the agent's wrapper
   toolkit gathers it: find / trace / impact / debug / understand /
   list — see §10.7 for the wire shapes). Handler:
@@ -542,7 +542,7 @@ inline:
 
 - **`agents.inspector_enabled`** — boolean, default `true`. Per-agent
   toggle for the auto-mounted inspector toolkit (§10). When `true`
-  (Coding-helper template) the wrapper mount, gitnexus subprocess,
+  (Repo-inspector template) the wrapper mount, gitnexus subprocess,
   inspector system-prompt, and embedding-provider boot-fail all run.
   When `false` (Build-your-own-agent) the agent runs with only the
   operator's system prompt + skills + allowlisted external MCPs; the
@@ -709,7 +709,7 @@ agent and returns the matching wire envelope.
   registry doesn't churn under operator config edits. Handler:
   `apps/mcp-bridge/src/ask-agent-handler.ts`.
 - `<agent.slug>__inspect_codebase` — additionally exposed when
-  `agents.inspector_enabled = true` (Coding-helper template).
+  `agents.inspector_enabled = true` (Repo-inspector template).
   Mini-repo envelope `{ok, mini_repos[], prose_summary?, warnings}`
   carrying structured codebase evidence. Handler:
   `apps/mcp-bridge/src/inspect-codebase-handler.ts`.
@@ -1021,15 +1021,15 @@ that previously left dialogs hanging.
 
 The IDE coding agent only sees the file the developer has open. Agent
 Bridge sees every repo the operator attached plus the operator-curated
-edges between them. For Coding-helper agents, the wrapper-tool
+edges between them. For Repo-inspector agents, the wrapper-tool
 architecture closes that gap with one MCP tool per agent
 (`inspect_codebase`) plus six deterministic wrapper tools the agent's
 own LLM picks between internally. The IDE LLM never sees `gitnexus_*`
 tools by name; the agent's wrappers wrap them.
 
-Not every agent is a coding helper, though. Per-agent
+Not every agent is a repo inspector, though. Per-agent
 `agents.inspector_enabled` (default `true`) gates the inspector
-toolkit. Coding-helper agents (Build flow → "Coding helper") have it
+toolkit. Repo-inspector agents (Build flow → "Repo inspector") have it
 on; Build-your-own agents have it off and run with only the
 operator's system prompt + skills + any allowlisted external MCPs.
 
@@ -1046,7 +1046,7 @@ Bridge surface:
   kind (§8.2). Their names are reserved against the `query_*` prefix
   by a DB CHECK constraint.
 
-The reasoning behind the toolkit (for the coding-helper case): a
+The reasoning behind the toolkit (for the repo-inspector case): a
 generic IDE coding agent staring at a 50k-line repo through grep + a
 single open file will rabbit-hole on the wrong thread. We have
 already-indexed graph + embeddings, plus operator-curated repo edges,
@@ -1162,7 +1162,7 @@ The bridge ships two envelope shapes — one per built-in tool. The
 shape telegraphs the response: structured codebase evidence vs. a
 free-form prose answer.
 
-**`<slug>__inspect_codebase`** (Coding helpers only):
+**`<slug>__inspect_codebase`** (Repo inspectors only):
 
 ```jsonc
 { "ok": true,
@@ -1179,7 +1179,7 @@ free-form prose answer.
   "warnings": [] }
 ```
 
-No `mini_repos` field on `ask_agent`. Even on a Coding-helper agent,
+No `mini_repos` field on `ask_agent`. Even on a Repo-inspector agent,
 when called via `ask_agent` the bridge strips structured evidence
 from the response — the IDE LLM that called this tool wants prose.
 The wrappers may still fire internally during the run (they live in

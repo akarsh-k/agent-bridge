@@ -244,11 +244,10 @@ function BudgetBody({
         ))}
 
       {/* Inspector toolkit's auto-attached system prompt
-          (`docs/ARCHITECTURE.md §10`). Replaces the v1 860-line
-          coding-agent skill. Listed as its own row because the source
-          is build-time (.md), not an editable `skills` row. Renders
-          distinctly when the .md fails to load so a missing build
-          artifact is visible. */}
+          (`docs/ARCHITECTURE.md §10`). Listed as its own row because
+          the source is build-time (.md), not an editable `skills` row.
+          Renders distinctly when the .md fails to load so a missing
+          build artifact is visible. */}
       <BreakdownRow
         label="System prompt (built-in)"
         tokens={estimate.parts.systemSkill?.tokens ?? 0}

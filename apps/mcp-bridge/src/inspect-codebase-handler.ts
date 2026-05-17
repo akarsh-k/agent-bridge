@@ -1,11 +1,10 @@
 /**
  * `inspect_codebase` MCP tool handler (`docs/ARCHITECTURE.md §10`).
  *
- * Replaces the v1 coding-agent toolkit's six virtual tools + 920-line
- * handler with one entry point. The IDE LLM calls `inspect_codebase`
- * with a free-form `query` plus optional repo hints; the bridge
- * dispatches one Mastra run, lets the agent's wrappers do the work,
- * and wraps the run's accumulated mini-repos into the D17′ envelope.
+ * One entry point. The IDE LLM calls `inspect_codebase` with a
+ * free-form `query` plus optional repo hints; the bridge dispatches
+ * one Mastra run, lets the agent's wrappers do the work, and wraps
+ * the run's accumulated mini-repos into the D17′ envelope.
  *
  * Wire envelope (D17′):
  *

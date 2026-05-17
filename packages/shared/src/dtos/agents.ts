@@ -34,7 +34,7 @@ const baseFields = {
   memoryConfig: agentMemoryConfigSchema.nullable().optional(),
   /**
    * Inspector toolkit opt-in. See `agents.inspectorEnabled` in
-   * `@agent-bridge/db/schema` for the full semantics. The Coding-helper
+   * `@agent-bridge/db/schema` for the full semantics. The Repo-inspector
    * template sets this to `true` (the default); the Build-your-own-agent
    * template sets it to `false`.
    *
@@ -62,7 +62,7 @@ export const agentCreateInputSchema = z
     /** Defaults to `false` on the server. */
     memoryEnabled: baseFields.memoryEnabled.optional(),
     memoryConfig: baseFields.memoryConfig,
-    /** Defaults to `true` on the server (Coding-helper template). Pass
+    /** Defaults to `true` on the server (Repo-inspector template). Pass
      *  `false` from the Build-your-own-agent creation flow. */
     inspectorEnabled: baseFields.inspectorEnabled.optional(),
   })
