@@ -143,7 +143,13 @@ export interface InspectCodebaseMetadata {
   readonly description: string
   /** Argument keys the IDE LLM is expected to pass. */
   readonly inputKeys: ReadonlyArray<{
-    readonly name: 'query' | 'repo_hint' | 'remote_url' | 'local_folder' | 'branch'
+    readonly name:
+      | 'query'
+      | 'repo_hint'
+      | 'remote_url'
+      | 'local_folder'
+      | 'branch'
+      | 'with_topology'
     readonly required: boolean
     readonly description: string
   }>
@@ -193,6 +199,12 @@ export const INSPECT_CODEBASE_METADATA: InspectCodebaseMetadata = Object.freeze(
       name: 'branch' as const,
       required: false,
       description: 'Current branch. Used as a tiebreaker only.',
+    },
+    {
+      name: 'with_topology' as const,
+      required: false,
+      description:
+        'When true, the response carries the full repo topology (`agent_repos`, `repo_edges`). Default false: the response is scoped to the resolved repo and exposes `next_actions` instead. Set true when you need the broad view in one shot.',
     },
   ]),
 })

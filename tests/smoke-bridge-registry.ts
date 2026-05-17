@@ -8,15 +8,19 @@
  *   - Blank fixture         (`fixture-blank`):
  *       <slug>__ask_agent ONLY (no inspect_codebase)
  *
- * Catches regressions in `buildToolRegistry`'s branching on
- * `agents.inspector_enabled` and confirms the "exactly one built-in
- * per agent kind" rule.
+ * Also exercises wire-level scenarios on `inspect_codebase`:
  *
- * Additionally, when `SMOKE_CHAT_URL` + `SMOKE_CHAT_MODEL` are set,
- * round-trips a `callTool` against the repo inspector's inspect tool
- * and asserts the wire envelope carries `agent_repos` + `repo_edges`
- * (so the IDE can offer "ask about the connected repo too" follow-ups
- * without a separate inventory call).
+ *   - Clarification short-circuit (no LLM): an unmatched repo_hint
+ *     against the 3-repo fixture returns a `clarification` envelope
+ *     with pre-baked `suggested_replies`. No run dispatched.
+ *
+ *   - When `SMOKE_CHAT_URL` + `SMOKE_CHAT_MODEL` are set, run full
+ *     `inspect_codebase` calls and assert:
+ *       - default envelope OMITS `agent_repos` / `repo_edges`
+ *       - envelope INCLUDES `next_actions` when focal repo has edges
+ *       - `with_topology: true` brings `agent_repos` / `repo_edges` back
+ *       - structured `remote_url` hint resolves with
+ *         `matched_signal: 'remote_url'`
  *
  * Run after `pnpm test:fixture:setup` succeeds. Same env requirements
  * as the existing smoke (`SMOKE_EMBEDDING_*`).
@@ -28,6 +32,12 @@ import path from 'node:path'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+
+import { loadRootDotenv } from '@agent-bridge/shared/env'
+
+// Load the repo-root .env so SMOKE_CHAT_* vars resolve for the optional
+// LLM-dispatching scenarios below. Same pattern smoke-fixture.ts uses.
+loadRootDotenv(import.meta.url, { depth: 1 })
 
 import {
   FIXTURE_AGENT,
@@ -158,6 +168,11 @@ async function main(): Promise<void> {
       `expected absent: ${blankInspect}`,
     )
 
+    // Clarification short-circuit does NOT dispatch a run — the bridge
+    // returns the picker envelope synchronously. Safe to run without a
+    // chat LLM. Tests the wire shape of `clarification.*` directly.
+    await assertClarificationShortCircuit(client, codingInspect)
+
     // End-to-end envelope check. Requires a real chat endpoint —
     // `inspect_codebase` dispatches a full Mastra run, so a placeholder
     // chat provider won't do. Skip cleanly when the env vars are unset
@@ -165,10 +180,12 @@ async function main(): Promise<void> {
     const chatUrl = process.env['SMOKE_CHAT_URL']?.trim()
     const chatModel = process.env['SMOKE_CHAT_MODEL']?.trim()
     if (chatUrl && chatModel) {
-      await assertInspectCodebaseEnvelope(client, codingInspect)
+      await assertDefaultEnvelopeFocused(client, codingInspect)
+      await assertWithTopologyEnvelope(client, codingInspect)
+      await assertRemoteUrlPreResolution(client, codingInspect)
     } else {
       console.log(
-        '⚠ skipping inspect_codebase envelope check — set SMOKE_CHAT_URL + SMOKE_CHAT_MODEL to enable',
+        '⚠ skipping LLM-dispatching envelope checks — set SMOKE_CHAT_URL + SMOKE_CHAT_MODEL to enable',
       )
     }
   } finally {
@@ -193,68 +210,207 @@ async function main(): Promise<void> {
 }
 
 /**
- * Round-trip the `<slug>__inspect_codebase` MCP tool and validate that
- * the bridge envelope now carries `agent_repos` + `repo_edges` so the
- * IDE can offer "ask about the connected repo too" follow-ups without
- * a separate inventory call.
- *
- * The query is intentionally trivial — we don't care which wrappers the
- * agent's LLM chooses to call; the topology fields are added at the
- * envelope layer regardless of wrapper activity.
+ * Read + JSON-parse the bridge's envelope payload from a `callTool`
+ * response. Returns `null` and emits a failing `check(...)` row when the
+ * content shape is wrong or the JSON is malformed; callers should
+ * short-circuit on a `null` return so subsequent assertions don't
+ * cascade-fail.
  */
-async function assertInspectCodebaseEnvelope(
+function parseEnvelope(
+  res: unknown,
+  label: string,
+): Record<string, unknown> | null {
+  const content = Array.isArray((res as { content?: unknown })?.content)
+    ? ((res as { content: unknown[] }).content)
+    : []
+  const first = content[0] as { type?: string; text?: unknown } | undefined
+  if (!first || first.type !== 'text' || typeof first.text !== 'string') {
+    check(
+      `${label}: returned a text envelope`,
+      false,
+      `unexpected content shape: ${JSON.stringify(content).slice(0, 200)}`,
+    )
+    return null
+  }
+  try {
+    return JSON.parse(first.text) as Record<string, unknown>
+  } catch (err) {
+    check(
+      `${label}: envelope is valid JSON`,
+      false,
+      `${err instanceof Error ? err.message : String(err)}; head=${first.text.slice(0, 120)}`,
+    )
+    return null
+  }
+}
+
+/**
+ * Pass an unmatched repo_hint to the 3-repo fixture and verify the
+ * bridge returns a `clarification` envelope WITHOUT dispatching a run.
+ *
+ * This path is LLM-free: the bridge handler resolves the hint
+ * pre-dispatch, sees a multi-repo agent with no matching candidate,
+ * and short-circuits with `{clarification: {...}, agent_repos,
+ * repo_edges}`. The wire envelope is the only thing under test.
+ */
+async function assertClarificationShortCircuit(
   client: Client,
   toolName: string,
 ): Promise<void> {
   const res = await client.callTool({
     name: toolName,
-    arguments: { query: 'list the repos you have access to' },
+    arguments: {
+      query: 'anything — should not reach the LLM',
+      repo_hint: 'definitely-not-a-real-repo',
+    },
   })
+  const envelope = parseEnvelope(res, 'clarification short-circuit')
+  if (!envelope) return
 
-  const content = Array.isArray(res.content) ? res.content : []
-  const first = content[0]
-  if (!first || first.type !== 'text' || typeof first.text !== 'string') {
-    check(
-      'inspect_codebase returned a text envelope',
-      false,
-      `unexpected content shape: ${JSON.stringify(content).slice(0, 200)}`,
+  const clarification = envelope['clarification'] as
+    | { kind?: unknown; candidates?: unknown; suggested_replies?: unknown }
+    | undefined
+  check(
+    'clarification.kind = repo_or_all',
+    clarification?.kind === 'repo_or_all',
+    `kind=${String(clarification?.kind ?? '(missing)')}`,
+  )
+  const candidates = Array.isArray(clarification?.candidates)
+    ? (clarification!.candidates as Array<Record<string, unknown>>)
+    : []
+  check(
+    'clarification.candidates lists all 3 fixture repos',
+    candidates.length === 3,
+    `count=${candidates.length}`,
+  )
+  const replies = Array.isArray(clarification?.suggested_replies)
+    ? (clarification!.suggested_replies as Array<Record<string, unknown>>)
+    : []
+  const repliesShape =
+    replies.length === 3 &&
+    replies.every(
+      (r) =>
+        typeof r['label'] === 'string' &&
+        typeof r['args_patch'] === 'object' &&
+        r['args_patch'] !== null &&
+        typeof (r['args_patch'] as Record<string, unknown>)['repo_hint'] ===
+          'string',
     )
-    return
-  }
+  check(
+    'clarification.suggested_replies[*] = {label, args_patch.repo_hint}',
+    repliesShape,
+    repliesShape ? 'shape ok' : `first=${JSON.stringify(replies[0]).slice(0, 120)}`,
+  )
+  // Clarification short-circuits, so no wrapper ran. The envelope MUST
+  // carry an empty mini_repos[] and MUST NOT carry prose_summary (which
+  // would imply chit-chat fallback after a real run).
+  check(
+    'clarification short-circuit: mini_repos is empty',
+    Array.isArray(envelope['mini_repos']) &&
+      (envelope['mini_repos'] as unknown[]).length === 0,
+    `mini_repos=${JSON.stringify(envelope['mini_repos']).slice(0, 80)}`,
+  )
+  check(
+    'clarification short-circuit: no prose_summary field',
+    envelope['prose_summary'] === undefined,
+    `prose_summary=${String(envelope['prose_summary'])}`,
+  )
+}
 
-  let envelope: Record<string, unknown>
-  try {
-    envelope = JSON.parse(first.text) as Record<string, unknown>
-  } catch (err) {
-    check(
-      'inspect_codebase envelope is valid JSON',
-      false,
-      `${err instanceof Error ? err.message : String(err)}; head=${first.text.slice(0, 120)}`,
-    )
-    return
-  }
+/**
+ * Default call (no `with_topology`) → expect topology fields OMITTED
+ * and `next_actions[]` present when the focal repo has cross-repo
+ * edges. Dispatches a real run, so requires SMOKE_CHAT_*.
+ */
+async function assertDefaultEnvelopeFocused(
+  client: Client,
+  toolName: string,
+): Promise<void> {
+  const res = await client.callTool({
+    name: toolName,
+    arguments: {
+      // Pre-resolve to `backend` via remote_url. Backend has 2 incoming
+      // edges (frontend --calls-->, shared --type-mirror-->) so the
+      // bridge should compute ≥1 next_action.
+      query: 'list the files in this repo',
+      remote_url: 'fixture://ecommerce-backend',
+    },
+  })
+  const envelope = parseEnvelope(res, 'default envelope')
+  if (!envelope) return
 
-  if (envelope['ok'] !== true) {
-    check(
-      'inspect_codebase returned ok=true',
-      false,
-      `envelope=${JSON.stringify(envelope).slice(0, 300)}`,
+  check(
+    'default envelope: agent_repos OMITTED',
+    envelope['agent_repos'] === undefined,
+    `agent_repos=${String(envelope['agent_repos'])}`,
+  )
+  check(
+    'default envelope: repo_edges OMITTED',
+    envelope['repo_edges'] === undefined,
+    `repo_edges=${String(envelope['repo_edges'])}`,
+  )
+  const resolved = envelope['resolved_repo'] as
+    | { label?: unknown; matched_signal?: unknown }
+    | undefined
+  check(
+    'default envelope: resolved_repo.label = backend',
+    resolved?.label === 'backend',
+    `label=${String(resolved?.label)}`,
+  )
+  check(
+    'default envelope: resolved_repo.matched_signal = remote_url',
+    resolved?.matched_signal === 'remote_url',
+    `matched_signal=${String(resolved?.matched_signal)}`,
+  )
+  const nextActions = Array.isArray(envelope['next_actions'])
+    ? (envelope['next_actions'] as Array<Record<string, unknown>>)
+    : []
+  check(
+    'default envelope: next_actions has ≥1 entry',
+    nextActions.length >= 1,
+    `count=${nextActions.length}`,
+  )
+  const allHaveBothPatches = nextActions.every((a) => {
+    const patch = a['args_patch'] as Record<string, unknown> | undefined
+    return (
+      typeof patch?.['repo_hint'] === 'string' &&
+      typeof patch?.['remote_url'] === 'string'
     )
-    return
-  }
+  })
+  check(
+    'next_actions[*].args_patch carries BOTH repo_hint and remote_url',
+    allHaveBothPatches,
+    `first=${JSON.stringify(nextActions[0]).slice(0, 200)}`,
+  )
+}
+
+/**
+ * `with_topology: true` → expect `agent_repos` + `repo_edges` to come
+ * back as in the pre-change behavior, AND `next_actions` still present.
+ * Same fixture seeds 3 repos + 2 edges; we re-check both connectors.
+ */
+async function assertWithTopologyEnvelope(
+  client: Client,
+  toolName: string,
+): Promise<void> {
+  const res = await client.callTool({
+    name: toolName,
+    arguments: {
+      query: 'list the files in this repo',
+      remote_url: 'fixture://ecommerce-backend',
+      with_topology: true,
+    },
+  })
+  const envelope = parseEnvelope(res, 'with_topology envelope')
+  if (!envelope) return
 
   const repos = Array.isArray(envelope['agent_repos'])
     ? (envelope['agent_repos'] as Array<Record<string, unknown>>)
     : null
-  const repoLabels = repos
-    ? repos.map((r) => String(r['label'] ?? '')).sort()
-    : []
   check(
-    'envelope.agent_repos lists all 3 fixture repos',
-    repos !== null && repoLabels.length === 3,
-    repos === null
-      ? 'agent_repos missing or not an array'
-      : `labels=[${repoLabels.join(', ')}]`,
+    'with_topology: agent_repos lists all 3 fixture repos',
+    repos !== null && repos.length === 3,
+    repos === null ? 'missing' : `count=${repos.length}`,
   )
 
   const edges = Array.isArray(envelope['repo_edges'])
@@ -263,17 +419,55 @@ async function assertInspectCodebaseEnvelope(
   const connectors = edges
     ? edges.map((e) => String(e['connector'] ?? '')).sort()
     : []
-  // Fixture seeds two edges: frontend->backend (calls), shared->backend
-  // (type-mirror). Check both connectors are present rather than length
-  // alone so a stale fixture surfaces the right error.
-  const hasCalls = connectors.includes('calls')
-  const hasTypeMirror = connectors.includes('type-mirror')
   check(
-    'envelope.repo_edges includes the two seeded fixture edges',
-    edges !== null && edges.length === 2 && hasCalls && hasTypeMirror,
-    edges === null
-      ? 'repo_edges missing or not an array'
-      : `connectors=[${connectors.join(', ')}]`,
+    'with_topology: repo_edges includes both seeded fixture edges',
+    edges !== null &&
+      edges.length === 2 &&
+      connectors.includes('calls') &&
+      connectors.includes('type-mirror'),
+    edges === null ? 'missing' : `connectors=[${connectors.join(', ')}]`,
+  )
+  // next_actions should still be computed alongside the full topology.
+  check(
+    'with_topology: next_actions still present',
+    Array.isArray(envelope['next_actions']) &&
+      (envelope['next_actions'] as unknown[]).length >= 1,
+    `next_actions=${JSON.stringify(envelope['next_actions']).slice(0, 120)}`,
+  )
+}
+
+/**
+ * Pass `remote_url` only (no other hint) and verify the bridge's
+ * pre-resolver picks the right repo with `matched_signal: 'remote_url'`.
+ * Mirrors the production failure mode the user originally hit (Cursor
+ * passes `git remote get-url origin`, we want to use it directly).
+ */
+async function assertRemoteUrlPreResolution(
+  client: Client,
+  toolName: string,
+): Promise<void> {
+  const res = await client.callTool({
+    name: toolName,
+    arguments: {
+      query: 'what files are here',
+      remote_url: 'fixture://ecommerce-frontend',
+    },
+  })
+  const envelope = parseEnvelope(res, 'remote_url pre-resolution')
+  if (!envelope) return
+
+  const resolved = envelope['resolved_repo'] as
+    | { repo_id?: unknown; label?: unknown; matched_signal?: unknown }
+    | undefined
+  check(
+    'remote_url pre-resolution: resolved to frontend',
+    resolved?.label === 'frontend',
+    `label=${String(resolved?.label)}`,
+  )
+  check(
+    'remote_url pre-resolution: matched_signal=remote_url',
+    resolved?.matched_signal === 'remote_url',
+    `matched_signal=${String(resolved?.matched_signal)}`,
   )
 }
 

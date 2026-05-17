@@ -153,6 +153,8 @@ export async function executeInspectCodebase(
     return mcpError('Missing required arg "query" — pass a question or instruction.')
   }
 
+  const withTopology = rawArgs['with_topology'] === true
+
   // ─── Pre-resolve the IDE's structured hint ─────────────────────────
   // Cursor / Claude Code / Codex pass `remote_url` (from `git remote
   // get-url origin`), `local_folder`, and a free-form `repo_hint`.
@@ -179,7 +181,9 @@ export async function executeInspectCodebase(
     })
     if (resolution.ok === 'clarify') {
       // Short-circuit: don't dispatch a run. Return a clarification
-      // envelope the IDE LLM can act on directly.
+      // envelope the IDE LLM can act on directly. Topology is always
+      // included on clarification (the IDE needs the full inventory to
+      // render the picker).
       const topology = await loadAgentTopology(ctx.db, agent.id, warnings)
       const envelope: WireEnvelope = {
         ok: true,
@@ -280,23 +284,49 @@ export async function executeInspectCodebase(
       ? truncate(finalRow.outputSummary?.trim() ?? '', PROSE_CAP_INSPECT_FALLBACK)
       : ''
 
-  const topology = await loadAgentTopology(ctx.db, agent.id, warnings)
+  // Decide the focal repo for `next_actions`. The bridge's pre-resolved
+  // repo wins; failing that, the repo that contributed the most files
+  // across all mini-repos (a stand-in for "the call's primary subject"
+  // in fan-out mode). Returns `null` when nothing ran or no files
+  // were surfaced.
+  const focalRepo = pickFocalRepo(preResolved, attached, miniRepos)
+
+  // Always load edges so we can compute `next_actions`. The cost is
+  // one query; the win is the IDE getting structured handoffs without
+  // a `with_topology: true` round-trip.
+  let allEdges: readonly MiniRepoCrossRepoEdge[] = []
+  try {
+    allEdges = await loadAllRepoEdges({ db: ctx.db, agentId: agent.id, attached })
+  } catch (err) {
+    warnings.push(
+      `loadAllRepoEdges failed: ${err instanceof Error ? err.message : String(err)}`,
+    )
+  }
+  const nextActions = focalRepo
+    ? computeNextActions(focalRepo, attached, allEdges)
+    : []
 
   const envelope: WireEnvelope = {
     ok: true,
     mini_repos: miniRepos,
     ...(proseSummary.length > 0 ? { prose_summary: proseSummary } : {}),
-    ...(preResolved
+    ...(focalRepo
       ? {
           resolved_repo: {
-            repo_id: preResolved.repo.repo_id,
-            label: preResolved.repo.label,
-            matched_signal: preResolved.matched_signal,
+            repo_id: focalRepo.repo_id,
+            label: focalRepo.label,
+            matched_signal:
+              preResolved?.matched_signal ?? 'fallback_single_repo',
           },
         }
       : {}),
-    agent_repos: topology.agent_repos,
-    repo_edges: topology.repo_edges,
+    ...(nextActions.length > 0 ? { next_actions: nextActions } : {}),
+    ...(withTopology
+      ? {
+          agent_repos: attached.map(agentRepoSummaryFromAttached),
+          repo_edges: allEdges,
+        }
+      : {}),
     warnings,
   }
   return jsonEnvelope(envelope)
@@ -437,10 +467,9 @@ interface WireEnvelope {
   /**
    * The single repo the bridge resolved from the IDE's structured hint
    * (`remote_url` / `local_folder` / `repo_hint`). Present whenever the
-   * IDE supplied at least one signal AND it resolved to a unique repo.
-   * The IDE can render "asked about X" without re-deriving from
-   * `mini_repos`. Omitted when no hint was supplied or the agent has a
-   * single repo and no hint was needed.
+   * IDE supplied at least one signal AND it resolved to a unique repo,
+   * OR the agent has a single attached repo. The IDE can render "asked
+   * about X" without re-deriving from `mini_repos`.
    */
   readonly resolved_repo?: ResolvedRepoSlice
   /**
@@ -452,18 +481,25 @@ interface WireEnvelope {
    */
   readonly clarification?: ClarificationSlice
   /**
-   * All repos attached to this agent. Included on every call so the IDE
-   * can show the user "you searched X; also connected: Y, Z" and offer
-   * a follow-up. Not scoped to the repos the wrappers actually touched
-   * (cross-reference `mini_repos[*].files[*].repo_id` for that).
+   * Pre-baked follow-up actions for connected repos. Surfaced post-
+   * dispatch when at least one cross-repo edge touches the focal repo
+   * (the one the bridge resolved, or the most-evidenced repo when the
+   * call fanned out). Each entry carries an `args_patch` the IDE LLM
+   * can fire verbatim into a follow-up `inspect_codebase` call. ≤ 3
+   * entries, outgoing edges (focal as `from_repo`) before incoming.
+   * Omitted when there are no relevant edges.
    */
-  readonly agent_repos: readonly AgentRepoSummary[]
+  readonly next_actions?: readonly NextAction[]
   /**
-   * Operator-curated directed edges between attached repos. Lets the IDE
-   * surface the relationship ("frontend --calls--> backend") so the user
-   * can decide whether to ask about the other side.
+   * Full repo inventory. Only included when the IDE passed
+   * `with_topology: true` (default false). Same shape as before;
+   * gated to keep the default payload focused on the resolved repo.
    */
-  readonly repo_edges: readonly MiniRepoCrossRepoEdge[]
+  readonly agent_repos?: readonly AgentRepoSummary[]
+  /**
+   * Full operator-curated edge list. Same gating as `agent_repos`.
+   */
+  readonly repo_edges?: readonly MiniRepoCrossRepoEdge[]
   readonly warnings: readonly string[]
 }
 
@@ -480,6 +516,43 @@ interface ClarificationSlice {
   readonly allow_all_repos: boolean
   readonly message: string
   readonly suggested_replies: readonly SuggestedReply[]
+}
+
+/**
+ * One pre-baked follow-up the IDE LLM can fire to drill into a
+ * connected repo. `args_patch` is shaped to be the exact `inspect_codebase`
+ * args (modulo `query`) the IDE re-issues. `meta` exposes structured
+ * fields so the IDE can filter / sort programmatically; `reason` is
+ * the same info in one human-readable line.
+ */
+interface NextAction {
+  /** Human-facing label the IDE can render as a button or chip. */
+  readonly label: string
+  /** One-line prose explaining the relationship. */
+  readonly reason: string
+  /** Structured form of `reason`. Same data, machine-friendly. */
+  readonly meta: NextActionMeta
+  /**
+   * Patch the IDE LLM applies to its next `inspect_codebase` call to
+   * follow this edge. Carries both `repo_hint` (label) and `remote_url`
+   * so the bridge's pre-resolver picks the connected repo by URL — no
+   * label-mangling round-trip through the IDE LLM.
+   */
+  readonly args_patch: {
+    readonly repo_hint: string
+    readonly remote_url: string
+  }
+}
+
+interface NextActionMeta {
+  /** Edge `connector` field (e.g. `calls`, `imports`, `deploys-to`). */
+  readonly connector: string
+  /** Operator-authored description of the edge; `null` when unset. */
+  readonly edge_description: string | null
+  /** Source endpoint of the edge. */
+  readonly from_repo: { readonly repo_id: string; readonly label: string }
+  /** Target endpoint. */
+  readonly to_repo: { readonly repo_id: string; readonly label: string }
 }
 
 interface AgentRepoSummary {
@@ -647,6 +720,150 @@ function agentRepoSummaryFromAttached(r: {
     role: r.role,
     description: r.description,
     status: r.status,
+  }
+}
+
+interface AttachedRepoLike {
+  readonly repo_id: string
+  readonly label: string
+  readonly remote_url: string
+  readonly role: string | null
+  readonly description: string | null
+  readonly status: string
+  readonly aliases?: readonly string[]
+}
+
+/**
+ * Decide which repo a call's `next_actions` should be computed against.
+ *
+ * Priority:
+ *   1. The bridge's pre-resolved repo (the IDE explicitly named one).
+ *   2. The repo with the most files across all mini-repos (fan-out
+ *      mode — pick the call's "primary subject" by evidence weight).
+ *   3. `null` when no files surfaced (chit-chat / empty result).
+ *
+ * `null` means no next_actions: there's no clear focal repo to compute
+ * cross-repo follow-ups from.
+ */
+function pickFocalRepo(
+  preResolved: IdePreResolvedRepo | null,
+  attached: readonly AttachedRepoLike[],
+  miniRepos: readonly unknown[],
+): AttachedRepoLike | null {
+  if (preResolved) {
+    return (
+      attached.find((r) => r.repo_id === preResolved.repo.repo_id) ?? null
+    )
+  }
+  // Walk mini_repos[*].files[*].repo_id and tally per-repo file counts.
+  // Mini-repos are operator-trusted JSON from `runs.minirepo_json`; we
+  // still read defensively (unknown[] → narrow before indexing) so a
+  // future shape drift doesn't crash the handler.
+  const fileCounts = new Map<string, number>()
+  for (const m of miniRepos) {
+    if (!m || typeof m !== 'object') continue
+    const files = (m as { files?: unknown }).files
+    if (!Array.isArray(files)) continue
+    for (const f of files) {
+      if (!f || typeof f !== 'object') continue
+      const id = (f as { repo_id?: unknown }).repo_id
+      if (typeof id !== 'string') continue
+      fileCounts.set(id, (fileCounts.get(id) ?? 0) + 1)
+    }
+  }
+  if (fileCounts.size === 0) {
+    // No evidence. Fall through to the single-repo case: when the
+    // agent has exactly one attached repo, it's trivially the focal.
+    return attached.length === 1 ? attached[0]! : null
+  }
+  let topId = ''
+  let topCount = -1
+  for (const [id, count] of fileCounts) {
+    if (count > topCount) {
+      topId = id
+      topCount = count
+    }
+  }
+  return attached.find((r) => r.repo_id === topId) ?? null
+}
+
+/**
+ * Build `next_actions` from operator-curated cross-repo edges touching
+ * the focal repo. Outgoing edges first (focal as `from_repo`: "what
+ * does X reach?") since they answer "where does this code go from
+ * here?" — the most common follow-up. Incoming as fallback.
+ *
+ * Capped at 3 entries. Deduped per connected repo: if multiple edges
+ * touch the same other repo, keep the first one encountered (which is
+ * outgoing if any exists, by the iteration order).
+ */
+const NEXT_ACTIONS_CAP = 3
+
+function computeNextActions(
+  focal: AttachedRepoLike,
+  attached: readonly AttachedRepoLike[],
+  edges: readonly MiniRepoCrossRepoEdge[],
+): NextAction[] {
+  const attachedById = new Map(attached.map((r) => [r.repo_id, r]))
+
+  const outgoing: MiniRepoCrossRepoEdge[] = []
+  const incoming: MiniRepoCrossRepoEdge[] = []
+  for (const e of edges) {
+    if (e.from_repo === focal.repo_id && e.to_repo !== focal.repo_id) {
+      outgoing.push(e)
+    } else if (e.to_repo === focal.repo_id && e.from_repo !== focal.repo_id) {
+      incoming.push(e)
+    }
+  }
+
+  const seen = new Set<string>()
+  const out: NextAction[] = []
+  for (const e of [...outgoing, ...incoming]) {
+    const otherId = e.from_repo === focal.repo_id ? e.to_repo : e.from_repo
+    if (seen.has(otherId)) continue
+    const other = attachedById.get(otherId)
+    if (!other) continue
+    seen.add(otherId)
+    out.push(buildNextAction(focal, other, e))
+    if (out.length >= NEXT_ACTIONS_CAP) break
+  }
+  return out
+}
+
+function buildNextAction(
+  focal: AttachedRepoLike,
+  other: AttachedRepoLike,
+  edge: MiniRepoCrossRepoEdge,
+): NextAction {
+  // `label` mirrors the connector direction so the IDE can render it
+  // verbatim ("Check frontend usage" / "What backend calls this?").
+  const focalIsSource = edge.from_repo === focal.repo_id
+  const label = focalIsSource
+    ? `Ask about ${other.label} (${edge.connector})`
+    : `Ask about ${other.label} (which ${edge.connector} ${focal.label})`
+  const reasonDesc = edge.description ? `: ${edge.description}` : ''
+  const reason = focalIsSource
+    ? `${focal.label} --${edge.connector}--> ${other.label}${reasonDesc}`
+    : `${other.label} --${edge.connector}--> ${focal.label}${reasonDesc}`
+  return {
+    label,
+    reason,
+    meta: {
+      connector: edge.connector,
+      edge_description: edge.description,
+      from_repo: {
+        repo_id: focalIsSource ? focal.repo_id : other.repo_id,
+        label: focalIsSource ? focal.label : other.label,
+      },
+      to_repo: {
+        repo_id: focalIsSource ? other.repo_id : focal.repo_id,
+        label: focalIsSource ? other.label : focal.label,
+      },
+    },
+    args_patch: {
+      repo_hint: other.label,
+      remote_url: other.remote_url,
+    },
   }
 }
 
