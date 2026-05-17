@@ -44,7 +44,7 @@
     "@mastra/pg": "^1.11.0",
     "@vscode/ripgrep": "^1.18.0",
     "drizzle-orm": "^0.45.2",
-    "gitnexus": "1.6.4",
+    "gitnexus": "1.6.5",
     "js-tiktoken": "^1.0.21",
     "pg": "^8.20.0",
     "zod": "^4.3.6"
