@@ -52,8 +52,12 @@ export function BuildTab({ agentId }: { agentId: string }) {
   const isDirty = useMemo(() => {
     if (!agent) return false
     if (seededFor !== agent.id) return false
+    // `draft.name` is already trimmed (so save() sends a clean
+    // value); trim agent.name on this side too so a stored name
+    // with stray whitespace doesn't read as dirty the moment the
+    // form mounts.
     return (
-      draft.name !== agent.name ||
+      draft.name !== agent.name.trim() ||
       draft.slug !== agent.slug ||
       draft.systemPrompt !== agent.systemPrompt ||
       draft.llmProviderId !== agent.llmProviderId

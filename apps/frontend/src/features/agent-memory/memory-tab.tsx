@@ -149,6 +149,13 @@ export function MemoryTab({ agentId }: { agentId: string }) {
     if (!agent) return false
     if (seededFor !== agent.id) return false
     if (enabled !== agent.memoryEnabled) return true
+    // When memory is disabled the save() always sends memoryConfig:null
+    // regardless of the form's other fields — so they don't count
+    // toward dirty. Without this early-return the page reports
+    // "Unsaved" on mount for fresh agents where memoryConfig is null
+    // but the seeded defaults (lastMode=count, lastN=20) don't match
+    // the (absent) saved values.
+    if (!enabled) return false
     const cfg = agent.memoryConfig ?? null
     const savedLast = cfg?.lastMessages
     const wantLast = lastMode === 'off' ? false : lastN
