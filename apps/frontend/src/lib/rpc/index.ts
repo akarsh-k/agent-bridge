@@ -29,8 +29,12 @@ import type {
   McpConnectionDiscoverInput,
   McpConnectionDiscoverResponse,
   McpConnectionTestPollResponse,
+  RepoCommunityListResponse,
+  RepoFileSliceResponse,
   RepoGraph,
   RepoGraphMode,
+  RepoGraphNeighborsResponse,
+  RepoProcessListResponse,
 } from '@agent-bridge/shared'
 
 const DEV_DEFAULT_BASE_URL = 'http://127.0.0.1:3001'
@@ -249,15 +253,96 @@ export function repoWikiViewerUrl(repoId: string): string {
 export async function getRepoGraph(
   repoId: string,
   mode?: RepoGraphMode,
+  /** Required when `mode` is 'processes' or 'communities' — the
+   *  Process / Community id whose member subgraph to extract. */
+  selection?: string,
 ): Promise<RepoGraph> {
   const url = new URL(
     `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/graph`,
   )
   if (mode) url.searchParams.set('mode', mode)
+  if (selection) url.searchParams.set('selection', selection)
   const res = await callApi<{ ok: true; graph: RepoGraph }>(
     fetch(url.toString(), { method: 'GET' }),
   )
   return res.graph
+}
+
+/** Listing endpoint behind the Processes tab picker. */
+export async function listRepoProcesses(
+  repoId: string,
+): Promise<RepoProcessListResponse> {
+  const res = await callApi<{
+    ok: true
+    processes: RepoProcessListResponse
+  }>(
+    fetch(
+      `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/processes`,
+      { method: 'GET' },
+    ),
+  )
+  return res.processes
+}
+
+/**
+ * Source-preview slice for a symbol or file in the indexed repo. The
+ * backend clamps to ~400 lines + 3 lines of context padding around
+ * the requested range; we surface the returned `startLine`/`endLine`
+ * separately from the request so the panel can highlight the
+ * symbol's exact range within the slice.
+ */
+export async function getRepoFileSlice(
+  repoId: string,
+  path: string,
+  startLine: number | null,
+  endLine: number | null,
+): Promise<RepoFileSliceResponse> {
+  const url = new URL(
+    `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/file`,
+  )
+  url.searchParams.set('path', path)
+  if (startLine != null) url.searchParams.set('startLine', String(startLine))
+  if (endLine != null) url.searchParams.set('endLine', String(endLine))
+  const res = await callApi<{ ok: true; file: RepoFileSliceResponse }>(
+    fetch(url.toString(), { method: 'GET' }),
+  )
+  return res.file
+}
+
+/** Listing endpoint behind the Communities tab picker. */
+export async function listRepoCommunities(
+  repoId: string,
+): Promise<RepoCommunityListResponse> {
+  const res = await callApi<{
+    ok: true
+    communities: RepoCommunityListResponse
+  }>(
+    fetch(
+      `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/communities`,
+      { method: 'GET' },
+    ),
+  )
+  return res.communities
+}
+
+/**
+ * One-hop neighborhood for a node — drives the details panel's
+ * callers / callees / parents / children navigation. 409 mirrors the
+ * graph endpoint's "repo not indexed" state.
+ */
+export async function getRepoGraphNeighbors(
+  repoId: string,
+  nodeId: string,
+): Promise<RepoGraphNeighborsResponse> {
+  const url = new URL(
+    `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/graph/neighbors`,
+  )
+  url.searchParams.set('nodeId', nodeId)
+  const res = await callApi<{
+    ok: true
+    neighbors: RepoGraphNeighborsResponse
+  }>(fetch(url.toString(), { method: 'GET' }))
+  return res.neighbors
 }
 
 // ─── Bridge tools ────────────────────────────────────────────────────────
@@ -405,10 +490,20 @@ export async function listWorkerJobs(
  */
 export async function fetchWorkerJob(
   id: string,
+  /** Cap on the events slice the server returns. Defaults to 500 —
+   *  enough for the activity panel's phase chips + a tail of the
+   *  most recent progress lines without shipping every
+   *  `repo.embed.batch` row from a sqlalchemy-scale index. */
+  eventsLimit?: number,
 ): Promise<import('@agent-bridge/shared').WorkerJobDetailResponse> {
-  const url = `${apiBaseUrl}/api/worker-jobs/${encodeURIComponent(id)}`
+  const url = new URL(
+    `${apiBaseUrl}/api/worker-jobs/${encodeURIComponent(id)}`,
+  )
+  if (eventsLimit != null) {
+    url.searchParams.set('eventsLimit', String(eventsLimit))
+  }
   return callApi<import('@agent-bridge/shared').WorkerJobDetailResponse>(
-    fetch(url),
+    fetch(url.toString()),
   )
 }
 

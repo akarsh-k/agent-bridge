@@ -70,7 +70,12 @@ export function RunDetailSheet({ target, onClose }: RunDetailSheetProps) {
           const res = await fetchRun(targetId)
           if (alive) setData({ kind: 'run', run: res })
         } else {
-          const res = await fetchWorkerJob(targetId)
+          // The repo activity panel uses a 500-event hydration cap
+          // (in `RepoLogTail`) to keep its mount cheap. This detail
+          // sheet is the operator's debug view, so we lift the cap
+          // to the endpoint's maximum (5000) — full history is
+          // exactly what someone clicking a worker job here wants.
+          const res = await fetchWorkerJob(targetId, 5000)
           if (alive) setData({ kind: 'worker', worker: res })
         }
       } catch (err) {

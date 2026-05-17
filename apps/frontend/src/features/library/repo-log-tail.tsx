@@ -763,7 +763,19 @@ function stripProgressFromMessage(
 interface HistorySnapshot {
   job: WorkerJobListRow | null
   events: RunEvent[]
+  /** Total events in `worker_events` for this job. When this is
+   *  greater than `events.length`, the panel renders a "showing last
+   *  N of M" hint. Null when no job is found yet. */
+  totalEvents: number | null
 }
+
+/** How many events to pull on initial hydration. Bigger repos can
+ *  emit 10k+ progress rows; without a cap, mounting the repo detail
+ *  page on a sqlalchemy-scale index becomes laggy because every
+ *  re-render walks the full array. The live SSE stream keeps adding
+ *  on top of this slice — its own cap (in the useSSE call) bounds
+ *  the in-memory total at ~800 events. */
+const HISTORY_EVENT_LIMIT = 500
 
 async function hydrateHistory(repoId: string): Promise<HistorySnapshot> {
   // Most-recent job for this repo. We deliberately fetch only one
@@ -772,9 +784,13 @@ async function hydrateHistory(repoId: string): Promise<HistorySnapshot> {
   // through history with full filtering.
   const list = await listWorkerJobs({ repoId, limit: 1 })
   const job = list.jobs[0] ?? null
-  if (!job) return { job: null, events: [] }
-  const detail = await fetchWorkerJob(job.id)
-  return { job: detail.job, events: detail.events.map(detailEventToRunEvent) }
+  if (!job) return { job: null, events: [], totalEvents: null }
+  const detail = await fetchWorkerJob(job.id, HISTORY_EVENT_LIMIT)
+  return {
+    job: detail.job,
+    events: detail.events.map(detailEventToRunEvent),
+    totalEvents: detail.totalEvents,
+  }
 }
 
 function detailEventToRunEvent(e: WorkerJobDetailEvent): RunEvent {

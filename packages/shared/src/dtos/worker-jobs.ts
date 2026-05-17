@@ -75,6 +75,26 @@ export type WorkerJobDetailEvent = z.infer<typeof workerJobDetailEventSchema>
 export const workerJobDetailResponseSchema = z.object({
   ok: z.literal(true),
   job: workerJobListRowSchema,
+  /** Most-recent slice of events, in ascending ts order. The
+   *  hydration path on the UI passes `eventsLimit` so big-repo
+   *  index/embed runs (10k+ progress rows) don't ship the entire
+   *  history on every page load. */
   events: z.array(workerJobDetailEventSchema),
+  /** Total number of events for this job in `worker_events`. The UI
+   *  surfaces "showing last N of M" when this exceeds the slice. */
+  totalEvents: z.number().int().nonnegative(),
 })
 export type WorkerJobDetailResponse = z.infer<typeof workerJobDetailResponseSchema>
+
+/** Query params for `GET /api/worker-jobs/:id`. */
+export const workerJobDetailQuerySchema = z
+  .object({
+    /** Cap on the number of events returned. The endpoint returns the
+     *  most-recent `eventsLimit` events in ascending ts order. Default
+     *  500 — enough to drive the activity panel's phase chips + the
+     *  last few seconds of progress feed without shipping a megabyte
+     *  of `repo.embed.batch` rows for a sqlalchemy-scale index. */
+    eventsLimit: z.coerce.number().int().min(1).max(5000).optional(),
+  })
+  .strict()
+export type WorkerJobDetailQuery = z.infer<typeof workerJobDetailQuerySchema>

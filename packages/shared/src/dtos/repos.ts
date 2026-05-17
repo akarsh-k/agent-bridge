@@ -234,7 +234,11 @@ export type RepoWikiInput = z.infer<typeof repoWikiInputSchema>
  * Each mode returns the same wire shape; the `kind` column on nodes +
  * edges lets the UI colour by category without duplicating endpoints.
  */
-export const repoGraphModes = ['structure', 'symbols', 'imports'] as const
+export const repoGraphModes = [
+  'network',
+  'processes',
+  'communities',
+] as const
 export type RepoGraphMode = (typeof repoGraphModes)[number]
 
 export const repoGraphNodeKinds = [
@@ -243,10 +247,25 @@ export const repoGraphNodeKinds = [
   'function',
   'class',
   'method',
+  /** A `Process` cluster node — an LLM-flagged execution flow. Only
+   *  appears as the focal node in `processes` mode. */
+  'process',
+  /** A `Community` cluster node — a heuristic semantic grouping.
+   *  Only appears as the focal node in `communities` mode. */
+  'community',
 ] as const
 export type RepoGraphNodeKind = (typeof repoGraphNodeKinds)[number]
 
-export const repoGraphEdgeKinds = ['contains', 'calls', 'imports'] as const
+export const repoGraphEdgeKinds = [
+  'contains',
+  'calls',
+  'imports',
+  /** STEP_IN_PROCESS — orders the members of a Process. The frontend
+   *  pulls `step` off the DTO to draw the flow left-to-right. */
+  'step',
+  /** MEMBER_OF — Community → its members. */
+  'member',
+] as const
 export type RepoGraphEdgeKind = (typeof repoGraphEdgeKinds)[number]
 
 export const repoGraphNodeSchema = z.object({
@@ -260,6 +279,20 @@ export const repoGraphNodeSchema = z.object({
    * size the most-connected functions visibly larger.
    */
   degree: z.number().int().nonnegative().nullable().optional(),
+  /**
+   * Repo-relative path to the source file where this node is defined.
+   * Set for `function` / `method` / `class` / `file`; null for synthetic
+   * `folder` rows. The path comes from the indexed cypher row, not
+   * derived from the id — folder names contain unsafe characters and
+   * the id format has shifted across gitnexus versions.
+   */
+  filePath: z.string().nullable().optional(),
+  /** 1-based inclusive line range in `filePath`. Both null for `folder`
+   *  and many `file` rows; symbols always have both. Allows 0 because
+   *  some gitnexus rows emit a placeholder 0 for module-level
+   *  pseudo-symbols. */
+  startLine: z.number().int().nonnegative().nullable().optional(),
+  endLine: z.number().int().nonnegative().nullable().optional(),
 })
 
 export type RepoGraphNode = z.infer<typeof repoGraphNodeSchema>
@@ -268,6 +301,10 @@ export const repoGraphEdgeSchema = z.object({
   source: z.string().min(1),
   target: z.string().min(1),
   kind: z.enum(repoGraphEdgeKinds),
+  /** For `kind: 'step'` only — the 1-based order of this member
+   *  within the process. The UI uses it to draw the flow in
+   *  execution order and to label the edges. */
+  step: z.number().int().positive().nullable().optional(),
 })
 
 export type RepoGraphEdge = z.infer<typeof repoGraphEdgeSchema>
@@ -313,9 +350,148 @@ export type RepoGraph = z.infer<typeof repoGraphSchema>
 export const repoGraphQuerySchema = z
   .object({
     mode: z.enum(repoGraphModes).optional(),
+    /** Required for `mode=processes` and `mode=communities` — the id
+     *  of the Process / Community whose member-subgraph to extract.
+     *  Ignored for the other modes. */
+    selection: z.string().min(1).optional(),
   })
   .strict()
 export type RepoGraphQuery = z.infer<typeof repoGraphQuerySchema>
+
+// ─── /api/repos/:id/processes and /communities — list endpoints ──────────
+
+/** Compact summary of a `Process` node — feeds the picker sidebar in
+ *  the modal's processes tab. */
+export const repoProcessSummarySchema = z.object({
+  id: z.string().min(1),
+  /** Step count from the indexed `Process` row — how many ordered
+   *  members make up this flow. */
+  stepCount: z.number().int().nonnegative().nullable(),
+  /** 'intra_community' or 'cross_community'. Gitnexus labels flows
+   *  that stay within a single community vs. ones that hop across
+   *  several. Surface as a chip. */
+  processType: z.string().nullable(),
+  /** Pretty derived label — the entry-point function's name, when
+   *  available. Falls back to the id. The backend resolves the
+   *  entryPointId for the operator-facing string so the frontend
+   *  doesn't re-parse symbol ids. */
+  label: z.string(),
+})
+export type RepoProcessSummary = z.infer<typeof repoProcessSummarySchema>
+
+export const repoProcessListResponseSchema = z.object({
+  processes: z.array(repoProcessSummarySchema),
+  total: z.number().int().nonnegative().nullable(),
+})
+export type RepoProcessListResponse = z.infer<
+  typeof repoProcessListResponseSchema
+>
+
+/** Compact summary of a `Community` node — same idea, different
+ *  cluster kind. Cohesion is in [0, 1]. */
+export const repoCommunitySummarySchema = z.object({
+  id: z.string().min(1),
+  /** Heuristic label gitnexus assigns ('Components', 'Utilities', …).
+   *  Falls back to id when missing. */
+  label: z.string(),
+  cohesion: z.number().min(0).max(1).nullable(),
+  symbolCount: z.number().int().nonnegative().nullable(),
+})
+export type RepoCommunitySummary = z.infer<typeof repoCommunitySummarySchema>
+
+export const repoCommunityListResponseSchema = z.object({
+  communities: z.array(repoCommunitySummarySchema),
+  total: z.number().int().nonnegative().nullable(),
+})
+export type RepoCommunityListResponse = z.infer<
+  typeof repoCommunityListResponseSchema
+>
+
+// ─── /api/repos/:id/file — source preview slice ──────────────────────────
+
+/**
+ * Query for `GET /api/repos/:id/file`. The path is repo-relative
+ * (forward-slashes); `..` traversal is rejected at the route layer.
+ * The line range is optional — when both ends are present we return
+ * a slice with `contextLines` of padding on each side; when absent
+ * we return the file's first chunk (up to a hard cap).
+ */
+export const repoFileSliceQuerySchema = z
+  .object({
+    path: z.string().min(1),
+    startLine: z.coerce.number().int().positive().optional(),
+    endLine: z.coerce.number().int().positive().optional(),
+    contextLines: z.coerce.number().int().min(0).max(50).optional(),
+  })
+  .strict()
+export type RepoFileSliceQuery = z.infer<typeof repoFileSliceQuerySchema>
+
+export const repoFileSliceResponseSchema = z.object({
+  /** Repo-relative path (echoed for sanity). */
+  path: z.string(),
+  /** Inclusive 1-based line where the returned slice begins. May be
+   *  less than the requested startLine because of context padding. */
+  startLine: z.number().int().positive(),
+  /** Inclusive 1-based line where the slice ends. */
+  endLine: z.number().int().positive(),
+  /** The slice, one entry per line. UTF-8 only. */
+  lines: z.array(z.string()),
+  /** Total lines in the file. The UI uses this to show
+   *  "showing 12–48 of 199" hints. */
+  totalLines: z.number().int().nonnegative(),
+  /** Best-effort language guess derived from the extension. The UI
+   *  passes it to its highlighter; we don't validate the value. */
+  language: z.string().nullable(),
+})
+export type RepoFileSliceResponse = z.infer<typeof repoFileSliceResponseSchema>
+
+// ─── /api/repos/:id/graph/neighbors ──────────────────────────────────────
+
+/**
+ * Symbol-neighborhood payload — one hop in each direction from the
+ * selected node. Powers the details panel's "callers / callees /
+ * parent / children" sections so the operator can navigate the graph
+ * without leaving the modal.
+ */
+export const repoGraphNeighborKinds = [
+  'caller',
+  'callee',
+  'parent',
+  'child',
+] as const
+export type RepoGraphNeighborKind = (typeof repoGraphNeighborKinds)[number]
+
+export const repoGraphNeighborSchema = repoGraphNodeSchema.extend({
+  /** What this neighbor represents relative to the queried node. */
+  relation: z.enum(repoGraphNeighborKinds),
+})
+export type RepoGraphNeighbor = z.infer<typeof repoGraphNeighborSchema>
+
+export const repoGraphNeighborsResponseSchema = z.object({
+  nodeId: z.string().min(1),
+  neighbors: z.array(repoGraphNeighborSchema),
+  /** Pre-cap counts so the UI can render "16 of 42 callers". */
+  totals: z.object({
+    callers: z.number().int().nonnegative().nullable(),
+    callees: z.number().int().nonnegative().nullable(),
+    parents: z.number().int().nonnegative().nullable(),
+    children: z.number().int().nonnegative().nullable(),
+  }),
+  /** Per-relation cap applied to the cypher query. */
+  limit: z.number().int().positive(),
+})
+export type RepoGraphNeighborsResponse = z.infer<
+  typeof repoGraphNeighborsResponseSchema
+>
+
+export const repoGraphNeighborsQuerySchema = z
+  .object({
+    nodeId: z.string().min(1),
+  })
+  .strict()
+export type RepoGraphNeighborsQuery = z.infer<
+  typeof repoGraphNeighborsQuerySchema
+>
 
 // ─── /api/agents/:agentId/repos (attachments) ────────────────────────────
 

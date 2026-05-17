@@ -24,6 +24,7 @@ import {
 
 import { getDb } from '../db.js'
 import { getEventBus } from '../event-bus.js'
+import { makeProgressThrottle } from './progress-throttle.js'
 
 /**
  * Sandboxed `gitnexus analyze` with live progress SSE. Summary counts
@@ -228,6 +229,12 @@ export async function handleIndexRepoJob(
   // gitnexus's known error markers and keep the latest. The catch
   // block below uses this when present.
   let capturedError: string | null = null
+  // Coalesce progress events to ~1/sec. On a sqlalchemy-scale embed
+  // gitnexus emits thousands of stderr lines; persisting + streaming
+  // all of them is what made the repo-detail page laggy. Error
+  // detection runs BEFORE the throttle check so the final error
+  // message is captured even when the line itself is dropped.
+  const progressThrottle = makeProgressThrottle()
   try {
     await runAnalyze({
       descriptor,
@@ -239,6 +246,7 @@ export async function handleIndexRepoJob(
       onLine: async (line) => {
         const cleaned = redactSecrets(line, redactList)
         if (looksLikeFatalLine(cleaned)) capturedError = cleaned
+        if (!progressThrottle.shouldEmit()) return
         await publish({
           kind: 'repo.index.progress',
           ts: now(),

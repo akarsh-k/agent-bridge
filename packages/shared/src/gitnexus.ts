@@ -159,26 +159,6 @@ export function runGitnexus(
   })
 }
 
-/** Run `gitnexus <args>` to completion, returning the exit code + captured stdio. */
-export async function runGitnexusToCompletion(
-  args: readonly string[],
-  options: RunGitnexusOptions,
-): Promise<{ code: number; stdout: string; stderr: string }> {
-  return new Promise((resolve, reject) => {
-    const child = runGitnexus(args, { ...options, stdio: 'pipe' })
-    let stdout = ''
-    let stderr = ''
-    child.stdout?.setEncoding('utf8')
-    child.stderr?.setEncoding('utf8')
-    child.stdout?.on('data', (chunk: string) => (stdout += chunk))
-    child.stderr?.on('data', (chunk: string) => (stderr += chunk))
-    child.on('error', reject)
-    child.on('close', (code) => {
-      resolve({ code: code ?? -1, stdout, stderr })
-    })
-  })
-}
-
 // ─── meta.json reader ────────────────────────────────────────────────────
 //
 // gitnexus writes `<sourceDir>/.gitnexus/meta.json` on every successful
@@ -294,48 +274,42 @@ function pickInt(value: unknown): number | null {
 
 // ─── cypher (graph extraction) ───────────────────────────────────────────
 //
-// `gitnexus cypher <query>` exits with a JSON envelope of
-// `{ markdown, row_count }` (or `{ error }` on a binder/runtime error).
-// The `markdown` field carries a markdown table:
+// We talk to the indexed Kuzu store the same way gitnexus serve does:
+// by importing gitnexus's own `lbug-adapter` and calling `executeQuery`
+// in-process. The `gitnexus cypher` CLI is *not* used here — its
+// stdout-as-markdown-envelope contract has an unflushed-stdout race
+// on large outputs (the child exits before its stdout drains; piped
+// consumers lose bytes), and forcing every consumer to JSON-serialize
+// every row through a markdown table is wasteful when we can read the
+// real values straight from the DB.
 //
-//   | h1 | h2 |
-//   | --- | --- |
-//   | r1c1 | r1c2 |
-//   | r2c1 | r2c2 |
-//
-// gitnexus 1.6.3 has no `--format json` flag, so we parse the table
-// here. Each call is cheap (one spawn) and we keep the pipeline scalar-
-// only (`RETURN n.id, n.name`) so cell values never contain `|` and the
-// parser stays a single-pass split.
-//
-// All graph queries land under `repoCypherRows()` so the extra spawn cost
-// is paid once per query, not per request handler.
+// All graph queries land under `repoCypherRows()` so the gitnexus
+// library lifecycle (resolve, dynamic-import, `withLbugDb` retry) is
+// paid once per query, not per request handler.
 
 export interface CypherCellRow {
-  readonly [columnHeader: string]: string
+  /** Native row shape from `executeQuery` — values arrive as their
+   *  natural JS types (strings, numbers, booleans). Callers coerce
+   *  via the local `parseIntOrNull` / `nonEmptyOrNull` helpers. */
+  readonly [columnHeader: string]: unknown
 }
 
-export interface CypherRunOptions extends RunGitnexusOptions {
-  /** Source dir of the repo whose `.gitnexus/lbug` should answer the
-   *  query. Used to gate on `meta.json` existence before the spawn. */
+export interface CypherRunOptions {
+  /** Path to the repo's source dir. The Kuzu store lives at
+   *  `<sourceDir>/.gitnexus/lbug`. */
   readonly sourceDir: string
-  /**
-   * Registered repo name in the gitnexus registry — passed as
-   * `gitnexus cypher -r <name>`. REQUIRED whenever the registry holds
-   * more than one indexed repo, which is the steady-state for this
-   * app. Use `repoDirName(descriptor)` from
-   * `@agent-bridge/shared/paths` to get the same alias the analyze
-   * pass registered.
-   */
-  readonly repoName: string
+  /** REQUIRED. The caller's `import.meta.url` — passed to
+   *  `createRequire` so the gitnexus library is resolved from the
+   *  caller's dependency tree (shared itself doesn't declare
+   *  gitnexus). */
+  readonly fromModuleUrl: string
 }
 
 export interface CypherRunFailure {
   readonly ok: false
-  /** Coarse classification: `not-indexed` if `meta.json` is missing
-   *  (running cypher would error with a registry miss), `parse` if the
-   *  output envelope was malformed, `query` if gitnexus returned an
-   *  error envelope, `spawn` if the child failed to launch. */
+  /** Coarse classification: `not-indexed` if `meta.json` is missing,
+   *  `query` if gitnexus's executeQuery threw, `spawn` kept for
+   *  back-compat (no longer used). */
   readonly reason: 'not-indexed' | 'parse' | 'query' | 'spawn'
   readonly message: string
 }
@@ -347,21 +321,45 @@ export interface CypherRunSuccess {
 
 export type CypherRunResult = CypherRunSuccess | CypherRunFailure
 
+/** Cached gitnexus library handle. The library is shared across
+ *  every call within this Node process; switching between repos
+ *  goes through `withLbugDb(dbPath, ...)` which transparently
+ *  re-initialises the singleton DB connection. */
+interface GitnexusLib {
+  executeQuery: (cypher: string) => Promise<unknown[]>
+  withLbugDb: <T>(dbPath: string, op: () => Promise<T>) => Promise<T>
+}
+let cachedLib: GitnexusLib | null = null
+let cachedLibFromUrl: string | null = null
+
+async function loadGitnexusLib(fromModuleUrl: string): Promise<GitnexusLib> {
+  if (cachedLib && cachedLibFromUrl === fromModuleUrl) return cachedLib
+  const req = createRequire(fromModuleUrl)
+  // Resolve via the caller's dep tree, then import the resolved file
+  // URL so Node ESM honours the package's own internal imports.
+  const adapterPath = req.resolve(
+    'gitnexus/dist/core/lbug/lbug-adapter.js',
+  )
+  const mod = (await import(new URL(`file://${adapterPath}`).toString())) as {
+    executeQuery: GitnexusLib['executeQuery']
+    withLbugDb: GitnexusLib['withLbugDb']
+  }
+  cachedLib = { executeQuery: mod.executeQuery, withLbugDb: mod.withLbugDb }
+  cachedLibFromUrl = fromModuleUrl
+  return cachedLib
+}
+
 /**
- * Run a single Cypher query against a repo's local Kuzu store and parse
- * the markdown-table envelope into row objects. Never throws — callers
- * fold the failure shape into a 503 / empty-graph response.
- *
- * Caveat: cells are parsed by literal `|` split, so any column whose
- * value embeds `|` will tear. This is fine for our usage (scalar id /
- * name returns) but is documented here so future query authors stay
- * inside that lane.
+ * Run a Cypher query against a repo's local Kuzu store. Returns rows
+ * as native JS objects (strings, numbers, etc — same shape gitnexus
+ * serve produces). Never throws; callers fold the failure shape into
+ * a 503 / empty-graph response.
  */
 export async function repoCypherRows(
   query: string,
   options: CypherRunOptions,
 ): Promise<CypherRunResult> {
-  const { sourceDir, repoName, ...runOpts } = options
+  const { sourceDir, fromModuleUrl } = options
   const metaPath = repoMetaJsonPath(sourceDir)
   try {
     await fs.access(metaPath)
@@ -373,103 +371,33 @@ export async function repoCypherRows(
     }
   }
 
-  let result: { code: number; stdout: string; stderr: string }
+  let lib: GitnexusLib
   try {
-    result = await runGitnexusToCompletion(
-      ['cypher', '-r', repoName, query],
-      {
-        ...runOpts,
-        cwd: sourceDir,
-      },
-    )
+    lib = await loadGitnexusLib(fromModuleUrl)
   } catch (err) {
     return {
       ok: false,
       reason: 'spawn',
-      message: err instanceof Error ? err.message : String(err),
+      message: `failed to load gitnexus library: ${err instanceof Error ? err.message : String(err)}`,
     }
   }
 
-  if (result.code !== 0) {
+  const dbPath = path.join(sourceDir, '.gitnexus', 'lbug')
+  try {
+    const rows = await lib.withLbugDb(dbPath, () => lib.executeQuery(query))
+    // Normalise to a readonly array of cell-row objects. gitnexus
+    // returns plain objects; the cast is just to honour the
+    // declared `unknown` cell type.
+    return {
+      ok: true,
+      rows: rows as readonly CypherCellRow[],
+    }
+  } catch (err) {
     return {
       ok: false,
       reason: 'query',
-      message:
-        `gitnexus cypher exited with code ${result.code}: ` +
-        truncateForLog(result.stderr || result.stdout),
+      message: err instanceof Error ? err.message : String(err),
     }
   }
-
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(result.stdout)
-  } catch {
-    return {
-      ok: false,
-      reason: 'parse',
-      message: `gitnexus cypher emitted non-JSON stdout: ${truncateForLog(result.stdout)}`,
-    }
-  }
-
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    return { ok: false, reason: 'parse', message: 'envelope is not an object' }
-  }
-
-  const env = parsed as Record<string, unknown>
-  if (typeof env['error'] === 'string') {
-    return { ok: false, reason: 'query', message: env['error'] }
-  }
-
-  const markdown = typeof env['markdown'] === 'string' ? env['markdown'] : null
-  if (markdown === null) {
-    return {
-      ok: false,
-      reason: 'parse',
-      message: 'envelope missing markdown field',
-    }
-  }
-
-  return { ok: true, rows: parseMarkdownTable(markdown) }
 }
 
-/**
- * Tolerant markdown-table → row-object parser. Recognises a standard
- * `| h |` header followed by a `| --- |` separator. Yields nothing for
- * empty / malformed input — callers are expected to handle a zero-row
- * success the same as a normal "no matches" result.
- */
-function parseMarkdownTable(markdown: string): readonly CypherCellRow[] {
-  const lines = markdown.split('\n').map((l) => l.trim()).filter(Boolean)
-  if (lines.length < 2) return []
-
-  const headerLine = lines[0]
-  const separatorLine = lines[1]
-  if (!headerLine || !separatorLine) return []
-  if (!/^\s*\|/.test(separatorLine) || !/-{3,}/.test(separatorLine)) return []
-
-  const headers = splitMarkdownRow(headerLine)
-  const rows: CypherCellRow[] = []
-  for (let i = 2; i < lines.length; i++) {
-    const line = lines[i]
-    if (!line) continue
-    const cells = splitMarkdownRow(line)
-    const row: Record<string, string> = {}
-    for (let h = 0; h < headers.length; h++) {
-      row[headers[h] ?? `col_${h}`] = cells[h] ?? ''
-    }
-    rows.push(row)
-  }
-  return rows
-}
-
-function splitMarkdownRow(line: string): string[] {
-  // Strip the leading + trailing pipe before splitting so we don't get
-  // empty edge cells. Split, then trim each cell.
-  const trimmed = line.replace(/^\s*\|/, '').replace(/\|\s*$/, '')
-  return trimmed.split('|').map((c) => c.trim())
-}
-
-function truncateForLog(input: string, max = 240): string {
-  const compact = input.replace(/\s+/g, ' ').trim()
-  return compact.length <= max ? compact : `${compact.slice(0, max)}…`
-}

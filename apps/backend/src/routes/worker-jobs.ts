@@ -11,9 +11,10 @@
 
 import { zValidator } from '@hono/zod-validator'
 import { Hono } from 'hono'
-import { and, asc, desc, eq } from 'drizzle-orm'
+import { and, desc, eq, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
+  workerJobDetailQuerySchema,
   workerJobListQuerySchema,
   type WorkerJobDetailEvent,
   type WorkerJobDetailResponse,
@@ -25,6 +26,8 @@ import {
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
 import { httpValidationError } from '../lib/errors.js'
+// (re-using drizzle's sql helper from the top-level import — count(*)
+// → number coerce is the one tagged-template we need here)
 
 const DEFAULT_LIMIT = 50
 
@@ -115,8 +118,13 @@ export const workerJobsRouter = new Hono()
         return
       },
     ),
+    zValidator('query', workerJobDetailQuerySchema, (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    }),
     async (c) => {
       const { id } = c.req.valid('param')
+      const { eventsLimit = 500 } = c.req.valid('query')
       const handle = getDb()
 
       const [row] = await handle.db
@@ -149,7 +157,20 @@ export const workerJobsRouter = new Hono()
         )
       }
 
-      const eventRows = await handle.db
+      // Cheap count(*) so the UI can show "showing last 500 of 9,387".
+      // Big sqlalchemy-scale jobs emit tens of thousands of progress
+      // events; shipping all of them on every page load was the
+      // source of the repo-detail-page lag.
+      const [totalRow] = await handle.db
+        .select({ total: sql<number>`count(*)::int` })
+        .from(schema.workerEvents)
+        .where(eq(schema.workerEvents.jobId, id))
+      const totalEvents = totalRow?.total ?? 0
+
+      // Pull the most-recent N rows by descending ts, then reverse so
+      // the response is ascending (oldest→newest) like before. This
+      // keeps the consumer's merge / dedupe logic unchanged.
+      const recentRows = await handle.db
         .select({
           id: schema.workerEvents.id,
           ts: schema.workerEvents.ts,
@@ -158,7 +179,9 @@ export const workerJobsRouter = new Hono()
         })
         .from(schema.workerEvents)
         .where(eq(schema.workerEvents.jobId, id))
-        .orderBy(asc(schema.workerEvents.ts), asc(schema.workerEvents.id))
+        .orderBy(desc(schema.workerEvents.ts), desc(schema.workerEvents.id))
+        .limit(eventsLimit)
+      const eventRows = recentRows.slice().reverse()
 
       const startedAt = row.startedAt.toISOString()
       const finishedAt = row.finishedAt ? row.finishedAt.toISOString() : null
@@ -188,7 +211,12 @@ export const workerJobsRouter = new Hono()
         payload: e.payloadJson,
       }))
 
-      const body: WorkerJobDetailResponse = { ok: true, job, events }
+      const body: WorkerJobDetailResponse = {
+        ok: true,
+        job,
+        events,
+        totalEvents,
+      }
       return c.json(body)
     },
   )

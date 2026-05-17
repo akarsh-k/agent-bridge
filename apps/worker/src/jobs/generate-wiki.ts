@@ -24,6 +24,7 @@ import {
 
 import { getDb } from '../db.js'
 import { getEventBus } from '../event-bus.js'
+import { makeProgressThrottle } from './progress-throttle.js'
 
 /**
  * Sandboxed `gitnexus wiki` with live progress SSE. The wiki output lives
@@ -260,6 +261,9 @@ export async function handleGenerateWikiJob(
   // the crash-recovery logic.
   const wikiDir = repoWikiDir(sourceDir)
   const supersede = await prepareSupersede(wikiDir)
+  // Same coalescing reason as the other jobs — wiki generation
+  // emits one stderr line per page on big repos.
+  const wikiThrottle = makeProgressThrottle()
 
   try {
     await runWiki({
@@ -273,7 +277,9 @@ export async function handleGenerateWikiJob(
         const cleaned = redactSecrets(line, redactList)
         // Capture summary fields. Gitnexus emits them as the very last
         // few stdout lines; checking every line costs a regex per line
-        // and keeps the parser local to the handler.
+        // and keeps the parser local to the handler. Field parsing
+        // happens BEFORE the throttle check so a dropped line still
+        // updates `parsedPages`/`parsedResultMode`.
         const pagesMatch = /^\s*Pages:\s*(\d+)\s*$/i.exec(cleaned)
         if (pagesMatch && pagesMatch[1]) {
           const n = Number.parseInt(pagesMatch[1], 10)
@@ -283,6 +289,7 @@ export async function handleGenerateWikiJob(
         if (modeMatch && modeMatch[1]) {
           parsedResultMode = modeMatch[1]
         }
+        if (!wikiThrottle.shouldEmit()) return
         await publish({
           kind: 'repo.wiki.progress',
           ts: now(),

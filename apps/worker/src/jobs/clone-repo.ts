@@ -25,6 +25,7 @@ import { spawnSandboxed } from '@agent-bridge/shared/spawn'
 import { getDb } from '../db.js'
 import { getEventBus } from '../event-bus.js'
 import { enqueueIndexRepo } from './enqueue.js'
+import { makeProgressThrottle } from './progress-throttle.js'
 
 /**
  * Sandboxed `git clone` with atomic rename, live progress SSE, and PAT
@@ -181,6 +182,12 @@ export async function handleCloneRepoJob(
   const finalDir = repoSourceDir(descriptor)
   await rmrfBestEffort(tmpDir)
 
+  // Coalesce per-line clone progress to ~1/sec — git's "Receiving
+  // objects: NN%" lines update many times per second on a fast
+  // connection, and persisting all of them was contributing to the
+  // big-repo log lag on the detail page.
+  const cloneThrottle = makeProgressThrottle()
+
   try {
     await runGitClone({
       remoteUrl,
@@ -189,6 +196,7 @@ export async function handleCloneRepoJob(
       patPlaintext,
       onStderrLine: async (line) => {
         const cleaned = redactSecrets(line, redactList)
+        if (!cloneThrottle.shouldEmit()) return
         await publish({
           kind: 'repo.clone.progress',
           ts: now(),

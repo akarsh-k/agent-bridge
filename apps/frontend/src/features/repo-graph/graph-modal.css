@@ -604,6 +604,14 @@
   color: #a78bfa;
   background: rgba(167, 139, 250, 0.16);
 }
+.graph-node-icon-process {
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.16);
+}
+.graph-node-icon-community {
+  color: #f472b6;
+  background: rgba(244, 114, 182, 0.16);
+}
 .graph-node-icon-method {
   color: #67e8f9;
   background: rgba(103, 232, 249, 0.14);
@@ -634,4 +642,499 @@
 
 .graph-node-file .graph-node-name {
   color: var(--text-dim);
+}
+
+/* ---------- Node details panel ---------- */
+
+.graph-modal-body.is-details-open .graph-flow-frame {
+  border-right: 1px solid var(--border);
+}
+
+.graph-details-panel {
+  /* Wider than the original 320px so the source preview stops feeling
+   * cramped — gitnexus's sidebar runs ~30% of the viewport on a
+   * typical laptop and that ratio reads well for code. */
+  width: clamp(360px, 32vw, 520px);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 14px 18px;
+  overflow-y: auto;
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  animation: graph-details-slide 220ms var(--ease-out);
+}
+
+@keyframes graph-details-slide {
+  from {
+    opacity: 0;
+    transform: translateX(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.graph-details-header {
+  position: relative;
+  padding-right: 28px;
+}
+.graph-details-eyebrow {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.graph-details-name {
+  margin-top: 4px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.35;
+  word-break: break-word;
+}
+.graph-details-close {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.graph-details-close:hover {
+  background: var(--surface-hi);
+  color: var(--text);
+}
+
+.graph-details-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.graph-details-row-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.graph-details-row-value {
+  font-size: 12px;
+  color: var(--text-dim);
+  background: transparent;
+  border: none;
+  padding: 4px 6px;
+  border-radius: 4px;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.graph-details-copy {
+  cursor: pointer;
+}
+.graph-details-copy:hover {
+  background: var(--surface-hi);
+  color: var(--text);
+}
+.graph-details-copy-hint {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 120ms var(--ease-out);
+}
+.graph-details-copy:hover .graph-details-copy-hint {
+  opacity: 1;
+}
+
+.graph-details-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 2px 0 6px;
+}
+
+.graph-details-section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.graph-details-section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.graph-details-section-label {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.graph-details-section-count {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.graph-details-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.graph-details-link {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  text-align: left;
+}
+.graph-details-link:hover {
+  background: var(--surface-hi);
+}
+.graph-details-link-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.graph-details-link-meta {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.graph-details-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.graph-details-dot.kind-function {
+  background: #a78bfa;
+}
+.graph-details-dot.kind-method {
+  background: #67e8f9;
+}
+.graph-details-dot.kind-class {
+  background: #fbbf24;
+}
+.graph-details-dot.kind-folder {
+  background: var(--text-muted);
+}
+.graph-details-dot.kind-file {
+  background: #52507a;
+}
+
+.graph-details-loading,
+.graph-details-empty,
+.graph-details-error {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 8px 6px;
+}
+.graph-details-error {
+  color: var(--danger);
+}
+
+.graph-flow-frame .react-flow__node-abNode.graph-node-selected {
+  outline: 1.5px solid var(--accent-300);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+/* ---------- Selection picker (processes / communities) ---------- */
+
+.graph-modal-body.is-picker-open .graph-flow-frame {
+  border-left: 1px solid var(--border);
+}
+
+.graph-picker {
+  width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.graph-picker-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 14px 14px 8px;
+  gap: 8px;
+}
+.graph-picker-eyebrow {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+.graph-picker-count {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.graph-picker-loading,
+.graph-picker-empty,
+.graph-picker-error {
+  padding: 12px 14px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.graph-picker-error {
+  color: var(--danger);
+}
+
+.graph-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 6px 12px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.graph-picker-item {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background 120ms var(--ease-out),
+    border-color 120ms var(--ease-out);
+}
+.graph-picker-item:hover {
+  background: var(--surface-hi);
+}
+.graph-picker-item.is-selected {
+  background: var(--surface-hi);
+  border-color: var(--accent-300);
+}
+
+.graph-picker-item-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  word-break: break-word;
+  line-height: 1.3;
+}
+.graph-picker-item-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.graph-picker-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.graph-picker-chip.chip-cross {
+  border-color: rgba(251, 191, 36, 0.55);
+  color: #fbbf24;
+}
+.graph-picker-chip.chip-intra {
+  border-color: rgba(167, 139, 250, 0.55);
+  color: #a78bfa;
+}
+.graph-picker-chip.chip-cohesion {
+  border-color: rgba(103, 232, 249, 0.45);
+  color: #67e8f9;
+}
+
+/* Color-overrides for the new node kinds so they render distinctly
+ * inside the canvas without changing any existing styles. */
+.graph-flow-frame .graph-node-process .graph-node-name,
+.graph-flow-frame .graph-node-community .graph-node-name {
+  color: var(--text);
+}
+
+/* ---------- File-slice preview in the details panel ---------- */
+
+.graph-file-preview {
+  margin: 0;
+  padding: 8px 0;
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-x: auto;
+  overflow-y: auto;
+  /* Taller than the original 280px so multi-line symbols
+   * (a typical React component, a class with a handful of methods)
+   * fit without the user having to scroll inside the snippet. */
+  max-height: min(60vh, 560px);
+}
+
+.graph-file-preview code {
+  display: block;
+}
+
+.graph-file-line {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 0 10px;
+  white-space: pre;
+}
+
+.graph-file-line.graph-file-line-highlight {
+  background: color-mix(in srgb, var(--accent-300) 14%, transparent);
+}
+
+.graph-file-lineno {
+  flex-shrink: 0;
+  width: 32px;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 10px;
+  user-select: none;
+}
+
+.graph-file-content {
+  color: var(--text);
+  white-space: pre;
+}
+
+/* ---------- Toolbar search input ---------- */
+
+.graph-modal-search {
+  appearance: none;
+  flex: 0 1 220px;
+  min-width: 160px;
+  height: 30px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text);
+  font-size: 12px;
+  font-family: inherit;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out);
+}
+.graph-modal-search::placeholder {
+  color: var(--text-muted);
+}
+.graph-modal-search:focus {
+  outline: none;
+  border-color: var(--accent-300);
+  background: var(--surface);
+}
+
+/* ---------- Filter fade ---------- */
+
+.graph-flow-frame .react-flow__node-abNode.graph-node-faded {
+  opacity: 0.18;
+  transition: opacity 180ms var(--ease-out);
+}
+.graph-flow-frame .react-flow__node-abNode:not(.graph-node-faded) {
+  transition: opacity 180ms var(--ease-out);
+}
+.graph-flow-frame .react-flow__edge.graph-edge-faded {
+  opacity: 0.1;
+  transition: opacity 180ms var(--ease-out);
+}
+
+/* ---------- Sigma canvas frame ---------- */
+
+.graph-sigma-frame {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  background:
+    radial-gradient(
+      1200px 700px at 50% 0%,
+      rgba(139, 92, 246, 0.07),
+      transparent 60%
+    ),
+    var(--bg-canvas);
+}
+
+/* Sigma's container is a <div> we hand it a ref to; it injects its
+ * own <canvas> elements absolutely-positioned inside. Make sure the
+ * frame fills its slot or sigma uses a 0×0 viewport. */
+.graph-sigma-frame canvas {
+  outline: none;
+}
+
+/* ---------- Kind-filter chips ---------- */
+
+.graph-kind-chips {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.graph-kind-chip {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--surface-raised);
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
+  letter-spacing: 0.02em;
+}
+.graph-kind-chip:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.graph-kind-chip.is-active {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--text);
+}
+.graph-kind-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
 }

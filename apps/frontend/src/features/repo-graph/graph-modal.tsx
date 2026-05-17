@@ -26,48 +26,33 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Background,
-  Controls,
-  MarkerType,
-  MiniMap,
-  ReactFlow,
-  type Edge,
-  type Node,
-  type NodeTypes,
-} from '@xyflow/react'
-import { Graph as DagreGraph, layout as dagreLayout } from '@dagrejs/dagre'
-import {
   repoGraphModes,
   type RepoGraph,
-  type RepoGraphEdge,
   type RepoGraphMode,
   type RepoGraphNode,
   type RepoGraphNodeKind,
   type RepoResponse,
 } from '@agent-bridge/shared'
 import { ApiError, getRepoGraph } from '../../lib/rpc'
-import { GraphFlowNode, type GraphFlowNodeData } from './graph-flow-node'
+import { GraphCanvasSigma } from './graph-canvas-sigma'
+import { NodeDetailsPanel } from './node-details-panel'
+import { GraphSelectionPicker } from './graph-selection-picker'
 
-import '@xyflow/react/dist/style.css'
 import './graph-modal.css'
 
-const NODE_WIDTH = 240
-const NODE_HEIGHT = 56
-
-const NODE_TYPES: NodeTypes = {
-  abNode: GraphFlowNode,
-}
-
 const MODE_LABEL: Record<RepoGraphMode, string> = {
-  symbols: 'Symbols',
-  structure: 'Structure',
-  imports: 'Imports',
+  network: 'Network',
+  processes: 'Processes',
+  communities: 'Communities',
 }
 
 const MODE_HINT: Record<RepoGraphMode, string> = {
-  symbols: 'Top functions, methods, and classes connected by CALLS.',
-  structure: 'Folder + file directory tree (CONTAINS edges).',
-  imports: 'File-level IMPORTS dependency graph.',
+  network:
+    'The whole knowledge graph — every kind of node + every edge type, force-directed. Use the kind chips to narrow.',
+  processes:
+    'Execution flows gitnexus inferred. Pick one to see its ordered call chain.',
+  communities:
+    'Heuristic semantic clusters. Pick one to see its members + internal calls.',
 }
 
 export interface GraphModalProps {
@@ -81,21 +66,63 @@ type FetchState =
   | { kind: 'empty'; message: string }
   | { kind: 'error'; message: string }
 
+const PICKER_MODES = new Set<RepoGraphMode>(['processes', 'communities'])
+
 export function GraphModal({ repo, onClose }: GraphModalProps) {
-  const [mode, setMode] = useState<RepoGraphMode>('symbols')
+  const [mode, setMode] = useState<RepoGraphMode>('network')
   const [state, setState] = useState<FetchState>({ kind: 'loading' })
+  // Selected node drives the right-side details panel. We track the
+  // id (not the node object) so the selection survives a payload
+  // refresh — if a mode change keeps the node around, the panel
+  // stays open against the same id.
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  // Per-mode "picker selection" — the Process / Community id whose
+  // subgraph we're showing. Lives on the modal because the picker
+  // can be unmounted (when the user switches tabs) but we want to
+  // preserve their choice on return.
+  const [processId, setProcessId] = useState<string | null>(null)
+  const [communityId, setCommunityId] = useState<string | null>(null)
+  // In-canvas search filter. Substring match (case-insensitive) on
+  // the node name. Non-matching nodes + edges fade rather than
+  // unmount so the layout stays stable as the user types.
+  const [filter, setFilter] = useState('')
+  // Kind-filter chips (Functions / Methods / Classes / Files /
+  // Folders). Empty set means "show every kind". Composed with the
+  // search box inside the sigma canvas.
+  const [kindFilter, setKindFilter] = useState<ReadonlySet<RepoGraphNodeKind>>(
+    new Set(),
+  )
+  const pickerKind: 'processes' | 'communities' | null = PICKER_MODES.has(mode)
+    ? (mode as 'processes' | 'communities')
+    : null
+  const pickerSelection =
+    mode === 'processes'
+      ? processId
+      : mode === 'communities'
+        ? communityId
+        : null
+  const setPickerSelection = (id: string) => {
+    if (mode === 'processes') setProcessId(id)
+    else if (mode === 'communities') setCommunityId(id)
+  }
 
   useEffect(() => {
     let cancelled = false
-    // Toggling the mode tab needs the spinner back. The flip-to-loading
-    // is the user's signal that we acknowledged their click; without it
-    // a slow cypher round-trip looks like a stuck button. The lint rule
-    // would prefer this cascade move into a render-time derivation, but
-    // we genuinely want a one-shot reset that fires once per
-    // (repo.id, mode) change — not per render.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // Picker modes don't fetch a graph until the user picks an item.
+    // We surface a distinct "pick something" empty state below.
+    if (pickerKind && !pickerSelection) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setState({
+        kind: 'empty',
+        message:
+          pickerKind === 'processes'
+            ? 'Pick a flow on the left to see its ordered call chain.'
+            : 'Pick a community on the left to see its members + internal calls.',
+      })
+      return undefined
+    }
     setState({ kind: 'loading' })
-    getRepoGraph(repo.id, mode)
+    getRepoGraph(repo.id, mode, pickerSelection ?? undefined)
       .then((graph) => {
         if (cancelled) return
         if (graph.nodes.length === 0) {
@@ -125,17 +152,30 @@ export function GraphModal({ repo, onClose }: GraphModalProps) {
     return () => {
       cancelled = true
     }
-  }, [repo.id, mode])
+  }, [repo.id, mode, pickerKind, pickerSelection])
 
   // Esc-to-close, mounted unconditionally so the listener is bound for
-  // every state of the modal (including the loading spinner).
+  // every state of the modal (including the loading spinner). When
+  // the details panel is open, Esc closes JUST the panel first; a
+  // second Esc closes the modal.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (e.key !== 'Escape') return
+      if (selectedNodeId) {
+        setSelectedNodeId(null)
+      } else {
+        onClose()
+      }
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [onClose])
+  }, [onClose, selectedNodeId])
+
+  const selectedNode = useMemo<RepoGraphNode | null>(() => {
+    if (!selectedNodeId) return null
+    if (state.kind !== 'ready') return null
+    return state.graph.nodes.find((n) => n.id === selectedNodeId) ?? null
+  }, [selectedNodeId, state])
 
   return (
     <div
@@ -181,283 +221,80 @@ export function GraphModal({ repo, onClose }: GraphModalProps) {
               </button>
             ))}
           </div>
+          <input
+            type="search"
+            className="graph-modal-search"
+            placeholder="Filter by name or path…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            aria-label="Filter graph nodes by name or file path"
+          />
+          {mode === 'network' && (
+            <KindFilterChips value={kindFilter} onChange={setKindFilter} />
+          )}
           <div className="graph-modal-hint">{MODE_HINT[mode]}</div>
         </div>
         {state.kind === 'ready' ? <StatsBar graph={state.graph} /> : null}
-        <div className="graph-modal-body">
+        <div
+          className={
+            'graph-modal-body' +
+            (selectedNode ? ' is-details-open' : '') +
+            (pickerKind ? ' is-picker-open' : '')
+          }
+        >
+          {pickerKind ? (
+            <GraphSelectionPicker
+              repoId={repo.id}
+              kind={pickerKind}
+              selectedId={pickerSelection}
+              onSelect={setPickerSelection}
+            />
+          ) : null}
           {state.kind === 'loading' ? <LoadingState mode={mode} /> : null}
           {state.kind === 'empty' ? <EmptyState message={state.message} /> : null}
           {state.kind === 'error' ? (
             <ErrorState message={state.message} />
           ) : null}
-          {state.kind === 'ready' ? <GraphCanvas graph={state.graph} /> : null}
+          {state.kind === 'ready' ? (
+            <GraphCanvasSigma
+              graph={state.graph}
+              selectedNodeId={selectedNodeId}
+              filter={filter}
+              kindFilter={kindFilter}
+              onNodeClick={(id) => setSelectedNodeId(id)}
+            />
+          ) : null}
+          <NodeDetailsPanel
+            repoId={repo.id}
+            selected={selectedNode}
+            onClose={() => setSelectedNodeId(null)}
+            onSelect={(id) => setSelectedNodeId(id)}
+          />
         </div>
       </div>
     </div>
   )
 }
 
-function GraphCanvas({ graph }: { graph: RepoGraph }) {
-  const { nodes, edges, truncationLabel } = useMemo(
-    () => layoutGraph(graph),
-    [graph],
-  )
-
-  return (
-    <div className="graph-flow-frame">
-      {truncationLabel ? (
-        <div className="graph-modal-truncation" role="status">
-          <span className="graph-modal-truncation-icon" aria-hidden>
-            ⊘
-          </span>
-          {truncationLabel}
-        </div>
-      ) : null}
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={NODE_TYPES}
-        fitView
-        fitViewOptions={{ padding: 0.18, minZoom: 0.15 }}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        edgesFocusable={false}
-        elementsSelectable={false}
-        proOptions={{ hideAttribution: true }}
-        minZoom={0.1}
-        maxZoom={2}
-      >
-        <Background
-          gap={28}
-          size={1.2}
-          color="rgba(167, 139, 250, 0.16)"
-        />
-        <Controls
-          showInteractive={false}
-          className="graph-modal-controls"
-        />
-        <MiniMap
-          pannable
-          zoomable
-          maskColor="rgba(8, 7, 13, 0.55)"
-          style={{
-            background: 'rgba(15, 14, 23, 0.92)',
-            border: '1px solid var(--border)',
-            borderRadius: 12,
-          }}
-          nodeColor={(n) => miniMapColor(n.data as { kind?: string })}
-          nodeStrokeWidth={2}
-          nodeBorderRadius={6}
-        />
-        <Legend graph={graph} />
-      </ReactFlow>
-    </div>
-  )
-}
-
-function layoutGraph(graph: RepoGraph): {
-  nodes: Node[]
-  edges: Edge[]
-  truncationLabel: string | null
-} {
-  const g = new DagreGraph()
-  // Symbols mode is denser and reads better top-to-bottom; the
-  // hierarchical modes flow left-to-right because they're skinny tall
-  // trees where horizontal sprawl is fine.
-  const rankdir = graph.mode === 'symbols' ? 'TB' : 'LR'
-  g.setGraph({
-    rankdir,
-    nodesep: 32,
-    ranksep: 88,
-    marginx: 32,
-    marginy: 32,
-  })
-  g.setDefaultEdgeLabel(() => ({}))
-
-  for (const node of graph.nodes) {
-    g.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT })
-  }
-  for (const edge of graph.edges) {
-    g.setEdge(edge.source, edge.target)
-  }
-
-  dagreLayout(g)
-
-  const nodes: Node[] = graph.nodes.map((node) => {
-    const positioned = g.node(node.id) as { x?: number; y?: number } | undefined
-    const x = positioned?.x ?? 0
-    const y = positioned?.y ?? 0
-    const data: GraphFlowNodeData = {
-      label: shortLabel(node),
-      subtitle: subtitleFor(node),
-      kind: node.kind,
-      degree: node.degree ?? null,
-      mode: graph.mode,
-    }
-    return {
-      id: node.id,
-      // Dagre returns center coords; React Flow expects top-left.
-      position: { x: x - NODE_WIDTH / 2, y: y - NODE_HEIGHT / 2 },
-      data: data as unknown as Record<string, unknown>,
-      type: 'abNode',
-      draggable: false,
-      selectable: false,
-    }
-  })
-
-  const edges: Edge[] = graph.edges.map((edge, i) => ({
-    id: `e-${i}-${edge.source}-${edge.target}`,
-    source: edge.source,
-    target: edge.target,
-    type: edge.kind === 'contains' ? 'smoothstep' : 'bezier',
-    animated: edge.kind === 'calls',
-    style: edgeStyleFor(edge),
-    className: `graph-edge graph-edge-${edge.kind}`,
-    markerEnd: {
-      type: MarkerType.ArrowClosed,
-      width: 14,
-      height: 14,
-      color: edgeColor(edge.kind),
-    },
-  }))
-
-  return {
-    nodes,
-    edges,
-    truncationLabel: buildTruncationLabel(graph),
-  }
-}
-
-function shortLabel(node: RepoGraphNode): string {
-  // For files in `imports` mode, surface the bare basename; the
-  // directory hint goes in the subtitle so the visual emphasis lands
-  // on the readable bit.
-  if (node.kind === 'file') {
-    const slash = node.name.lastIndexOf('/')
-    return slash >= 0 ? node.name.slice(slash + 1) : node.name
-  }
-  return node.name
-}
-
-function subtitleFor(node: RepoGraphNode): string | null {
-  // Function/Method ids embed the file path (`Function:foo/bar.ts:name`);
-  // surface that as a subtitle so the operator can disambiguate
-  // identically-named symbols across files.
-  if (node.kind === 'function' || node.kind === 'method') {
-    return extractFileSegment(node.id)
-  }
-  if (node.kind === 'file') {
-    // `name` is already the basename for files; the id carries the path.
-    const path = extractAfterFirstColon(node.id)
-    if (!path) return null
-    const slash = path.lastIndexOf('/')
-    if (slash <= 0) return null
-    const dir = path.slice(0, slash)
-    return dir.length > 36 ? `…${dir.slice(-34)}` : dir
-  }
-  return null
-}
-
-function extractAfterFirstColon(id: string): string | null {
-  const colonIdx = id.indexOf(':')
-  return colonIdx < 0 ? null : id.slice(colonIdx + 1)
-}
-
-function extractFileSegment(id: string): string | null {
-  // Format: `Function:<filePath>:<symbolName>` — split off the
-  // `:Function` prefix and the trailing `:<name>`. Best-effort;
-  // malformed ids fall through to a null hint.
-  const remainder = extractAfterFirstColon(id)
-  if (!remainder) return null
-  const lastColon = remainder.lastIndexOf(':')
-  if (lastColon < 0) return null
-  const filePath = remainder.slice(0, lastColon)
-  if (filePath.length > 36) {
-    return `…${filePath.slice(-34)}`
-  }
-  return filePath
-}
-
-function edgeColor(kind: RepoGraphEdge['kind']): string {
-  switch (kind) {
-    case 'calls':
-      return '#a78bfa'
-    case 'imports':
-      return '#67e8f9'
-    case 'contains':
-    default:
-      return 'rgba(167, 139, 250, 0.45)'
-  }
-}
-
-function edgeStyleFor(edge: RepoGraphEdge): React.CSSProperties {
-  const stroke = edgeColor(edge.kind)
-  if (edge.kind === 'calls') {
-    return { stroke, strokeWidth: 1.25, strokeDasharray: '6 4' }
-  }
-  if (edge.kind === 'imports') {
-    return { stroke, strokeWidth: 1.25 }
-  }
-  return { stroke, strokeWidth: 1 }
-}
-
-function miniMapColor(data: { kind?: string }): string {
-  switch (data.kind) {
-    case 'function':
-      return '#a78bfa'
-    case 'method':
-      return '#67e8f9'
-    case 'class':
-      return '#fbbf24'
-    case 'folder':
-      return '#a78bfa'
-    case 'file':
-    default:
-      return '#52507a'
-  }
-}
-
-function buildTruncationLabel(graph: RepoGraph): string | null {
-  const totals = graph.totals
-  const parts: string[] = []
-  const labelFor: Partial<Record<RepoGraphNodeKind, [string, number | null | undefined]>> = {
-    function: ['functions', totals.functions],
-    method: ['methods', totals.methods],
-    class: ['classes', totals.classes],
-    folder: ['folders', totals.folders],
-    file: ['files', totals.files],
-  }
-  for (const kind of Object.keys(labelFor) as RepoGraphNodeKind[]) {
-    const entry = labelFor[kind]
-    if (!entry) continue
-    const [label, total] = entry
-    if (total == null) continue
-    const shown = graph.nodes.filter((n) => n.kind === kind).length
-    if (shown === 0) continue
-    if (total > shown) parts.push(`${shown} of ${total} ${label}`)
-  }
-  if (parts.length === 0) return null
-  return `Showing ${parts.join(', ')}. Larger repos render a representative slice ranked by edge degree.`
-}
 
 function emptyMessageFor(mode: RepoGraphMode): string {
   switch (mode) {
-    case 'symbols':
-      return 'No CALLS edges in this index — try the Structure tab to see folders + files.'
-    case 'imports':
-      return 'No IMPORTS edges between files in this index. Pick another tab to see what was captured.'
-    case 'structure':
+    case 'processes':
+      return 'This process has no resolved member symbols. Try picking another one.'
+    case 'communities':
+      return 'This community has no resolved member symbols. Try picking another one.'
+    case 'network':
     default:
-      return "Index ran, but gitnexus didn't surface any folders or files for this repo. Try re-indexing with --force."
+      return "No nodes in this index yet — the repo was indexed but gitnexus didn't surface anything to plot. Try re-indexing."
   }
 }
 
 // ─── stats / legend / chrome ─────────────────────────────────────────────
 
 const STAT_KEYS_BY_MODE: Record<RepoGraphMode, RepoGraphNodeKind[]> = {
-  symbols: ['function', 'method', 'class'],
-  structure: ['folder', 'file'],
-  imports: ['file'],
+  network: ['function', 'method', 'class', 'file'],
+  processes: ['function', 'method', 'class'],
+  communities: ['function', 'method', 'class'],
 }
 
 function StatsBar({ graph }: { graph: RepoGraph }) {
@@ -520,31 +357,8 @@ const LABEL_PLURAL: Record<RepoGraphNodeKind, string> = {
   class: 'classes',
   folder: 'folders',
   file: 'files',
-}
-
-function Legend({ graph }: { graph: RepoGraph }) {
-  // Position the legend over the canvas in the bottom-left. The Panel
-  // primitive from React Flow would let us do this with first-class
-  // support, but a vanilla absolutely-positioned div is plenty here.
-  const items = STAT_KEYS_BY_MODE[graph.mode]
-  return (
-    <div className="graph-modal-legend">
-      {items.map((kind) => (
-        <span key={kind} className="graph-legend-item">
-          <span className={`graph-legend-swatch graph-node-icon-${kind}`} />
-          <span>{LABEL_PLURAL[kind]}</span>
-        </span>
-      ))}
-      {graph.edges.length > 0 ? (
-        <span className="graph-legend-item">
-          <span
-            className={`graph-legend-edge graph-legend-edge-${graph.edges[0]?.kind ?? 'contains'}`}
-          />
-          <span>{graph.edges[0]?.kind ?? 'edges'}</span>
-        </span>
-      ) : null}
-    </div>
-  )
+  process: 'processes',
+  community: 'communities',
 }
 
 function LoadingState({ mode }: { mode: RepoGraphMode }) {
@@ -600,5 +414,60 @@ function DotIcon() {
     <svg viewBox="0 0 8 8" width="8" height="8" aria-hidden="true">
       <circle cx="4" cy="4" r="3" fill="currentColor" />
     </svg>
+  )
+}
+
+const KIND_CHIPS: ReadonlyArray<{
+  kind: RepoGraphNodeKind
+  label: string
+}> = [
+  { kind: 'function', label: 'Functions' },
+  { kind: 'method', label: 'Methods' },
+  { kind: 'class', label: 'Classes' },
+  { kind: 'file', label: 'Files' },
+  { kind: 'folder', label: 'Folders' },
+]
+
+function KindFilterChips({
+  value,
+  onChange,
+}: {
+  value: ReadonlySet<RepoGraphNodeKind>
+  onChange: (next: ReadonlySet<RepoGraphNodeKind>) => void
+}) {
+  const toggle = (kind: RepoGraphNodeKind) => {
+    const next = new Set(value)
+    if (next.has(kind)) next.delete(kind)
+    else next.add(kind)
+    onChange(next)
+  }
+  const anyActive = value.size > 0
+  return (
+    <div className="graph-kind-chips" role="group" aria-label="Filter by node kind">
+      <button
+        type="button"
+        className={`graph-kind-chip ${!anyActive ? 'is-active' : ''}`}
+        onClick={() => onChange(new Set())}
+      >
+        All
+      </button>
+      {KIND_CHIPS.map((c) => {
+        const active = value.has(c.kind)
+        return (
+          <button
+            key={c.kind}
+            type="button"
+            className={`graph-kind-chip kind-${c.kind} ${active ? 'is-active' : ''}`}
+            onClick={() => toggle(c.kind)}
+          >
+            <span
+              className={`graph-kind-chip-dot graph-node-icon-${c.kind}`}
+              aria-hidden
+            />
+            {c.label}
+          </button>
+        )
+      })}
+    </div>
   )
 }
