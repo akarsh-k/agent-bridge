@@ -15,6 +15,7 @@ import {
   ApiError,
   cloneRepo,
   indexRepo,
+  pullRepo,
 } from '../../../../lib/rpc'
 import { toast } from '../../../../ui/toast-store'
 import { confirmDialog } from '../../../../ui/dialog-store'
@@ -37,6 +38,7 @@ const STATUS_PILL: Record<
   pending: { kind: 'neutral', label: 'Pending' },
   cloning: { kind: 'warn', label: 'Cloning', dot: true },
   cloned: { kind: 'neutral', label: 'Cloned' },
+  pulling: { kind: 'warn', label: 'Pulling', dot: true },
   indexing: { kind: 'warn', label: 'Indexing', dot: true },
   ready: { kind: 'success', label: 'Indexed' },
   error: { kind: 'danger', label: 'Error' },
@@ -117,7 +119,31 @@ export function RepoDetailPage({ id }: { id: string }) {
   }
 
   const clone = () => runJob('Clone', () => cloneRepo(repo.id))
+  const pull = () => runJob('Pull', () => pullRepo(repo.id))
   const reindex = () => runJob('Re-index', () => indexRepo(repo.id))
+
+  // Re-clone is destructive: it wipes `<source>/.gitnexus/` along with
+  // the source tree, forcing a full re-embed. `Pull` is the cheap path
+  // for "update from remote"; this button stays as the explicit
+  // "rebuild from scratch" gesture for when the source tree is broken.
+  const reclone = async () => {
+    const confirmed = await confirmDialog({
+      title: `Re-clone “${shortRepoName(repo.remoteUrl)}”?`,
+      body:
+        'Re-clone wipes the local source tree and the embedding cache, ' +
+        'then re-clones from scratch. Use Pull if you just want to fetch ' +
+        'the latest commits — it preserves embeddings.',
+      confirmLabel: 'Re-clone',
+      destructive: true,
+    })
+    if (!confirmed) return
+    await runJob('Clone', () => cloneRepo(repo.id))
+  }
+
+  // First-time clones don't have a source/ tree yet, so Pull isn't an
+  // option until the initial clone lands. After that, Pull is the
+  // primary refresh action and Re-clone is the destructive escape hatch.
+  const hasBeenCloned = repo.status !== 'pending'
 
   const remove = async () => {
     const body =
@@ -174,13 +200,23 @@ export function RepoDetailPage({ id }: { id: string }) {
           </div>
         </div>
         <div className="ab-page-actions">
-          <Button
-            variant="secondary"
-            onClick={clone}
-            disabled={running !== null}
-          >
-            {running === 'Clone' ? 'Cloning…' : 'Clone'}
-          </Button>
+          {hasBeenCloned ? (
+            <Button
+              variant="secondary"
+              onClick={pull}
+              disabled={running !== null}
+            >
+              {running === 'Pull' ? 'Pulling…' : 'Pull'}
+            </Button>
+          ) : (
+            <Button
+              variant="secondary"
+              onClick={clone}
+              disabled={running !== null}
+            >
+              {running === 'Clone' ? 'Cloning…' : 'Clone'}
+            </Button>
+          )}
           <Button
             variant="secondary"
             onClick={reindex}
@@ -188,6 +224,15 @@ export function RepoDetailPage({ id }: { id: string }) {
           >
             {running === 'Re-index' ? 'Indexing…' : 'Re-index'}
           </Button>
+          {hasBeenCloned && (
+            <Button
+              variant="secondary"
+              onClick={reclone}
+              disabled={running !== null}
+            >
+              {running === 'Clone' ? 'Cloning…' : 'Re-clone'}
+            </Button>
+          )}
           {repo.indexSummary && (
             <Button
               variant="secondary"

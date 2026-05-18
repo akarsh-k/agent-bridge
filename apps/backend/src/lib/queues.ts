@@ -21,10 +21,12 @@ import {
   deleteRepoJobSchema,
   generateWikiJobSchema,
   indexRepoJobSchema,
+  pullRepoJobSchema,
   type CloneRepoJob,
   type DeleteRepoJob,
   type GenerateWikiJob,
   type IndexRepoJob,
+  type PullRepoJob,
   type QueueName,
 } from '@agent-bridge/shared'
 import { env } from '../env.js'
@@ -72,6 +74,30 @@ export async function enqueueCloneRepo(
   const job = await queue.add(`clone:${payload.repoId}`, payload, {
     // One retry on transient failures; matches the worker's default config.
     // Long backoff gives git credential helpers time to re-settle.
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 2_000 },
+    removeOnComplete: { age: 24 * 3_600, count: 200 },
+    removeOnFail: { age: 7 * 24 * 3_600 },
+  })
+  return { jobId: String(job.id ?? 'unknown') }
+}
+
+/**
+ * Enqueue a `pullRepo` job. The worker refreshes the existing
+ * `source/` tree via `git fetch --depth=1 + git reset --hard` and
+ * auto-chains into an incremental `gitnexus analyze`. Preserves
+ * `<source>/.gitnexus/` so the embeddings + graph cache survive.
+ *
+ * Retries = 2 to absorb a transient network blip on the fetch step —
+ * the reset step is local and fails deterministically. Same backoff
+ * as the clone queue.
+ */
+export async function enqueuePullRepo(
+  input: PullRepoJob,
+): Promise<{ jobId: string }> {
+  const payload = pullRepoJobSchema.parse(input)
+  const queue = getQueue(QUEUE_NAMES.pullRepo)
+  const job = await queue.add(`pull:${payload.repoId}`, payload, {
     attempts: 2,
     backoff: { type: 'exponential', delay: 2_000 },
     removeOnComplete: { age: 24 * 3_600, count: 200 },

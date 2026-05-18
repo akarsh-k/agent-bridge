@@ -13,6 +13,19 @@
  *                                        worker is the sole owner and a
  *                                        duplicate job would race.
  *
+ *   POST /api/repos/:id/pull
+ *     202 { ok: true, jobId, streamId: 'repo:<uuid>' }
+ *       → cheap refresh. Row flipped `cloned|ready|error → pulling`. Worker
+ *         runs `git fetch --depth=1 + git reset --hard origin/<branch>`
+ *         in-place, preserving `<source>/.gitnexus/` so the auto-chained
+ *         `gitnexus analyze` is incremental (only walks files whose
+ *         content/mtime changed).
+ *     404                              — repo not found
+ *     409                              — row in a state that can't
+ *                                        transition to pulling (pending
+ *                                        has no source/ yet; cloning|
+ *                                        pulling|indexing are in flight).
+ *
  *   POST /api/repos/:id/index
  *     202 { ok: true, jobId, streamId: 'repo:<uuid>' }
  *       → manual re-index. Row flipped `cloned|ready|error → indexing`.
@@ -61,6 +74,7 @@ import {
   enqueueCloneRepo,
   enqueueGenerateWiki,
   enqueueIndexRepo,
+  enqueuePullRepo,
 } from '../lib/queues.js'
 
 export const repoJobsRouter = new Hono().post(
@@ -143,6 +157,97 @@ export const repoJobsRouter = new Hono().post(
     }
   },
 )
+  // ─── POST /api/repos/:id/pull ────────────────────────────────────────────
+  .post(
+    '/:id/pull',
+    zValidator('param', repoIdParamSchema, (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    }),
+    async (c) => {
+      const { id } = c.req.valid('param')
+      const handle = getDb()
+
+      const row = await reposRepo.getForWorker(handle, id)
+      if (!row) {
+        return httpError(c, {
+          code: 'not_found',
+          message: `repo ${id} not found`,
+        })
+      }
+
+      // Friendlier error messages than markPulling's bare CAS-loss bucket.
+      // Each branch names the actual blocker so the UI can word the toast
+      // ("indexing is holding the tree" vs "already pulling") without
+      // string-parsing the generic 409.
+      if (row.status === 'pulling') {
+        return httpError(c, {
+          code: 'conflict',
+          message: `repo ${id} is already pulling`,
+        })
+      }
+      if (row.status === 'cloning') {
+        return httpError(c, {
+          code: 'conflict',
+          message: `repo ${id} is cloning; wait for it to finish before pulling`,
+        })
+      }
+      if (row.status === 'indexing') {
+        return httpError(c, {
+          code: 'conflict',
+          message:
+            `repo ${id} is indexing; wait for the analyze pass to finish ` +
+            `before pulling`,
+        })
+      }
+      // markPulling's CAS only accepts cloned | ready | error — `pending`
+      // means no clone has ever succeeded, so there's no source/ to update.
+      if (row.status !== 'cloned' && row.status !== 'ready' && row.status !== 'error') {
+        return httpError(c, {
+          code: 'conflict',
+          message:
+            `repo ${id} is ${row.status}; pull requires a completed clone first`,
+        })
+      }
+
+      const updated = await reposRepo.markPulling(handle, id)
+      if (!updated) {
+        return httpError(c, {
+          code: 'conflict',
+          message: `repo ${id} transitioned out from under us; retry`,
+        })
+      }
+
+      try {
+        const { jobId } = await enqueuePullRepo({
+          repoId: updated.id,
+          remoteUrl: updated.remoteUrl,
+          branch: updated.branch,
+          hasPat: Boolean(updated.gitPatEnvelope),
+        })
+        return c.json(
+          {
+            ok: true as const,
+            jobId,
+            streamId: repoStreamId(updated.id),
+          },
+          202,
+        )
+      } catch (err) {
+        // Enqueue failed after we flipped to pulling — best-effort revert
+        // to error so the UI isn't stuck on "pulling" forever.
+        const message = err instanceof Error ? err.message : String(err)
+        await reposRepo.finishPull(handle, updated.id, {
+          status: 'error',
+          lastError: `Failed to enqueue pull job: ${message}`,
+        })
+        return httpError(c, {
+          code: 'internal',
+          message: `Failed to enqueue pull job: ${message}`,
+        })
+      }
+    },
+  )
   // ─── POST /api/repos/:id/index ───────────────────────────────────────────
   .post(
     '/:id/index',

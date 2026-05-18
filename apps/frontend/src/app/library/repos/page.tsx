@@ -17,13 +17,14 @@ import { confirmDialog } from '../../../ui/dialog-store'
 import { toast } from '../../../ui/toast-store'
 import { ApiError } from '../../../lib/rpc'
 
-// Dot only on truly live, in-flight states (`cloning`, `indexing`); the
-// terminal labels (`pending`, `cloned`, `ready`, `error`) stay static so
-// the row reads as resolved at a glance.
+// Dot only on truly live, in-flight states (`cloning`, `pulling`,
+// `indexing`); the terminal labels (`pending`, `cloned`, `ready`,
+// `error`) stay static so the row reads as resolved at a glance.
 const STATUS_PILL: Record<string, { kind: PillKind; label: string; dot?: boolean }> = {
   pending: { kind: 'neutral', label: 'Pending' },
   cloning: { kind: 'warn', label: 'Cloning', dot: true },
   cloned: { kind: 'neutral', label: 'Cloned' },
+  pulling: { kind: 'warn', label: 'Pulling', dot: true },
   indexing: { kind: 'warn', label: 'Indexing', dot: true },
   ready: { kind: 'success', label: 'Indexed' },
   error: { kind: 'danger', label: 'Error' },

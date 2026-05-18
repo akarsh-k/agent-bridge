@@ -11,6 +11,7 @@ import { closeEventBus } from './event-bus.js'
 import { QUEUE_NAMES } from './queues.js'
 import { handlePingJob } from './jobs/ping.js'
 import { handleCloneRepoJob } from './jobs/clone-repo.js'
+import { handlePullRepoJob } from './jobs/pull-repo.js'
 import { handleIndexRepoJob } from './jobs/index-repo.js'
 import { handleGenerateWikiJob } from './jobs/generate-wiki.js'
 import { makeDeleteRepoHandler } from './jobs/delete-repo.js'
@@ -137,6 +138,38 @@ async function main(): Promise<void> {
     )
   })
 
+  // ── pull-repo ─────────────────────────────────────────────────────────
+  // Concurrency 1 for the same reason as clone-repo: serialised disk +
+  // network. The pull job mutates `source/` in place via fetch+reset
+  // (preserving `<source>/.gitnexus/` so the auto-chained analyze is
+  // incremental) — much cheaper than a re-clone, but still I/O bound.
+  const pullRepoQueue = new Queue(QUEUE_NAMES.pullRepo, {
+    connection: createRedisConnection({ role: 'queue' }),
+    defaultJobOptions: {
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 2_000 },
+      removeOnComplete: { age: 24 * 3_600, count: 200 },
+      removeOnFail: { age: 7 * 24 * 3_600 },
+    },
+  })
+
+  const pullRepoWorker = new Worker(QUEUE_NAMES.pullRepo, handlePullRepoJob, {
+    connection: createRedisConnection({ role: 'worker' }),
+    concurrency: 1,
+  })
+
+  pullRepoWorker.on('ready', () => {
+    console.info(`[worker:${QUEUE_NAMES.pullRepo}] ready (concurrency=1)`)
+  })
+  pullRepoWorker.on('completed', (job) => {
+    console.info(`[worker:${QUEUE_NAMES.pullRepo}] completed job ${job.id}`)
+  })
+  pullRepoWorker.on('failed', (job, err) => {
+    console.error(
+      `[worker:${QUEUE_NAMES.pullRepo}] job ${job?.id ?? '<unknown>'} failed: ${err.message}`,
+    )
+  })
+
   // ── index-repo ────────────────────────────────────────────────────────
   // Concurrency 1: `gitnexus analyze` is CPU-heavy (tree-sitter, embeddings
   // when enabled later) and writes into a shared gitnexus-home cache
@@ -248,6 +281,7 @@ async function main(): Promise<void> {
     makeDeleteRepoHandler({
       siblingQueues: {
         cloneRepo: cloneRepoQueue,
+        pullRepo: pullRepoQueue,
         indexRepo: indexRepoQueue,
         generateWiki: generateWikiQueue,
       },
@@ -273,6 +307,7 @@ async function main(): Promise<void> {
   const workers = [
     pingWorker,
     cloneRepoWorker,
+    pullRepoWorker,
     indexRepoWorker,
     generateWikiWorker,
     deleteRepoWorker,
@@ -280,6 +315,7 @@ async function main(): Promise<void> {
   const queues = [
     pingQueue,
     cloneRepoQueue,
+    pullRepoQueue,
     indexRepoQueue,
     generateWikiQueue,
     deleteRepoQueue,

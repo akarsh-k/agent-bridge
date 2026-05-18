@@ -77,6 +77,11 @@ function emptyPhases(): PhaseState[] {
 
 function phaseFromKind(kind: string): PhaseId | null {
   if (kind.startsWith('repo.clone.')) return 'clone'
+  // Pull occupies the same lifecycle slot as clone (the "get the source
+  // tree current" phase). Folding it into the `clone` chip keeps the
+  // 4-chip layout stable across both refresh modes; the log feed below
+  // still labels the rows as Pull/Clone correctly via event-labels.ts.
+  if (kind.startsWith('repo.pull.')) return 'clone'
   if (kind.startsWith('repo.index.')) return 'index'
   if (kind.startsWith('repo.embed.')) return 'embed'
   if (kind.startsWith('repo.wiki.')) return 'wiki'

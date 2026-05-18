@@ -30,6 +30,30 @@ export const cloneRepoJobSchema = z
 export type CloneRepoJob = z.infer<typeof cloneRepoJobSchema>
 
 /**
+ * `pullRepo` job payload — kicked off by `POST /api/repos/:id/pull`.
+ * The worker runs `git fetch --depth=1 origin <branch>` followed by
+ * `git reset --hard origin/<branch>` against the existing `source/`
+ * tree, preserving `<source>/.gitnexus/` so the auto-chained `gitnexus
+ * analyze` is incremental.
+ *
+ * Same secret-handling discipline as `cloneRepoJobSchema`: only the
+ * `repoId` is durable on Redis; the worker re-fetches the row and
+ * decrypts the PAT envelope at spawn time so no plaintext ever lands on
+ * a BullMQ job record. `hasPat` is a boolean hint so the worker can
+ * fast-fail on a missing PAT instead of discovering it mid-fetch.
+ */
+export const pullRepoJobSchema = z
+  .object({
+    repoId: z.uuid(),
+    remoteUrl: z.string().min(1),
+    branch: z.string().min(1),
+    hasPat: z.boolean(),
+  })
+  .strict()
+
+export type PullRepoJob = z.infer<typeof pullRepoJobSchema>
+
+/**
  * `indexRepo` job payload — kicked off either by the clone worker (on
  * successful clone; `mode='initial'`) or by the `POST /api/repos/:id/index`
  * backend route (manual re-index or retry-after-error; `mode='reindex'`).

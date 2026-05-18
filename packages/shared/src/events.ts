@@ -57,6 +57,18 @@ export const runEventKinds = [
   'repo.clone.progress',
   'repo.clone.ok',
   'repo.clone.fail',
+  /**
+   * Repo refresh lifecycle. Runs `git fetch --depth=1 origin <branch>`
+   * + `git reset --hard origin/<branch>` against the existing
+   * `source/` tree. Cheaper than a re-clone because `<source>/.gitnexus/`
+   * survives, so the auto-chained `gitnexus analyze` only walks files
+   * whose content/mtime changed. Shares the `repo:<id>` SSE stream
+   * with clone/index/wiki/delete.
+   */
+  'repo.pull.started',
+  'repo.pull.progress',
+  'repo.pull.ok',
+  'repo.pull.fail',
   'repo.index.started',
   'repo.index.progress',
   'repo.index.ok',
@@ -204,6 +216,41 @@ export interface RepoCloneOkPayload {
 }
 
 export interface RepoCloneFailPayload {
+  readonly repoId: string
+  readonly message: string
+  readonly exitCode?: number
+}
+
+// ─── `repo.pull.*` payload shapes ─────────────────────────────────────────
+//
+// Same shape as the clone payloads; kept as a distinct namespace so the
+// Logs UI can render a "Pull" phase chip separate from "Clone" and the
+// activity feed can label the gesture correctly.
+
+export interface RepoPullStartedPayload {
+  readonly repoId: string
+  readonly remoteUrl: string
+  readonly branch: string
+}
+
+/** One git progress line, forwarded verbatim after secret redaction. */
+export interface RepoPullProgressPayload {
+  readonly repoId: string
+  readonly line: string
+}
+
+export interface RepoPullOkPayload {
+  readonly repoId: string
+  readonly localPath: string
+  readonly durationMs: number
+  /**
+   * SHA the source tree was reset to. Surfaced to the UI so operators
+   * can confirm what they pulled; also handy for log forensics.
+   */
+  readonly headSha: string
+}
+
+export interface RepoPullFailPayload {
   readonly repoId: string
   readonly message: string
   readonly exitCode?: number

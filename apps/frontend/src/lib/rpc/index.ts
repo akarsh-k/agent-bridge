@@ -198,6 +198,25 @@ export async function cloneRepo(
   return { jobId: res.jobId, streamId: res.streamId }
 }
 
+/**
+ * Cheap refresh from the remote. Runs git fetch + reset against the
+ * existing source tree, preserving `<source>/.gitnexus/` so the
+ * auto-chained `gitnexus analyze` only re-embeds files that actually
+ * changed. The destructive alternative is `cloneRepo`, which wipes
+ * source/ (and the embedding cache with it).
+ */
+export async function pullRepo(
+  repoId: string,
+): Promise<RepoJobStartResponse> {
+  const res = await callApi<{ ok: true } & RepoJobStartResponse>(
+    fetch(`${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/pull`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    }),
+  )
+  return { jobId: res.jobId, streamId: res.streamId }
+}
+
 export async function indexRepo(
   repoId: string,
 ): Promise<RepoJobStartResponse> {
@@ -457,18 +476,18 @@ export async function getBridgeConfig(): Promise<BridgeConfigResponse> {
 }
 
 /**
- * List recent worker jobs (clone / index / wiki) across the
+ * List recent worker jobs (clone / pull / index / wiki) across the
  * workspace, newest-first. Powers the /logs page's worker rows.
  *
  * Optional filters mirror the backend's query schema. `repoId`
  * narrows to one repo's history, `jobKind` to one of clone /
- * index / wiki.
+ * pull / index / wiki.
  */
 export async function listWorkerJobs(
   query: {
     readonly limit?: number
     readonly repoId?: string
-    readonly jobKind?: 'clone' | 'index' | 'wiki'
+    readonly jobKind?: 'clone' | 'pull' | 'index' | 'wiki'
   } = {},
 ): Promise<import('@agent-bridge/shared').WorkerJobListResponse> {
   const params = new URLSearchParams()

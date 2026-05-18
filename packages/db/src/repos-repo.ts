@@ -12,8 +12,15 @@
  *                       │                       └─► error
  *                       └─► error
  *
- *   [any terminal] ─► cloning  (re-clone)
- *   cloned | ready | error ─► indexing  (manual re-index or auto after clone)
+ *   [any terminal] ─► cloning  (re-clone — destructive: wipes source/)
+ *   cloned | ready | error ─► pulling ─┬─► cloned (auto-chain → indexing)
+ *                                      └─► error
+ *   cloned | ready | error ─► indexing  (manual re-index or auto after clone/pull)
+ *
+ * `pulling` runs `git fetch + reset` against the existing source/ tree
+ * (preserving `<source>/.gitnexus/` so the next analyze pass is
+ * incremental). Re-clone is still the explicit "rebuild from scratch"
+ * gesture and remains destructive.
  *
  * `lastIndexedAt` is stamped by `finishIndex` on success. `localPath` is
  * the absolute path to the finished `source/` directory; cleared back to
@@ -181,6 +188,89 @@ export async function hardDelete(
     .where(eq(repos.id, repoId))
     .returning({ id: repos.id })
   return Boolean(row)
+}
+
+// ─── pulling ─────────────────────────────────────────────────────────────
+
+/**
+ * Flip a repo row from `cloned | ready | error` → `pulling`. The pull
+ * path runs `git fetch --depth=1 origin <branch> && git reset --hard
+ * origin/<branch>` against the existing `source/` tree, preserving
+ * `<source>/.gitnexus/` so the auto-chained `gitnexus analyze` only
+ * re-walks files whose content/mtime changed.
+ *
+ * Disallows `pending` (no source tree to update) and `cloning|indexing|pulling`
+ * (in-flight worker is touching the tree). `lastError` is cleared on
+ * success — a stale error from a previous failed pull/index shouldn't
+ * linger across a fresh attempt. `localPath` is NOT cleared (the source
+ * tree is still readable while we fetch into it; the UI continues to
+ * show paths during a pull, unlike a destructive re-clone).
+ *
+ * Returns the updated row, or `null` if the CAS lost.
+ */
+export async function markPulling(
+  handle: AgentBridgeDb,
+  repoId: string,
+): Promise<RepoRow | null> {
+  const [row] = await handle.db
+    .update(repos)
+    .set({
+      status: 'pulling',
+      lastError: null,
+      updatedAt: sql`now()`,
+    })
+    .where(
+      and(
+        eq(repos.id, repoId),
+        inArray(repos.status, ['cloned', 'ready', 'error']),
+      ),
+    )
+    .returning()
+
+  return row ?? null
+}
+
+export type PullResult =
+  | { readonly status: 'cloned' }
+  | { readonly status: 'error'; readonly lastError: string }
+
+/**
+ * Terminal transition from `pulling` → `cloned | error`. Worker-only,
+ * mirrors `finishClone`. Lands the row at `cloned` on success so the
+ * existing clone→index auto-chain hook applies — the worker flips to
+ * `indexing` via `markIndexing` and enqueues the incremental analyze.
+ *
+ * Failure leaves `localPath` intact: the previous source tree is still
+ * usable for agents even if a refresh failed. Only `lastError` updates.
+ */
+export async function finishPull(
+  handle: AgentBridgeDb,
+  repoId: string,
+  result: PullResult,
+): Promise<RepoRow | null> {
+  if (result.status === 'cloned') {
+    const [row] = await handle.db
+      .update(repos)
+      .set({
+        status: 'cloned',
+        lastError: null,
+        updatedAt: sql`now()`,
+      })
+      .where(eq(repos.id, repoId))
+      .returning()
+    return row ?? null
+  }
+
+  const [row] = await handle.db
+    .update(repos)
+    .set({
+      status: 'error',
+      lastError: result.lastError,
+      updatedAt: sql`now()`,
+    })
+    .where(eq(repos.id, repoId))
+    .returning()
+  return row ?? null
 }
 
 // ─── indexing ────────────────────────────────────────────────────────────

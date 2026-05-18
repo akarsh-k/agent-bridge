@@ -28,7 +28,7 @@ import {
   type WorkerJobRow,
 } from './schema.js'
 
-export type WorkerJobKind = 'clone' | 'index' | 'wiki'
+export type WorkerJobKind = 'clone' | 'pull' | 'index' | 'wiki'
 export type WorkerJobStatus = 'running' | 'completed' | 'error' | 'aborted'
 
 export interface CreateWorkerJobInput {

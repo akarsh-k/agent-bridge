@@ -24,7 +24,7 @@ export const workerJobStatuses = [
 export type WorkerJobStatus = (typeof workerJobStatuses)[number]
 
 /** Job kind — which worker entrypoint produced it. */
-export const workerJobKinds = ['clone', 'index', 'wiki'] as const
+export const workerJobKinds = ['clone', 'pull', 'index', 'wiki'] as const
 export type WorkerJobKind = (typeof workerJobKinds)[number]
 
 export const workerJobListRowSchema = z.object({
@@ -50,7 +50,7 @@ export const workerJobListQuerySchema = z
     limit: z.coerce.number().int().min(1).max(100).optional(),
     /** Filter to one repo's history. */
     repoId: z.uuid().optional(),
-    /** Filter to one job kind (clone/index/wiki). */
+    /** Filter to one job kind (clone/pull/index/wiki). */
     jobKind: z.enum(workerJobKinds).optional(),
   })
   .strict()

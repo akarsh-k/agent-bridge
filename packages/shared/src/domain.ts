@@ -87,6 +87,7 @@ export const repoStatuses = [
   'pending',
   'cloning',
   'cloned',
+  'pulling',
   'indexing',
   'ready',
   'error',

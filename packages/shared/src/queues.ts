@@ -15,6 +15,7 @@
 export const QUEUE_NAMES = {
   ping: 'agent-bridge.ping',
   cloneRepo: 'agent-bridge.clone-repo',
+  pullRepo: 'agent-bridge.pull-repo',
   indexRepo: 'agent-bridge.index-repo',
   generateWiki: 'agent-bridge.generate-wiki',
   deleteRepo: 'agent-bridge.delete-repo',

@@ -81,6 +81,7 @@ export interface DeleteRepoJobDeps {
    */
   readonly siblingQueues: {
     readonly cloneRepo: Queue
+    readonly pullRepo: Queue
     readonly indexRepo: Queue
     readonly generateWiki: Queue
   }
@@ -193,6 +194,7 @@ async function waitForInFlightJobs(args: {
   const startedAt = Date.now()
   const queueList = [
     { name: QUEUE_NAMES.cloneRepo, queue: queues.cloneRepo },
+    { name: QUEUE_NAMES.pullRepo, queue: queues.pullRepo },
     { name: QUEUE_NAMES.indexRepo, queue: queues.indexRepo },
     { name: QUEUE_NAMES.generateWiki, queue: queues.generateWiki },
   ] as const

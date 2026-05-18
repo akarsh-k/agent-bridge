@@ -427,6 +427,15 @@ export function summarizeEvent(
     case 'repo.clone.fail':
       return workerFail('Clone failed', str(p['message']))
 
+    case 'repo.pull.started':
+      return workerStarted('Pulling', str(p['remoteUrl']) ?? str(p['branch']))
+    case 'repo.pull.progress':
+      return workerProgress('Pull progress', str(p['line']))
+    case 'repo.pull.ok':
+      return workerOk('Pull done', num(p['durationMs']))
+    case 'repo.pull.fail':
+      return workerFail('Pull failed', str(p['message']))
+
     case 'repo.index.started':
       return workerStarted('Indexing', str(p['mode']))
     case 'repo.index.progress':

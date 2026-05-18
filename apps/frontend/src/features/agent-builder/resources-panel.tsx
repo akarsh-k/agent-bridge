@@ -38,6 +38,7 @@ const REPO_STATUS_PILL: Record<
   pending: { kind: 'neutral', label: 'Pending' },
   cloning: { kind: 'warn', label: 'Cloning' },
   cloned: { kind: 'neutral', label: 'Cloned' },
+  pulling: { kind: 'warn', label: 'Pulling' },
   indexing: { kind: 'warn', label: 'Indexing' },
   ready: { kind: 'success', label: 'Indexed' },
   error: { kind: 'danger', label: 'Error' },
