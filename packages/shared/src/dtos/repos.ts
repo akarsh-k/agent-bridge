@@ -116,6 +116,53 @@ export const repoCreateInputSchema = z
 export type RepoCreateInput = z.infer<typeof repoCreateInputSchema>
 
 /**
+ * Structured `details` payload returned alongside a `validation_failed`
+ * error from `POST /api/repos` when the requested branch doesn't exist
+ * on the remote. The frontend narrows on `kind` to decide whether to
+ * render a branch picker or a "repo unreachable" message.
+ *
+ *   branch_not_found  — `git ls-remote` succeeded but the chosen branch
+ *                       isn't in the response. `branches` lists every
+ *                       remote head; `suggestedBranch` is the remote's
+ *                       default (HEAD symref target) when available.
+ *   repo_unreachable  — `git ls-remote` failed before we could read any
+ *                       branches. `reason` is one of auth | not_found |
+ *                       network | timeout | unknown; `stderr` carries
+ *                       the redacted git error for diagnostics.
+ */
+export const repoBranchValidationFailureSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('branch_not_found'),
+      requestedBranch: z.string(),
+      /**
+       * Branch names visible to the operator, sorted with the remote's
+       * default + common conventions first then alphabetical. Capped at
+       * a fixed size (see `truncated`/`total`) so the response stays
+       * bounded for mirror-style repos with thousands of branches.
+       */
+      branches: z.array(z.string()),
+      /** True when the remote has more branches than `branches.length`. */
+      truncated: z.boolean(),
+      /** Total branches advertised by the remote, regardless of cap. */
+      total: z.number().int().nonnegative(),
+      suggestedBranch: z.string().nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal('repo_unreachable'),
+      reason: z.enum(['auth', 'not_found', 'network', 'timeout', 'unknown']),
+      stderr: z.string(),
+    })
+    .strict(),
+])
+
+export type RepoBranchValidationFailure = z.infer<
+  typeof repoBranchValidationFailureSchema
+>
+
+/**
  * PATCH /api/repos/:id body. Only the secret is user-editable. Everything
  * else (status/paths/index timestamps) belongs to the worker.
  */

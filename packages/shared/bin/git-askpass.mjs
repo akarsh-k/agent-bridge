@@ -5,13 +5,16 @@
  * etc. — we never supply those here).
  *
  * Security model:
- *   - The PAT itself never touches disk. It's injected into this process's
- *     env via the worker's `spawnSandboxed({ env: { AGENT_BRIDGE_GIT_PAT }})`
- *     call, lives only as long as the child, and is cleared by node on exit.
+ *   - The PAT itself never touches disk. It's injected into the child's
+ *     env via `spawnSandboxed({ env: { AGENT_BRIDGE_GIT_PAT }})`, lives
+ *     only as long as the child, and is cleared by node on exit.
  *   - This script is short enough to audit in one sitting; keep it that way.
- *     Anything more complex belongs in TypeScript inside the job handler.
- *   - `.mjs` so we inherit the worker's strict Node ESM parser without
- *     needing a `package.json` override under `apps/worker/bin/`.
+ *     Anything more complex belongs in TypeScript inside the calling job
+ *     handler or HTTP route.
+ *   - `.mjs` so we inherit a strict Node ESM parser without needing a
+ *     local `package.json` override.
+ *   - Co-located in `@agent-bridge/shared/bin` so worker (clone/pull) and
+ *     backend (pre-clone ls-remote validation) resolve the same script.
  *
  * Invocation contract (set by git):
  *   argv[2] is the prompt string — e.g. "Password for 'https://user@host': ".

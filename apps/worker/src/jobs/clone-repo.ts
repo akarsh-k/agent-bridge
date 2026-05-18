@@ -1,6 +1,5 @@
 import { promises as fs, existsSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { Job } from 'bullmq'
 
 import { reposRepo, workerJobsRepo } from '@agent-bridge/db'
@@ -15,6 +14,7 @@ import {
   type RunEvent,
 } from '@agent-bridge/shared'
 import { decryptSecret } from '@agent-bridge/shared/crypto'
+import { getGitAskpassPath } from '@agent-bridge/shared/git-remote'
 import {
   ensureDataDirs,
   repoSourceDir,
@@ -38,7 +38,7 @@ import { makeProgressThrottle } from './progress-throttle.js'
  *   4. Spawn `git clone --depth 1 --single-branch --branch <b> <url>
  *      source.tmp/` with:
  *        - sandbox: 'git' (HOME clamp, config isolation, no terminal prompt)
- *        - env.GIT_ASKPASS: our helper (bin/git-askpass.mjs)
+ *        - env.GIT_ASKPASS: shared helper (@agent-bridge/shared/git-remote)
  *        - env.AGENT_BRIDGE_GIT_PAT: the plaintext PAT (child only)
  *   5. Stream stderr → `repo.clone.progress` (one event per line),
  *      redacted against the PAT.
@@ -272,16 +272,6 @@ export interface CloneRepoJobResult {
 
 // ─── git clone plumbing ───────────────────────────────────────────────────
 
-/**
- * Resolve the absolute path to `bin/git-askpass.mjs`. Dev (tsx) and prod
- * (node dist/) both keep `src`/`dist` as siblings of `bin/`, so `../..`
- * from either `src/jobs/` or `dist/jobs/` lands on the worker app root.
- */
-function askpassScriptPath(): string {
-  const here = fileURLToPath(import.meta.url)
-  return path.resolve(path.dirname(here), '..', '..', 'bin', 'git-askpass.mjs')
-}
-
 interface RunGitCloneArgs {
   readonly remoteUrl: string
   readonly branch: string
@@ -292,7 +282,7 @@ interface RunGitCloneArgs {
 
 async function runGitClone(args: RunGitCloneArgs): Promise<void> {
   const { remoteUrl, branch, targetDir, patPlaintext, onStderrLine } = args
-  const askpass = askpassScriptPath()
+  const askpass = getGitAskpassPath()
   if (!existsSync(askpass)) {
     throw new Error(`GIT_ASKPASS helper not found at ${askpass}`)
   }

@@ -38,10 +38,15 @@ import {
   repoIdParamSchema,
   repoResponseSchema,
   repoUpdateInputSchema,
+  type RepoBranchValidationFailure,
   type RepoIndexSummary,
   type RepoResponse,
 } from '@agent-bridge/shared'
 import { readIndexSummary } from '@agent-bridge/shared/gitnexus'
+import {
+  GitRemoteError,
+  lsRemoteBranches,
+} from '@agent-bridge/shared/git-remote'
 import { repoSourceDir } from '@agent-bridge/shared/paths'
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
@@ -109,6 +114,57 @@ async function loadIndexSummary(
 
 const DEFAULT_BRANCH = 'main'
 
+/**
+ * Hard ceiling on the branches array we return in the validation-failure
+ * details. Realistic repos sit well under this; mirror repos that proxy
+ * for-all-the-things refs (CDN forks, monorepo automation branches) can
+ * easily exceed it, and there's no point shipping 5k strings across the
+ * wire when the UI is going to render a typeahead anyway.
+ *
+ * The frontend surfaces `truncated=true` as a "type to find others" hint
+ * so the operator can still enter a branch outside the cap by typing it.
+ */
+const MAX_BRANCHES_IN_DETAILS = 500
+
+const COMMON_DEFAULT_BRANCHES: readonly string[] = [
+  'main',
+  'master',
+  'develop',
+  'dev',
+  'trunk',
+]
+
+/**
+ * Sort branches with the remote's actual HEAD first, then well-known
+ * default-branch names, then alphabetical. Putting these at the top
+ * makes the picker land on the right answer for ~all repos without the
+ * user reaching for the search input — `git ls-remote` itself returns
+ * branches in SHA order, which is meaningless for a human.
+ */
+function rankBranches(
+  branches: readonly string[],
+  headBranch: string | null,
+): string[] {
+  const seen = new Set<string>()
+  const ordered: string[] = []
+
+  const push = (name: string): void => {
+    if (seen.has(name)) return
+    seen.add(name)
+    ordered.push(name)
+  }
+
+  if (headBranch && branches.includes(headBranch)) push(headBranch)
+  for (const candidate of COMMON_DEFAULT_BRANCHES) {
+    if (branches.includes(candidate)) push(candidate)
+  }
+  const rest = [...branches]
+    .filter((b) => !seen.has(b))
+    .sort((a, b) => a.localeCompare(b))
+  for (const b of rest) push(b)
+  return ordered
+}
+
 export const reposRouter = new Hono()
   // ─── POST /api/repos ─────────────────────────────────────────────────────
   .post(
@@ -156,6 +212,76 @@ export const reposRouter = new Hono()
           },
           200,
         )
+      }
+
+      // Validate the branch against the remote BEFORE we insert. This
+      // catches the common "user typed `main` but the remote default is
+      // `master`" case at the source — without it, the clone worker
+      // dequeues, runs `git clone --branch <missing>`, and fails with
+      // exit 128 hundreds of milliseconds later, with the actual
+      // diagnostic line (`fatal: Remote branch X not found …`) usually
+      // eaten by the worker's progress throttle. The structured details
+      // payload (kind=branch_not_found) carries the full branch list so
+      // the UI can render a picker, or (kind=repo_unreachable) the
+      // classified failure for an inline message.
+      const patForLsRemote =
+        body.gitPat?.action === 'set' ? body.gitPat.plaintext : null
+      try {
+        const remote = await lsRemoteBranches({
+          remoteUrl: body.remoteUrl,
+          patPlaintext: patForLsRemote,
+        })
+        if (!remote.branches.includes(branch)) {
+          const ranked = rankBranches(remote.branches, remote.headBranch)
+          const total = remote.branches.length
+          const truncated = ranked.length > MAX_BRANCHES_IN_DETAILS
+          const details: RepoBranchValidationFailure = {
+            kind: 'branch_not_found',
+            requestedBranch: branch,
+            branches: ranked.slice(0, MAX_BRANCHES_IN_DETAILS),
+            truncated,
+            total,
+            suggestedBranch: remote.headBranch,
+          }
+          return httpError(c, {
+            code: 'validation_failed',
+            message:
+              `branch "${branch}" does not exist on ${body.remoteUrl}. ` +
+              (remote.headBranch
+                ? `Remote default is "${remote.headBranch}".`
+                : `Pick one of: ${ranked.slice(0, 5).join(', ')}.`),
+            details,
+          })
+        }
+      } catch (err) {
+        if (err instanceof GitRemoteError) {
+          const details: RepoBranchValidationFailure = {
+            kind: 'repo_unreachable',
+            reason: err.kind,
+            // Redact PAT plaintext if we have it — the askpass helper
+            // never echoes it to stderr in practice, but defence in
+            // depth is cheap.
+            stderr: patForLsRemote
+              ? err.stderr.split(patForLsRemote).join('***')
+              : err.stderr,
+          }
+          const message =
+            err.kind === 'auth'
+              ? `authentication failed for ${body.remoteUrl} — check the PAT`
+              : err.kind === 'not_found'
+                ? `${body.remoteUrl} not found or not accessible with the supplied credentials`
+                : err.kind === 'network'
+                  ? `couldn't reach ${body.remoteUrl} (network error)`
+                  : err.kind === 'timeout'
+                    ? `git ls-remote against ${body.remoteUrl} timed out`
+                    : `git ls-remote against ${body.remoteUrl} failed`
+          return httpError(c, {
+            code: 'validation_failed',
+            message,
+            details,
+          })
+        }
+        throw err
       }
 
       const gitPatEnvelope = applySecretInputForCreate(body.gitPat)

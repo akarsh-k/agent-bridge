@@ -1,6 +1,5 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { Job } from 'bullmq'
 
 import { reposRepo, workerJobsRepo } from '@agent-bridge/db'
@@ -15,6 +14,7 @@ import {
   type RunEvent,
 } from '@agent-bridge/shared'
 import { decryptSecret } from '@agent-bridge/shared/crypto'
+import { getGitAskpassPath } from '@agent-bridge/shared/git-remote'
 import { repoSourceDir } from '@agent-bridge/shared/paths'
 import { spawnSandboxed } from '@agent-bridge/shared/spawn'
 
@@ -297,11 +297,6 @@ export interface PullRepoJobResult {
 
 // ─── git plumbing ─────────────────────────────────────────────────────────
 
-function askpassScriptPath(): string {
-  const here = fileURLToPath(import.meta.url)
-  return path.resolve(path.dirname(here), '..', '..', 'bin', 'git-askpass.mjs')
-}
-
 interface RunGitFetchArgs {
   readonly sourceDir: string
   readonly branch: string
@@ -320,7 +315,7 @@ interface RunGitFetchArgs {
  */
 async function runGitFetch(args: RunGitFetchArgs): Promise<void> {
   const { sourceDir, branch, patPlaintext, onStderrLine } = args
-  const askpass = askpassScriptPath()
+  const askpass = getGitAskpassPath()
 
   const gitArgs = [
     'fetch',

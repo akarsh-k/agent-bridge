@@ -33,6 +33,18 @@ export interface DropdownProps<V extends string = string> {
   disabled?: boolean
   className?: string
   labelId?: string
+  /**
+   * When true, render a text input above the option list so the user can
+   * filter by typing. Matching is case-insensitive substring against
+   * `option.value` (labels are `ReactNode` and can't be matched cheaply).
+   * Auto-focused on open and cleared on close.
+   *
+   * Use for option lists that can plausibly exceed ~15 entries — branches,
+   * tags, models, agents, etc. Below that, the typeahead just adds
+   * keystrokes for no benefit.
+   */
+  searchable?: boolean
+  searchPlaceholder?: string
 }
 
 export function Dropdown<V extends string = string>({
@@ -43,12 +55,22 @@ export function Dropdown<V extends string = string>({
   disabled,
   className,
   labelId,
+  searchable = false,
+  searchPlaceholder = 'Filter…',
 }: DropdownProps<V>) {
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const rootRef = useRef<HTMLDivElement | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
   const id = useId()
 
-  const close = useCallback(() => setOpen(false), [])
+  const close = useCallback(() => {
+    setOpen(false)
+    // Clear the filter so a re-open starts from the full list. Otherwise
+    // a stale query would make the next interaction show "0 matches"
+    // when the user expects the full set.
+    setQuery('')
+  }, [])
 
   useEffect(() => {
     if (!open) return
@@ -66,7 +88,20 @@ export function Dropdown<V extends string = string>({
     }
   }, [open, close])
 
+  // Focus the search input as soon as the menu opens so the user can
+  // start typing immediately. Skipped when `searchable` is false.
+  useEffect(() => {
+    if (!open || !searchable) return
+    searchInputRef.current?.focus()
+  }, [open, searchable])
+
   const selected = options.find((o) => o.value === value)
+
+  const filteredOptions = (() => {
+    if (!searchable || query.length === 0) return options
+    const needle = query.toLowerCase()
+    return options.filter((o) => o.value.toLowerCase().includes(needle))
+  })()
 
   return (
     <div
@@ -104,7 +139,24 @@ export function Dropdown<V extends string = string>({
         <ChevronDownIcon className="ab-dropdown-chev" strokeWidth={2.4} />
       </button>
       <div className="ab-dropdown-menu" role="listbox" id={`${id}-menu`}>
-        {options.map((opt) => (
+        {searchable && (
+          <input
+            ref={searchInputRef}
+            type="text"
+            className="ab-dropdown-search"
+            placeholder={searchPlaceholder}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            // Keep focus inside the popover; stop the outside-click
+            // handler from misreading a search-input click as a close
+            // gesture.
+            onMouseDown={(e) => e.stopPropagation()}
+          />
+        )}
+        {searchable && filteredOptions.length === 0 && (
+          <div className="ab-dropdown-empty">No matches</div>
+        )}
+        {filteredOptions.map((opt) => (
           <div
             key={opt.value}
             role="option"

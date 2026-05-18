@@ -60,9 +60,16 @@
       "development": "./src/version.ts",
       "import": "./dist/version.js",
       "default": "./dist/version.js"
+    },
+    "./git-remote": {
+      "types": "./src/git-remote.ts",
+      "development": "./src/git-remote.ts",
+      "import": "./dist/git-remote.js",
+      "default": "./dist/git-remote.js"
     }
   },
   "files": [
+    "bin",
     "dist",
     "src"
   ],
