@@ -272,7 +272,18 @@ export const repos = pgTable(
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
-  (t) => [uniqueIndex('repos_url_branch_uq').on(t.remoteUrl, t.branch)],
+  (t) => [
+    // Partial unique index: the (remote_url, branch) pair must be unique
+    // across *live* rows only. Soft-deleted rows (deletion_pending=true)
+    // are excluded so an operator can DELETE a repo and immediately re-ADD
+    // the same (url, branch) without racing the worker's delete-repo
+    // cleanup. Application reads already filter `deletion_pending = false`
+    // (see repos route's dedupe SELECT and reposRouter list queries), so
+    // the index condition matches the application's mental model.
+    uniqueIndex('repos_url_branch_uq')
+      .on(t.remoteUrl, t.branch)
+      .where(sql`${t.deletionPending} = false`),
+  ],
 )
 
 // ─── index summary (file-backed, no table) ───────────────────────────────

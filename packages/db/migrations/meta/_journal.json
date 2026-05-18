@@ -1,76 +1,83 @@
 {
-	"version": "7",
-	"dialect": "postgresql",
-	"entries": [
-		{
-			"idx": 0,
-			"version": "7",
-			"when": 1778253258421,
-			"tag": "0000_worried_miss_america",
-			"breakpoints": true
-		},
-		{
-			"idx": 1,
-			"version": "7",
-			"when": 1778293984855,
-			"tag": "0001_slimy_lake",
-			"breakpoints": true
-		},
-		{
-			"idx": 2,
-			"version": "7",
-			"when": 1778295630033,
-			"tag": "0002_striped_sue_storm",
-			"breakpoints": true
-		},
-		{
-			"idx": 3,
-			"version": "7",
-			"when": 1778322735996,
-			"tag": "0003_last_skullbuster",
-			"breakpoints": true
-		},
-		{
-			"idx": 4,
-			"version": "7",
-			"when": 1778381415502,
-			"tag": "0004_cultured_annihilus",
-			"breakpoints": true
-		},
-		{
-			"idx": 5,
-			"version": "7",
-			"when": 1778382250264,
-			"tag": "0005_old_ozymandias",
-			"breakpoints": true
-		},
-		{
-			"idx": 6,
-			"version": "7",
-			"when": 1778383665395,
-			"tag": "0006_useful_jasper_sitwell",
-			"breakpoints": true
-		},
-		{
-			"idx": 7,
-			"version": "7",
-			"when": 1778403249878,
-			"tag": "0007_small_puma",
-			"breakpoints": true
-		},
-		{
-			"idx": 8,
-			"version": "7",
-			"when": 1778425133833,
-			"tag": "0008_ambiguous_chameleon",
-			"breakpoints": true
-		},
-		{
-			"idx": 9,
-			"version": "7",
-			"when": 1778999745395,
-			"tag": "0009_repo_relationships_rename",
-			"breakpoints": true
-		}
-	]
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1778253258421,
+      "tag": "0000_worried_miss_america",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1778293984855,
+      "tag": "0001_slimy_lake",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778295630033,
+      "tag": "0002_striped_sue_storm",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778322735996,
+      "tag": "0003_last_skullbuster",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1778381415502,
+      "tag": "0004_cultured_annihilus",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778382250264,
+      "tag": "0005_old_ozymandias",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778383665395,
+      "tag": "0006_useful_jasper_sitwell",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778403249878,
+      "tag": "0007_small_puma",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1778425133833,
+      "tag": "0008_ambiguous_chameleon",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778999745395,
+      "tag": "0009_repo_relationships_rename",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1779112067190,
+      "tag": "0010_slim_shriek",
+      "breakpoints": true
+    }
+  ]
 }

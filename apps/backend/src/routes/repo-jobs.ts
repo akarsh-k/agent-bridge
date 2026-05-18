@@ -59,6 +59,7 @@
  * transition belongs to the worker.
  */
 
+import type { Context } from 'hono'
 import { zValidator } from '@hono/zod-validator'
 import { Hono } from 'hono'
 import {
@@ -67,6 +68,12 @@ import {
   repoStreamId,
   repoWikiInputSchema,
 } from '@agent-bridge/shared'
+import { decryptSecret } from '@agent-bridge/shared/crypto'
+import {
+  EmbedderProbeError,
+  buildEmbedderProbeArgs,
+  probeEmbedder,
+} from '@agent-bridge/shared/embedder-probe'
 import { llmProvidersRepo, reposRepo } from '@agent-bridge/db'
 import { getDb } from '../db.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
@@ -76,6 +83,76 @@ import {
   enqueueIndexRepo,
   enqueuePullRepo,
 } from '../lib/queues.js'
+
+/**
+ * Probe the workspace's embedding provider, if one is configured.
+ *
+ *   - `null`               — probe passed, OR no provider needed
+ *                            (no row, or row exists but lacks a
+ *                            model/baseUrl so the worker would fall
+ *                            back to gitnexus's local embedder).
+ *   - `Response` (4xx)     — probe failed. Caller returns this verbatim;
+ *                            it carries a structured details payload
+ *                            (`{ kind: 'embedder_unreachable', … }`)
+ *                            so the UI can render a remediation hint.
+ *
+ * Why this lives on the clone/index/wiki path rather than at provider-
+ * save time: the embedding server is most often a local process
+ * (llama-server / ollama / lmstudio) that the operator starts and
+ * stops manually. Validating at save time would catch a typo on the
+ * URL but miss the common case of "server was up earlier, isn't now."
+ * Probing at the moment of use surfaces the failure immediately, and
+ * before we waste a multi-minute clone.
+ */
+async function probeConfiguredEmbedderOrReply(
+  c: Context,
+): Promise<Response | null> {
+  const handle = getDb()
+  const provider = await llmProvidersRepo.getEmbeddingProvider(handle)
+  if (!provider) return null
+
+  // Decrypt only at the moment of use — same discipline as the worker.
+  // The probe stays in-process; the plaintext never leaves the request.
+  const apiKey = provider.apiKeyEnvelope
+    ? decryptSecret(provider.apiKeyEnvelope)
+    : null
+
+  const probeArgs = buildEmbedderProbeArgs({
+    kind: provider.kind,
+    baseUrl: provider.baseUrl,
+    defaultModel: provider.defaultModel,
+    apiKey,
+  })
+  if (!probeArgs) return null
+
+  try {
+    await probeEmbedder(probeArgs)
+    return null
+  } catch (err) {
+    if (!(err instanceof EmbedderProbeError)) throw err
+    const remediation =
+      err.kind === 'auth'
+        ? 'Check the API key in Settings → Providers, or restart the embedder if it rotated keys.'
+        : err.kind === 'bad_model'
+          ? `The embedder is up but doesn't know model "${probeArgs.model}". Update the provider in Settings, or pull/load that model on the embedder.`
+          : err.kind === 'timeout'
+            ? 'Embedding server didn\'t respond in time. Is it overloaded or paused?'
+            : 'Start the embedding server, or update the provider URL in Settings → Providers.'
+
+    return httpError(c, {
+      code: 'validation_failed',
+      message: `Embedding server is unreachable: ${err.message}. ${remediation}`,
+      details: {
+        kind: 'embedder_unreachable' as const,
+        reason: err.kind,
+        endpoint: `${probeArgs.baseUrl}/embeddings`,
+        model: probeArgs.model,
+        status: err.status,
+        responseBody: err.responseBody,
+      },
+    })
+  }
+}
 
 export const repoJobsRouter = new Hono().post(
   '/:id/clone',
@@ -114,6 +191,14 @@ export const repoJobsRouter = new Hono().post(
           `before re-cloning`,
       })
     }
+
+    // Fail fast if the configured embedder is down. The clone itself
+    // doesn't need the embedder, but the auto-chained index does; without
+    // this check the user watches a multi-minute clone succeed and then
+    // immediately fail on a cryptic `gitnexus analyze` error. Probing
+    // here turns that into a single clear 400 before any work runs.
+    const embedderError = await probeConfiguredEmbedderOrReply(c)
+    if (embedderError) return embedderError
 
     // CAS flip. Any concurrent request loses here — the second call sees
     // `null` because the WHERE clause filters on the old status. The UI's
@@ -209,6 +294,12 @@ export const repoJobsRouter = new Hono().post(
             `repo ${id} is ${row.status}; pull requires a completed clone first`,
         })
       }
+
+      // Pull auto-chains into incremental index — same embedder
+      // dependency as the clone path. Probe before the CAS so we
+      // never leave a row stuck in 'pulling' on a down embedder.
+      const embedderError = await probeConfiguredEmbedderOrReply(c)
+      if (embedderError) return embedderError
 
       const updated = await reposRepo.markPulling(handle, id)
       if (!updated) {
@@ -309,6 +400,13 @@ export const repoJobsRouter = new Hono().post(
             `(cloned|ready|error)`,
         })
       }
+
+      // Direct dependency on the embedder for this path. Probe before
+      // the CAS so we never park a row in 'indexing' against a down
+      // server — gitnexus would discover it 1-2s later and leave the
+      // operator with a cryptic stderr line.
+      const embedderError = await probeConfiguredEmbedderOrReply(c)
+      if (embedderError) return embedderError
 
       const updated = await reposRepo.markIndexing(handle, id)
       if (!updated) {

@@ -5,6 +5,11 @@ import { llmProvidersRepo, reposRepo, workerJobsRepo } from '@agent-bridge/db'
 import type { LlmProviderRow } from '@agent-bridge/db/schema'
 import { decryptSecret } from '@agent-bridge/shared/crypto'
 import {
+  EmbedderProbeError,
+  buildEmbedderProbeArgs,
+  probeEmbedder,
+} from '@agent-bridge/shared/embedder-probe'
+import {
   indexRepoJobSchema,
   redactSecrets,
   repoStreamId,
@@ -208,6 +213,53 @@ export async function handleIndexRepoJob(
   const redactList: readonly string[] = embeddingApiKey ? [embeddingApiKey] : []
 
   if (embeddingProvider) {
+    // Defence-in-depth probe. The HTTP routes already probe at clone /
+    // pull / index start, but the embedder could have gone down between
+    // enqueue and dequeue. Catching it here gives the operator a clear
+    // "Embedding server is unreachable" message + remediation instead
+    // of a cryptic gitnexus stderr line minutes into the analyze pass.
+    const probeArgs = buildEmbedderProbeArgs({
+      kind: embeddingProvider.kind,
+      baseUrl: embeddingProvider.baseUrl,
+      defaultModel: embeddingProvider.defaultModel,
+      apiKey: embeddingApiKey,
+    })
+    if (probeArgs) {
+      try {
+        await probeEmbedder(probeArgs)
+      } catch (err) {
+        if (!(err instanceof EmbedderProbeError)) throw err
+        const lastError =
+          `Embedding server is unreachable at ${probeArgs.baseUrl}/embeddings: ` +
+          `${err.message}. ` +
+          (err.kind === 'auth'
+            ? 'Check the API key in Settings → Providers.'
+            : err.kind === 'bad_model'
+              ? `Model "${probeArgs.model}" not recognised by the server.`
+              : err.kind === 'timeout'
+                ? "Embedder didn't respond in time."
+                : 'Start the embedding server or update the provider URL.')
+        await publish({
+          kind: 'repo.embed.fail',
+          ts: now(),
+          streamId,
+          data: {
+            repoId: input.repoId,
+            message: lastError,
+          },
+        })
+        await failAndPublish({
+          publish,
+          db,
+          streamId,
+          repoId: input.repoId,
+          lastError,
+          jobId,
+        })
+        throw new Error(lastError)
+      }
+    }
+
     await publish({
       kind: 'repo.embed.started',
       ts: now(),
@@ -235,6 +287,7 @@ export async function handleIndexRepoJob(
   // detection runs BEFORE the throttle check so the final error
   // message is captured even when the line itself is dropped.
   const progressThrottle = makeProgressThrottle()
+
   try {
     await runAnalyze({
       descriptor,

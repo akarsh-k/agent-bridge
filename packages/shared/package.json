@@ -66,6 +66,12 @@
       "development": "./src/git-remote.ts",
       "import": "./dist/git-remote.js",
       "default": "./dist/git-remote.js"
+    },
+    "./embedder-probe": {
+      "types": "./src/embedder-probe.ts",
+      "development": "./src/embedder-probe.ts",
+      "import": "./dist/embedder-probe.js",
+      "default": "./dist/embedder-probe.js"
     }
   },
   "files": [

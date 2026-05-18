@@ -239,6 +239,8 @@ export function RepoLogTail({ repoId }: { repoId: string }) {
         </div>
       )}
 
+      <LongRunHint phases={phases} />
+
       <PhaseTrack
         phases={phases}
         collapsed={collapsed}
@@ -354,6 +356,29 @@ function PhaseChip({ phase }: { phase: PhaseState }) {
         )}
         {phase.status === 'waiting' && <span>—</span>}
       </span>
+    </div>
+  )
+}
+
+/**
+ * Soft inline hint that appears while the index / embed phase is in
+ * flight. Sets expectations for the long quiet stretches gitnexus has
+ * during the embed pipeline (one stderr line, then tens of seconds of
+ * silence while it batches nodes and calls the embedder) so the
+ * operator doesn't read "no new events" as "stuck". Hidden in every
+ * other state — including a passive `cloning` (which is fast and
+ * chatty enough not to need a hint) and any terminal phase.
+ */
+function LongRunHint({ phases }: { phases: readonly PhaseState[] }) {
+  const indexRunning =
+    phases.find((p) => p.id === 'index')?.status === 'running'
+  const embedRunning =
+    phases.find((p) => p.id === 'embed')?.status === 'running'
+  if (!indexRunning && !embedRunning) return null
+  return (
+    <div className="ab-field-help" style={{ marginTop: 4 }}>
+      Large repos can take several minutes. Gitnexus may go quiet for
+      stretches during the embed pipeline — that's normal.
     </div>
   )
 }
@@ -706,7 +731,41 @@ function cleanLine(line: string): string {
   // with ESC (0x1B), so the rule's complaint is a false positive here.
   // eslint-disable-next-line no-control-regex
   const noAnsi = line.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')
-  return noAnsi.replace(/[\r]+/g, '').replace(/[\t ]{2,}/g, ' ').trim()
+  const stripped = noAnsi
+    .replace(/[\r]+/g, '')
+    .replace(/[\t ]{2,}/g, ' ')
+    .trim()
+  // gitnexus' embedding pipeline emits pino JSON to stderr (one object
+  // per line) — the worker forwards them verbatim, so without this
+  // unwrap the user sees lines like `{"level":30,"time":...,"msg":"🔍
+  // Querying embeddable nodes..."}`. Pull out `.msg` when it parses;
+  // fall back to the raw text on anything that isn't valid JSON or
+  // doesn't carry a usable `msg` field.
+  return unwrapPinoJson(stripped) ?? stripped
+}
+
+/**
+ * Detect a pino-style JSON log line and return the `msg` payload.
+ * Returns `null` for anything that doesn't look like pino — bare text,
+ * malformed JSON, or JSON without `msg`.
+ *
+ * Cheap rejection: skip without parsing unless the line starts with `{`
+ * and contains `"msg"` somewhere. Saves a JSON.parse on the common case
+ * of a free-text progress line.
+ */
+function unwrapPinoJson(line: string): string | null {
+  if (!line.startsWith('{') || !line.includes('"msg"')) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(line)
+  } catch {
+    return null
+  }
+  if (!parsed || typeof parsed !== 'object') return null
+  const obj = parsed as Record<string, unknown>
+  const msg = obj['msg']
+  if (typeof msg !== 'string' || msg.length === 0) return null
+  return msg.trim()
 }
 
 function shortKind(k: string): string {
