@@ -1,6 +1,10 @@
 import { Queue, Worker } from 'bullmq'
 import { env } from './env.js'
-import { runMigrations } from '@agent-bridge/db'
+import {
+  reposRepo,
+  runMigrations,
+  workerJobsRepo,
+} from '@agent-bridge/db'
 import { assertExpectedGitnexusVersion } from '@agent-bridge/shared/gitnexus'
 import { ensureDataDirs } from '@agent-bridge/shared/paths'
 import { loadOrCreateMasterKey } from '@agent-bridge/shared/crypto'
@@ -71,6 +75,31 @@ async function main(): Promise<void> {
     `[worker] gitnexus pinned at ${gitnexus.packageVersion} (${gitnexus.cliEntry})`,
   )
 
+  // Reap state left behind by a prior crash / forced exit. Any
+  // `worker_jobs` row still at status='running' belongs to a process
+  // that no longer exists; same for `repos` rows in a transitional
+  // status (cloning|pulling|indexing) since the CAS helpers won't
+  // accept those as valid prior states without manual intervention.
+  // We do this BEFORE queue registration so a freshly-enqueued retry
+  // doesn't race the reaper. Numbers logged for operator visibility.
+  try {
+    const reapedJobs = await workerJobsRepo.reapStaleRunningJobs(getDb())
+    const reapedRepos = await reposRepo.reapStuckTransitionalRepos(getDb())
+    if (reapedJobs > 0 || reapedRepos > 0) {
+      console.info(
+        `[worker] boot reaper: ${reapedJobs} stale worker_jobs aborted, ` +
+          `${reapedRepos} stuck repos reset to error`,
+      )
+    }
+  } catch (err) {
+    // Reaper failures must not block boot — the worker can still
+    // run, the orphaned rows just stay stale. Log and continue.
+    console.warn(
+      '[worker] boot reaper failed (non-fatal):',
+      err instanceof Error ? err.message : String(err),
+    )
+  }
+
   const pingQueue = new Queue(QUEUE_NAMES.ping, {
     connection: createRedisConnection({ role: 'queue' }),
     defaultJobOptions: {
@@ -108,10 +137,14 @@ async function main(): Promise<void> {
   const cloneRepoQueue = new Queue(QUEUE_NAMES.cloneRepo, {
     connection: createRedisConnection({ role: 'queue' }),
     defaultJobOptions: {
-      // One retry on transient network errors. Three would stack onto a
-      // stale credential failure and multiply the user's confusion.
-      attempts: 2,
-      backoff: { type: 'exponential', delay: 2_000 },
+      // attempts=1 (matches index-repo). The handler doesn't re-CAS
+      // on retry, so a BullMQ-driven retry would bypass `markCloning`
+      // and could race a concurrent user-initiated "Re-clone" gesture
+      // (producing two `worker_jobs` rows in `status='running'` for
+      // the same repo — the symptom the boot reaper now mops up).
+      // Network blips become a user-visible failure the operator
+      // explicitly retries from the UI.
+      attempts: 1,
       removeOnComplete: { age: 24 * 3_600, count: 200 },
       removeOnFail: { age: 7 * 24 * 3_600 },
     },

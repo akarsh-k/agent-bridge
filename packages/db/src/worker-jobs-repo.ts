@@ -18,7 +18,7 @@
  * shape.
  */
 
-import { eq } from 'drizzle-orm'
+import { eq, sql } from 'drizzle-orm'
 
 import type { AgentBridgeDb } from './client.js'
 import {
@@ -95,6 +95,37 @@ export async function appendWorkerEvent(
 export interface MarkWorkerJobFinishedInput {
   readonly status: Exclude<WorkerJobStatus, 'running'>
   readonly errorMessage?: string | null
+}
+
+/**
+ * Boot-time reaper. Marks every `worker_jobs` row currently in
+ * `status='running'` as `aborted` with a stamped `finished_at` and
+ * a clear `error_message`. Called by the worker process at startup
+ * so a previous crash doesn't leave the table littered with stale
+ * "still running" rows. Returns the number of rows touched so the
+ * caller can log it on boot.
+ *
+ * Safe to call concurrently with a freshly-booted worker that has
+ * not yet created any new job rows: the worker creates new rows
+ * AFTER passing the status check in the handler, so the reaper's
+ * blanket `status='running'` update can't race a freshly-inserted
+ * row from this process. If you ever fan out to multiple workers
+ * sharing a queue, switch this to a watchdog pattern (last_heartbeat
+ * column + reap older than N minutes).
+ */
+export async function reapStaleRunningJobs(
+  handle: AgentBridgeDb,
+): Promise<number> {
+  const rows = await handle.db
+    .update(workerJobs)
+    .set({
+      status: 'aborted',
+      finishedAt: new Date(),
+      errorMessage: 'worker restart while job was running',
+    })
+    .where(eq(workerJobs.status, 'running'))
+    .returning({ id: workerJobs.id })
+  return rows.length
 }
 
 /**

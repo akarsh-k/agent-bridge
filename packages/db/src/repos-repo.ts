@@ -190,6 +190,38 @@ export async function hardDelete(
   return Boolean(row)
 }
 
+/**
+ * Boot-time reaper. Flips every repo currently in a transitional
+ * status (`cloning`, `pulling`, `indexing`) to `error` with a
+ * descriptive `last_error`. Called by the worker at startup so a
+ * prior crash doesn't leave repos wedged in transitional states
+ * the CAS helpers won't accept as valid prior states.
+ *
+ * Doesn't touch `localPath` — even a crashed clone may have written
+ * a partial `source/` dir, and `repoSourceDir(descriptor)` is
+ * recomputable from the row anyway. The error message tells the
+ * operator to retry (Re-clone / Pull / Re-index from the UI).
+ *
+ * Returns the number of rows touched.
+ */
+export async function reapStuckTransitionalRepos(
+  handle: AgentBridgeDb,
+): Promise<number> {
+  const rows = await handle.db
+    .update(repos)
+    .set({
+      status: 'error',
+      lastError:
+        'Worker restarted while this repo was in flight. Retry from the UI.',
+      updatedAt: sql`now()`,
+    })
+    .where(
+      inArray(repos.status, ['cloning', 'pulling', 'indexing']),
+    )
+    .returning({ id: repos.id })
+  return rows.length
+}
+
 // ─── pulling ─────────────────────────────────────────────────────────────
 
 /**

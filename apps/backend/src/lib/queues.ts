@@ -72,10 +72,13 @@ export async function enqueueCloneRepo(
   const payload = cloneRepoJobSchema.parse(input)
   const queue = getQueue(QUEUE_NAMES.cloneRepo)
   const job = await queue.add(`clone:${payload.repoId}`, payload, {
-    // One retry on transient failures; matches the worker's default config.
-    // Long backoff gives git credential helpers time to re-settle.
-    attempts: 2,
-    backoff: { type: 'exponential', delay: 2_000 },
+    // attempts=1. A BullMQ retry would re-run the handler against a
+    // row already at `status='cloning'` from the prior attempt's CAS
+    // flip but never reset (clone-repo doesn't re-CAS at retry start).
+    // A concurrent user-clicked Re-clone could then race the same
+    // `source.tmp/` dir. Failed clones become user-visible errors the
+    // operator retries from the UI.
+    attempts: 1,
     removeOnComplete: { age: 24 * 3_600, count: 200 },
     removeOnFail: { age: 7 * 24 * 3_600 },
   })

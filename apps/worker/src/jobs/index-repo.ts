@@ -229,25 +229,28 @@ export async function handleIndexRepoJob(
         await probeEmbedder(probeArgs)
       } catch (err) {
         if (!(err instanceof EmbedderProbeError)) throw err
-        const lastError =
+        // Probe failures terminate the index job before gitnexus
+        // even runs. We surface this as a plain `repo.index.fail`
+        // (no `repo.embed.fail`): the documented embed chip
+        // lifecycle is `waiting → started → ok|fail|skipped`, and
+        // here the chip never entered `started`. Firing
+        // `embed.fail` directly would violate that invariant. The
+        // operator-facing message below carries the actionable
+        // diagnosis; it ends up in `repos.last_error` via
+        // failAndPublish. Run through redactSecrets so a probe
+        // implementation that ever surfaces auth headers stays
+        // out of audit logs.
+        const rawMessage =
           `Embedding server is unreachable at ${probeArgs.baseUrl}/embeddings: ` +
           `${err.message}. ` +
           (err.kind === 'auth'
-            ? 'Check the API key in Settings → Providers.'
+            ? 'Check the API key in Settings, then Providers.'
             : err.kind === 'bad_model'
               ? `Model "${probeArgs.model}" not recognised by the server.`
               : err.kind === 'timeout'
                 ? "Embedder didn't respond in time."
                 : 'Start the embedding server or update the provider URL.')
-        await publish({
-          kind: 'repo.embed.fail',
-          ts: now(),
-          streamId,
-          data: {
-            repoId: input.repoId,
-            message: lastError,
-          },
-        })
+        const lastError = redactSecrets(rawMessage, redactList)
         await failAndPublish({
           publish,
           db,
@@ -283,6 +286,9 @@ export async function handleIndexRepoJob(
   // (and doesn't fire at all on incremental analyses where gitnexus
   // skips embedding entirely).
   let embedPhaseSeen = false
+  // One-shot guard for the "Resolution cache:" → graph-DB hint emit
+  // (which also fires embed.started when a provider is configured).
+  let postResolutionHandled = false
   // Coalesce progress events to ~1/sec. On a sqlalchemy-scale embed
   // gitnexus emits thousands of stderr lines; persisting + streaming
   // all of them is what made the repo-detail page laggy. Error
@@ -321,6 +327,32 @@ export async function handleIndexRepoJob(
               providerKind: embeddingProvider.kind,
               model: embeddingProvider.defaultModel ?? '(unset)',
             },
+          })
+        }
+
+        // "Resolution cache:" is the last pino log gitnexus emits
+        // before the silent stretch (LadybugDB graph write, then —
+        // if a provider is configured and the cap doesn't trigger —
+        // the embed phase). Drop one synthetic progress line so the
+        // activity feed has context instead of dead air. We DO NOT
+        // fire `repo.embed.started` here: gitnexus's embed pipeline
+        // logs are gated on NODE_ENV=development (which we don't
+        // set), so we can't reliably detect "embedding is actually
+        // running." The chip stays in `waiting` until either
+        // `looksLikeEmbedPhase` matches a real signal OR meta.json
+        // resolves it (ok / skipped). Premature emit here would
+        // produce a waiting → started → skipped flicker on capped
+        // repos, which contradicts the documented chip lifecycle.
+        if (!postResolutionHandled && cleaned.includes('Resolution cache:')) {
+          postResolutionHandled = true
+          await publish({
+            kind: 'repo.index.progress',
+            ts: now(),
+            streamId,
+            data: {
+              repoId: input.repoId,
+              line: '📦 Building graph database (silent phase, 1-3 min for large repos)…',
+            } satisfies RepoIndexProgressPayload,
           })
         }
 
@@ -476,7 +508,7 @@ export async function handleIndexRepoJob(
  * so we'd surface a slightly stale-looking line. False negatives leave
  * the bare "exit code N" — same as before.
  */
-function looksLikeFatalLine(line: string): boolean {
+export function looksLikeFatalLine(line: string): boolean {
   if (line.length === 0) return false
   if (line.includes('❌')) return true
   if (/^\s*(Error|TypeError|RangeError|ReferenceError):/i.test(line)) return true
@@ -505,7 +537,7 @@ function looksLikeFatalLine(line: string): boolean {
  * Index running and never sees a separate Embed phase, which still
  * accurately reflects what happened (no embed pipeline ran).
  */
-function looksLikeEmbedPhase(line: string): boolean {
+export function looksLikeEmbedPhase(line: string): boolean {
   if (line.length === 0) return false
   if (line.includes('Querying embeddable nodes')) return true
   if (line.includes('embedBatch')) return true
