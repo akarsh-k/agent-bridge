@@ -35,6 +35,7 @@ import {
 } from '@agent-bridge/shared'
 import { ApiError, getRepoGraph } from '../../lib/rpc'
 import { GraphCanvasSigma } from './graph-canvas-sigma'
+import { GraphNodeSearch } from './graph-node-search'
 import { NodeDetailsPanel } from './node-details-panel'
 import { GraphSelectionPicker } from './graph-selection-picker'
 
@@ -82,10 +83,6 @@ export function GraphModal({ repo, onClose }: GraphModalProps) {
   // preserve their choice on return.
   const [processId, setProcessId] = useState<string | null>(null)
   const [communityId, setCommunityId] = useState<string | null>(null)
-  // In-canvas search filter. Substring match (case-insensitive) on
-  // the node name. Non-matching nodes + edges fade rather than
-  // unmount so the layout stays stable as the user types.
-  const [filter, setFilter] = useState('')
   // Kind-filter chips (Functions / Methods / Classes / Files /
   // Folders). Empty set means "show every kind". Composed with the
   // search box inside the sigma canvas.
@@ -177,6 +174,23 @@ export function GraphModal({ repo, onClose }: GraphModalProps) {
     return state.graph.nodes.find((n) => n.id === selectedNodeId) ?? null
   }, [selectedNodeId, state])
 
+  // In-view edge count for the selected node. The node's `.degree`
+  // field is its FULL degree in the gitnexus index; this graph
+  // payload is capped at ~600 nodes server-side and edges whose
+  // endpoints didn't survive the cap are dropped. So a standalone-
+  // looking node with degree=5 isn't a bug — its 5 neighbours just
+  // got trimmed. Surfacing both numbers in the side panel makes
+  // that legible.
+  const selectedInViewEdges = useMemo<number | null>(() => {
+    if (!selectedNodeId) return null
+    if (state.kind !== 'ready') return null
+    let count = 0
+    for (const e of state.graph.edges) {
+      if (e.source === selectedNodeId || e.target === selectedNodeId) count++
+    }
+    return count
+  }, [selectedNodeId, state])
+
   return (
     <div
       className="graph-modal-backdrop"
@@ -221,13 +235,9 @@ export function GraphModal({ repo, onClose }: GraphModalProps) {
               </button>
             ))}
           </div>
-          <input
-            type="search"
-            className="graph-modal-search"
-            placeholder="Filter by name or path…"
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            aria-label="Filter graph nodes by name or file path"
+          <GraphNodeSearch
+            graph={state.kind === 'ready' ? state.graph : null}
+            onSelect={(id) => setSelectedNodeId(id)}
           />
           {mode === 'network' && (
             <KindFilterChips
@@ -264,14 +274,13 @@ export function GraphModal({ repo, onClose }: GraphModalProps) {
               <GraphCanvasSigma
                 graph={state.graph}
                 selectedNodeId={selectedNodeId}
-                filter={filter}
                 kindFilter={kindFilter}
                 onNodeClick={(id) => setSelectedNodeId(id)}
               />
-              {/* Floating legend — only useful in the modes where the
-                  top-toolbar kind chips are hidden (processes /
+              {/* Floating legend — only useful in modes where the
+                  top-toolbar kind chips aren't visible (processes /
                   communities). In `network` the chips already show
-                  the dot-per-kind, so a second legend would be noise. */}
+                  one dot per kind, so a second legend would be noise. */}
               {mode !== 'network' && (
                 <GraphLegend graph={state.graph} />
               )}
@@ -280,6 +289,7 @@ export function GraphModal({ repo, onClose }: GraphModalProps) {
           <NodeDetailsPanel
             repoId={repo.id}
             selected={selectedNode}
+            inViewEdgeCount={selectedInViewEdges}
             onClose={() => setSelectedNodeId(null)}
             onSelect={(id) => setSelectedNodeId(id)}
           />
@@ -486,6 +496,15 @@ function GraphLegend({ graph }: { graph: RepoGraph }) {
   )
 }
 
+/**
+ * Multi-toggle chip row for the node-kind filter. Each chip has a
+ * colored dot (kind hue), a label, and a live count. Clicking toggles
+ * that kind in `value` (a Set<RepoGraphNodeKind>). The "All" chip on
+ * the left is a master reset.
+ *
+ * Doubles as a legend in `network` mode (chips ARE the kind key), so
+ * the floating legend hides itself when this is on screen.
+ */
 function KindFilterChips({
   value,
   onChange,
@@ -493,8 +512,7 @@ function KindFilterChips({
 }: {
   value: ReadonlySet<RepoGraphNodeKind>
   onChange: (next: ReadonlySet<RepoGraphNodeKind>) => void
-  /** Current graph payload — used to surface live counts on each
-   *  chip ("Functions · 124"). Null while loading; counts hidden. */
+  /** Current graph payload — drives live counts ("Functions · 124"). */
   graph: RepoGraph | null
 }) {
   const counts = useMemo(() => {
@@ -526,10 +544,6 @@ function KindFilterChips({
       {KIND_CHIPS.map((c) => {
         const active = value.has(c.kind)
         const count = counts[c.kind]
-        // Chip stays clickable but renders dimmer when there are zero
-        // nodes of this kind in the current payload — gives the
-        // operator a sense of what's available without removing
-        // affordance.
         const empty = count === 0 || count == null
         return (
           <button

@@ -227,44 +227,6 @@
 .dot-processes    { background: var(--gx-node-process); }
 .dot-communities  { background: var(--gx-node-community); }
 
-/* Search input — same height as the tab strip so the toolbar reads
-   as one row. */
-.graph-modal-search {
-  grid-area: search;
-  appearance: none;
-  height: 32px;
-  padding: 0 12px 0 32px;
-  border-radius: var(--gx-r);
-  border: 1px solid var(--gx-border);
-  background:
-    /* magnifying-glass glyph rendered in CSS so we don't drag in an
-       icon set just for this */
-    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%236a6a80' stroke-width='1.4'><circle cx='5.2' cy='5.2' r='3.4'/><path d='m8 8 2.5 2.5' stroke-linecap='round'/></svg>")
-      no-repeat 11px 50%,
-    var(--gx-deep);
-  color: var(--gx-text);
-  font-size: 12.5px;
-  font-family: var(--gx-font);
-  letter-spacing: 0.01em;
-  width: 100%;
-  max-width: 360px;
-  justify-self: start;
-  transition:
-    border-color var(--gx-dur-1) var(--gx-ease-out),
-    background-color var(--gx-dur-1) var(--gx-ease-out);
-}
-
-.graph-modal-search::placeholder {
-  color: var(--gx-text-muted);
-}
-
-.graph-modal-search:focus {
-  outline: none;
-  border-color: var(--gx-accent-border);
-  background-color: var(--gx-surface);
-  box-shadow: 0 0 0 3px var(--gx-accent-bg);
-}
-
 .graph-modal-hint {
   grid-area: hint;
   font-size: 11px;
@@ -275,7 +237,7 @@
   line-height: 1.45;
 }
 
-/* ---------- Kind-filter chips (row 2 of the toolbar) --------------------- */
+/* ---------- Kind-filter chips (row 2 of the toolbar) -------------------- */
 
 .graph-kind-chips {
   grid-area: chips;
@@ -306,13 +268,11 @@
     border-color var(--gx-dur-1) var(--gx-ease-out),
     transform var(--gx-dur-1) var(--gx-ease-out);
 }
-
 .graph-kind-chip:hover {
   background: var(--gx-elevated);
   color: var(--gx-text);
   border-color: var(--gx-border-strong);
 }
-
 .graph-kind-chip:active {
   transform: translateY(0.5px);
 }
@@ -332,8 +292,6 @@
   box-shadow: 0 0 0 1px var(--gx-accent-border) inset;
 }
 
-/* Active kind chip: accent-tinted bg + accent border. The dot keeps
-   its native color so the eye still sees what kind it is. */
 .graph-kind-chip.is-active {
   background: var(--gx-accent-bg);
   color: var(--gx-text);
@@ -345,22 +303,15 @@
   height: 8px;
   border-radius: 50%;
   flex: 0 0 auto;
-  /* Default — no kind class applied; render as muted */
   background: var(--gx-text-muted);
   box-shadow: 0 0 0 0 transparent;
   transition: box-shadow var(--gx-dur-1) var(--gx-ease-out);
 }
-
 .graph-kind-chip.is-active .graph-kind-chip-dot {
-  /* The dot gets a faint glow when active so the chip looks "lit". */
   box-shadow: 0 0 6px currentColor;
 }
 
 .graph-kind-chip-count {
-  /* Tabular numerals, mono, slightly muted — sits to the right of
-     the label like a count in a tab strip. Separator is a hair-thin
-     vertical line so the chip reads as label-then-count even on
-     dense rows. */
   margin-left: 2px;
   padding-left: 8px;
   font-family: var(--gx-font-mono);
@@ -376,15 +327,16 @@
   border-left-color: var(--gx-accent-border);
 }
 
-/* Per-kind dot colors — used by .graph-kind-chip-dot AND
-   .graph-stat-icon AND .graph-details-dot. One source of truth. */
-.graph-node-icon-function,  .kind-function .graph-kind-chip-dot,  .graph-details-dot.kind-function  { background: var(--gx-node-function);  color: var(--gx-node-function); }
-.graph-node-icon-method,    .kind-method   .graph-kind-chip-dot,  .graph-details-dot.kind-method    { background: var(--gx-node-method);    color: var(--gx-node-method); }
-.graph-node-icon-class,     .kind-class    .graph-kind-chip-dot,  .graph-details-dot.kind-class     { background: var(--gx-node-class);     color: var(--gx-node-class); }
-.graph-node-icon-file,      .kind-file     .graph-kind-chip-dot,  .graph-details-dot.kind-file      { background: var(--gx-node-file);      color: var(--gx-node-file); }
-.graph-node-icon-folder,    .kind-folder   .graph-kind-chip-dot,  .graph-details-dot.kind-folder    { background: var(--gx-node-folder);    color: var(--gx-node-folder); }
-.graph-node-icon-process,   .kind-process  .graph-kind-chip-dot,  .graph-details-dot.kind-process   { background: var(--gx-node-process);   color: var(--gx-node-process); }
-.graph-node-icon-community, .kind-community .graph-kind-chip-dot, .graph-details-dot.kind-community { background: var(--gx-node-community); color: var(--gx-node-community); }
+/* Per-kind dot colors — used by .graph-kind-chip-dot,
+   .graph-stat-icon, .graph-details-dot, .graph-legend-swatch, and
+   the autocomplete row dots. One source of truth. */
+.graph-node-icon-function,  .kind-function .graph-kind-chip-dot,   .graph-details-dot.kind-function  { background: var(--gx-node-function);  color: var(--gx-node-function); }
+.graph-node-icon-method,    .kind-method   .graph-kind-chip-dot,   .graph-details-dot.kind-method    { background: var(--gx-node-method);    color: var(--gx-node-method); }
+.graph-node-icon-class,     .kind-class    .graph-kind-chip-dot,   .graph-details-dot.kind-class     { background: var(--gx-node-class);     color: var(--gx-node-class); }
+.graph-node-icon-file,      .kind-file     .graph-kind-chip-dot,   .graph-details-dot.kind-file      { background: var(--gx-node-file);      color: var(--gx-node-file); }
+.graph-node-icon-folder,    .kind-folder   .graph-kind-chip-dot,   .graph-details-dot.kind-folder    { background: var(--gx-node-folder);    color: var(--gx-node-folder); }
+.graph-node-icon-process,   .kind-process  .graph-kind-chip-dot,   .graph-details-dot.kind-process   { background: var(--gx-node-process);   color: var(--gx-node-process); }
+.graph-node-icon-community, .kind-community .graph-kind-chip-dot,  .graph-details-dot.kind-community { background: var(--gx-node-community); color: var(--gx-node-community); }
 
 /* ---------- Stats bar ----------------------------------------------------- */
 
@@ -734,6 +686,20 @@
   margin: 4px 0 4px;
 }
 
+.graph-details-hint {
+  /* Inline explainer that appears under the Edges row when the
+     in-view count diverges from the index degree. Calmer than an
+     alert — this is "context", not "warning". */
+  padding: 8px 10px;
+  border-radius: var(--gx-r-sm);
+  background: var(--gx-deep);
+  border: 1px solid var(--gx-border-faint);
+  border-left: 2px solid var(--gx-accent-hi);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--gx-text-dim);
+}
+
 .graph-details-section {
   display: flex;
   flex-direction: column;
@@ -1010,6 +976,181 @@
   white-space: pre;
 }
 
+/* ---------- Node-name autocomplete (replaces the search input) ---------- */
+
+.graph-node-search {
+  grid-area: search;
+  position: relative;
+  justify-self: start;
+  width: 100%;
+  max-width: 360px;
+}
+
+.graph-node-search-input {
+  appearance: none;
+  width: 100%;
+  height: 32px;
+  padding: 0 12px 0 32px;
+  border-radius: var(--gx-r);
+  border: 1px solid var(--gx-border);
+  background:
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%236a6a80' stroke-width='1.4'><circle cx='5.2' cy='5.2' r='3.4'/><path d='m8 8 2.5 2.5' stroke-linecap='round'/></svg>")
+      no-repeat 11px 50%,
+    var(--gx-deep);
+  color: var(--gx-text);
+  font-size: 12.5px;
+  font-family: var(--gx-font);
+  letter-spacing: 0.01em;
+  transition:
+    border-color var(--gx-dur-1) var(--gx-ease-out),
+    background-color var(--gx-dur-1) var(--gx-ease-out),
+    box-shadow var(--gx-dur-1) var(--gx-ease-out);
+}
+.graph-node-search-input::placeholder {
+  color: var(--gx-text-muted);
+}
+.graph-node-search-input:focus {
+  outline: none;
+  border-color: var(--gx-accent-border);
+  background-color: var(--gx-surface);
+  box-shadow: 0 0 0 3px var(--gx-accent-bg);
+}
+
+/* Popover below the input. Sits absolute so the toolbar grid doesn't
+   reflow when it opens. */
+.graph-node-search-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  background: var(--gx-surface);
+  border: 1px solid var(--gx-border-strong);
+  border-radius: var(--gx-r);
+  box-shadow:
+    0 16px 36px -10px rgba(0, 0, 0, 0.7),
+    0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+  max-height: 380px;
+  overflow-y: auto;
+  animation: gx-pop-in 160ms var(--gx-ease-out);
+}
+
+@keyframes gx-pop-in {
+  from { opacity: 0; transform: translateY(-4px) scale(0.99); }
+  to   { opacity: 1; transform: translateY(0)    scale(1); }
+}
+
+.graph-node-search-meta {
+  padding: 8px 12px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 600;
+  color: var(--gx-text-muted);
+  border-bottom: 1px solid var(--gx-border-faint);
+  background: var(--gx-deep);
+}
+
+.graph-node-search-empty {
+  padding: 14px;
+  font-size: 12px;
+  color: var(--gx-text-muted);
+  text-align: center;
+  font-style: italic;
+}
+
+.graph-node-search-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.graph-node-search-row {
+  appearance: none;
+  border: none;
+  background: transparent;
+  width: 100%;
+  display: grid;
+  /* dot | name (flex) | kind | path */
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    'dot name kind'
+    '.   path path';
+  align-items: center;
+  gap: 4px 10px;
+  padding: 8px 10px;
+  border-radius: var(--gx-r-sm);
+  text-align: left;
+  cursor: pointer;
+  color: var(--gx-text);
+  transition: background var(--gx-dur-1) var(--gx-ease-out);
+}
+.graph-node-search-row:hover,
+.graph-node-search-row.is-active {
+  background: var(--gx-hover);
+}
+.graph-node-search-row.is-active {
+  /* Active row (keyboard cursor) — subtle accent edge so the user
+     can see exactly where Enter will go without it screaming. */
+  background: var(--gx-accent-bg);
+  box-shadow: inset 2px 0 0 0 var(--gx-accent-hi);
+}
+
+.graph-node-search-dot {
+  grid-area: dot;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  box-shadow: 0 0 5px currentColor;
+}
+
+.graph-node-search-name {
+  grid-area: name;
+  font-family: var(--gx-font-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--gx-text);
+  letter-spacing: -0.005em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Substring highlight inside the name */
+.graph-node-search-hit {
+  background: transparent;
+  color: var(--gx-accent-hi);
+  font-weight: 600;
+}
+
+.graph-node-search-kind {
+  grid-area: kind;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  font-weight: 600;
+  color: var(--gx-text-muted);
+  white-space: nowrap;
+}
+
+.graph-node-search-path {
+  grid-area: path;
+  font-family: var(--gx-font-mono);
+  font-size: 10.5px;
+  color: var(--gx-text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.graph-node-search-row.is-active .graph-node-search-path,
+.graph-node-search-row:hover .graph-node-search-path {
+  color: var(--gx-text-dim);
+}
+
 /* ---------- Toolbar variant for wide viewports --------------------------- */
 
 @media (max-width: 980px) {
@@ -1021,6 +1162,6 @@
       'chips'
       'hint';
   }
-  .graph-modal-search { max-width: none; }
+  .graph-node-search { max-width: none; }
   .graph-modal-hint { text-align: left; }
 }

@@ -78,6 +78,16 @@ const NEIGHBOR_GROUPS: readonly NeighborGroup[] = [
 interface NodeDetailsPanelProps {
   repoId: string
   selected: RepoGraphNode | null
+  /**
+   * Edges actually present in the current graph payload that touch
+   * the selected node. Distinct from `selected.degree`, which is the
+   * full degree in the gitnexus index — the backend caps the network
+   * graph at ~600 top-degree nodes and drops edges to non-surviving
+   * endpoints, so an in-view count of 0 against a backend degree of
+   * 5 means the node's neighbours were below the cut. We display
+   * both numbers so a standalone-looking node doesn't read as a bug.
+   */
+  inViewEdgeCount: number | null
   onClose: () => void
   /** Called when the user clicks a neighbor row. The parent should
    *  flip its selected-node state — the panel just emits the id. */
@@ -98,6 +108,7 @@ type FileFetch =
 export function NodeDetailsPanel({
   repoId,
   selected,
+  inViewEdgeCount,
   onClose,
   onSelect,
 }: NodeDetailsPanelProps) {
@@ -241,8 +252,29 @@ export function NodeDetailsPanel({
         <div className="graph-details-row">
           <span className="graph-details-row-label">Edges</span>
           <span className="graph-details-row-value ab-mono">
-            {selected.degree}
+            {inViewEdgeCount != null && inViewEdgeCount !== selected.degree ? (
+              <span title="Edges shown in this view · total in the gitnexus index">
+                {inViewEdgeCount}
+                <span style={{ color: 'var(--gx-text-muted)' }}>
+                  {' / '}
+                  {selected.degree}
+                </span>
+              </span>
+            ) : (
+              <span>{selected.degree}</span>
+            )}
           </span>
+        </div>
+      ) : null}
+      {inViewEdgeCount === 0 &&
+      selected.degree != null &&
+      selected.degree > 0 ? (
+        <div className="graph-details-hint">
+          {selected.degree} edge{selected.degree === 1 ? '' : 's'} in
+          the gitnexus index, but none of this node's neighbours made
+          the rendered slice (the graph caps at the top-degree
+          subset). Use the Callers / Calls lists below to jump
+          straight to one of them.
         </div>
       ) : null}
 

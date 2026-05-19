@@ -70,7 +70,26 @@ interface ModeCaps {
   readonly edges: number
 }
 
-const NETWORK_CAPS: ModeCaps = { nodes: 600, edges: 1500 }
+/**
+ * Network mode caps. Raised 2025 from { 600, 1500 } so hub nodes
+ * actually keep their neighbours in the payload — the previous cap
+ * was tight enough that a function with degree 77 could land in the
+ * top-N set while all 77 of its callers were trimmed (each
+ * individually low-degree). Hubs then rendered standalone on the
+ * canvas, which read as a bug.
+ *
+ * Gitnexus's own viewer (`node_modules/gitnexus/dist/server/api.js:832`)
+ * uses no cap at all — they ship the whole graph and let the client
+ * stream + render it. We're not going that far yet (their NDJSON
+ * stream covers the latency); 3000 is enough to fit the entire
+ * graph for ~typical Agent-Bridge-attached repos (≤2000 functions +
+ * methods + classes + files combined).
+ *
+ * If you find this still trims real-world repos, the next move is
+ * to drop the cap entirely and stream the response — see the
+ * gitnexus pattern.
+ */
+const NETWORK_CAPS: ModeCaps = { nodes: 3000, edges: 8000 }
 const PROCESS_CAPS: ModeCaps = { nodes: 80, edges: 80 }
 const COMMUNITY_CAPS: ModeCaps = { nodes: 80, edges: 200 }
 const PROCESS_LIST_LIMIT = 200

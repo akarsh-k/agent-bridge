@@ -7,24 +7,28 @@
  * External state:
  *   - `graph`             — RepoGraph payload from the backend.
  *   - `selectedNodeId`    — drives the highlighted-ring on the selected
- *                           node and pairs with the details panel.
- *   - `filter`            — substring match on `node.name` (lowercased).
- *                           Non-matching nodes + their incident edges
- *                           are hidden via sigma's `hidden` attribute
- *                           (no re-layout — instant fade).
+ *                           node and pairs with the details panel. The
+ *                           autocomplete in the toolbar feeds into the
+ *                           same state — picking a row IS selecting a
+ *                           node.
+ *   - `kindFilter`        — Set<RepoGraphNodeKind> hiding non-matching
+ *                           kinds via sigma's `hidden` attribute (no
+ *                           re-layout). Empty set = show all.
  *   - `onNodeClick(id)`   — clicking a node delegates to the parent so
  *                           it can swap the details panel.
  *
  * Lifecycle:
  *   - The sigma instance is rebuilt whenever the `graph` payload
- *     identity changes (so a tab swap or selection change forces a
- *     re-layout). Filter + selection updates mutate node attributes
- *     in-place via `g.setNodeAttribute(...)` + `sigma.refresh()`,
- *     which avoids tearing down the WebGL context.
- *   - Layout runs synchronously via `forceAtlas2.assign(...)`. For our
- *     caps (≤600 nodes, ≤1500 edges) it settles in <1s on commodity
- *     laptops. Lazy iterations + workerised layout are noted as a
- *     follow-up if we ever lift the caps.
+ *     identity changes (so a tab swap or kind-filter change forces a
+ *     re-layout). Selection updates mutate node attributes in-place
+ *     via `g.setNodeAttribute(...)` + `sigma.refresh()`, which avoids
+ *     tearing down the WebGL context.
+ *   - Layout runs synchronously via `forceAtlas2.assign(...)`. With
+ *     NETWORK_CAPS at 3000 nodes / 8000 edges (lifted from 600/1500
+ *     to keep hub nodes' neighbours in the payload) and barnes-hut
+ *     enabled, the pass settles in ~1-3s on commodity laptops. The
+ *     iteration budget decays with order (see runForceLayout). If we
+ *     push past 5000 nodes, a workerised layout becomes the next step.
  */
 
 import { useEffect, useRef } from 'react'
@@ -65,16 +69,23 @@ const NODE_COLOR: Record<RepoGraphNodeKind, string> = {
 }
 
 /**
- * Default edge color — a single muted slate, applied to every edge
- * regardless of kind. The user reads edges as "connections" by default
- * and only needs to see the relation kind when they hover a node — at
- * which point the edgeReducer below tints incident edges with the
- * SOURCE-node color.
+ * Edge color — a single muted slate, applied to every edge in every
+ * state. The user reads edges as "connections between nodes"; nodes
+ * carry the per-kind hue, edges deliberately don't.
  *
- * This is the gitnexus pattern. One muted edge color keeps the graph
- * legible; the hover interaction is what makes it interactive.
+ * This is the gitnexus pattern (confirmed against their bundle —
+ * `edgeReducer:null`, no dynamic recolor at all). Emphasis on hover
+ * and selection is communicated via stroke WIDTH and OPACITY, never
+ * a color change. An earlier draft re-tinted edges with the source-
+ * node color on hover; that recreated the exact "node and edge are
+ * the same color" problem we set out to fix.
+ *
+ *   EDGE_REST     — default; what you see across the whole graph
+ *   EDGE_ACCENT   — incident-to-hovered, or inside a selection focus
+ *   (dim edge color is read from the theme — see readThemeColors)
  */
-const EDGE_DEFAULT = '#3a3a4a'
+const EDGE_REST = '#3a3a4a'
+const EDGE_ACCENT = '#7a7a92'
 
 /**
  * Per-kind edge SIZES. Width still varies by kind so an operator can
@@ -93,7 +104,6 @@ const EDGE_SIZE: Record<RepoGraphEdge['kind'], number> = {
 interface GraphCanvasSigmaProps {
   graph: RepoGraph
   selectedNodeId: string | null
-  filter: string
   /** Optional set of node kinds to show. Empty / undefined means
    *  every kind is visible. Used by the kind-filter chip row to
    *  hide e.g. files-only or symbols-only views. */
@@ -104,7 +114,6 @@ interface GraphCanvasSigmaProps {
 export function GraphCanvasSigma({
   graph,
   selectedNodeId,
-  filter,
   kindFilter,
   onNodeClick,
 }: GraphCanvasSigmaProps) {
@@ -122,14 +131,13 @@ export function GraphCanvasSigma({
   // graphology graph so it reflects post-build state. Read by the
   // sigma reducer below to dim the non-neighbour world.
   const neighborsRef = useRef<Set<string> | null>(null)
-  // Match set for the active filter (search term + kind chips).
-  // Distinguishes "this is what you searched for" (rendered at full
-  // emphasis) from "neighbouring context" (rendered dimmer + smaller).
-  // Null when no filter is active.
-  const matchesRef = useRef<Set<string> | null>(null)
+  // Set of node IDs whose kind passes the active kind-chip filter.
+  // Null when no chip is on (== full graph focused). Read by the
+  // node reducer to dim non-matching nodes when a kind filter is
+  // active but no selection is.
+  const kindFocusRef = useRef<Set<string> | null>(null)
   // Currently-hovered node id, set by sigma's enterNode/leaveNode events.
-  // Drives the "incident edges light up in source-node color" effect —
-  // the only time edges show kind-color in the default view.
+  // Drives the "incident edges brighten" effect via the edge reducer.
   const hoveredRef = useRef<string | null>(null)
   // Theme-aware sigma colors. Sigma's `labelColor` is set at init
   // time; we read the live `--text` token from the document root
@@ -185,38 +193,40 @@ export function GraphCanvasSigma({
       // Pattern lifted from gitnexus's own bundle so the UX matches.
       nodeReducer: (nodeId, attrs) => {
         if (attrs['hidden']) return attrs
-        const baseSize = (attrs['baseSize'] as number | undefined) ?? 4
         const focus = neighborsRef.current
-        const matches = matchesRef.current
+        const kindFocus = kindFocusRef.current
+        const baseSize = (attrs['baseSize'] as number | undefined) ?? 4
+
+        // Selection focus wins over kind filter. If the user picked a
+        // node, the focus subset is bright and everything else dims
+        // — regardless of the kind filter's state. Reasoning: the
+        // user explicitly asked for this node's neighbourhood; show
+        // the connections.
         if (focus) {
           if (focus.has(nodeId)) return attrs
           return {
             ...attrs,
             color: themeColorsRef.current.dimmedNode,
-            label: '',
-          }
-        }
-        if (matches) {
-          if (matches.has(nodeId)) {
-            // Matched: keep kind color, bump size, halo so it pops
-            // against the neighbour-context circles around it.
-            return {
-              ...attrs,
-              size: baseSize * 1.6,
-              highlighted: true,
-              zIndex: 2,
-            }
-          }
-          // Visible-but-not-matched ⇒ this is one of the 1-hop
-          // neighbours we expanded. Shrink + drop the label so the
-          // user's eye lands on the matches.
-          return {
-            ...attrs,
             size: baseSize * 0.55,
             label: '',
             zIndex: 0,
           }
         }
+
+        // Kind filter (no selection). Non-matching kinds dim out so
+        // the matching ones pop. Whole graph stays on screen — the
+        // dimmed nodes are still part of the visual structure.
+        if (kindFocus) {
+          if (kindFocus.has(nodeId)) return attrs
+          return {
+            ...attrs,
+            color: themeColorsRef.current.dimmedNode,
+            size: baseSize * 0.55,
+            label: '',
+            zIndex: 0,
+          }
+        }
+
         return attrs
       },
       edgeReducer: (edgeId, attrs) => {
@@ -224,61 +234,45 @@ export function GraphCanvasSigma({
         const src = g.source(edgeId)
         const tgt = g.target(edgeId)
         const focus = neighborsRef.current
-        const matches = matchesRef.current
+        const kindFocus = kindFocusRef.current
         const hovered = hoveredRef.current
+        const baseSize = (attrs['size'] as number | undefined) ?? 1
 
-        // Hover wins over everything else (it's the most immediate
-        // user signal). When a node is hovered, its incident edges
-        // light up in the SOURCE-node color at full alpha + thicker
-        // stroke; every other edge fades. This is the gitnexus pattern:
-        // the user's cursor is the question, the highlighted edges
-        // are the answer.
-        if (hovered && !focus) {
-          if (src === hovered || tgt === hovered) {
-            const sourceKind = g.getNodeAttribute(src, 'kind') as
-              | RepoGraphNodeKind
-              | undefined
-            const tint = sourceKind ? NODE_COLOR[sourceKind] : EDGE_DEFAULT
-            const baseSize = (attrs['size'] as number | undefined) ?? 1
-            return {
-              ...attrs,
-              color: tint,
-              size: baseSize * 1.8,
-              zIndex: 2,
-            }
-          }
-          // Non-incident edges fade WAY back — almost invisible — so
-          // the relevant ones really pop.
-          return { ...attrs, color: themeColorsRef.current.dimmedEdge }
-        }
+        // Edges NEVER take on a node color. Emphasis is via width +
+        // brightness only.
+        //
+        // Priority (highest first):
+        //   1. Selection focus: incident-to-focus → bright slate;
+        //      everything else dims hard.
+        //   2. Hover (no selection): incident-to-hovered → bright
+        //      slate; everything else dims hard.
+        //   3. Kind filter (no selection, no hover): edges between
+        //      two matching nodes stay normal; edges touching a
+        //      non-matching node dim.
+        //   4. Default: muted slate, base width.
 
         if (focus) {
-          if (focus.has(src) && focus.has(tgt)) {
-            // Inside the selection focus, paint incident edges in
-            // their SOURCE-node color so the user sees who-calls-whom.
-            const sourceKind = g.getNodeAttribute(src, 'kind') as
-              | RepoGraphNodeKind
-              | undefined
-            const tint = sourceKind ? NODE_COLOR[sourceKind] : EDGE_DEFAULT
-            return { ...attrs, color: tint, zIndex: 1 }
+          const inSubset = focus.has(src) && focus.has(tgt)
+          if (inSubset) {
+            return { ...attrs, color: EDGE_ACCENT, size: baseSize * 1.5, zIndex: 1 }
           }
-          return { ...attrs, color: themeColorsRef.current.dimmedEdge }
+          // Anything outside the focused subset dims to near-invisible.
+          return { ...attrs, color: themeColorsRef.current.dimmedEdge, size: baseSize * 0.6 }
         }
-        if (matches) {
-          const both = matches.has(src) && matches.has(tgt)
-          const one = matches.has(src) || matches.has(tgt)
-          if (both) {
-            // Match-to-match: thicken so the chain through the
-            // matched set reads as connected.
-            const baseSize = (attrs['size'] as number | undefined) ?? 1
-            return { ...attrs, size: baseSize * 1.5, zIndex: 1 }
+
+        if (hovered) {
+          if (src === hovered || tgt === hovered) {
+            return { ...attrs, color: EDGE_ACCENT, size: baseSize * 1.8, zIndex: 2 }
           }
-          if (one) return attrs
-          // Both endpoints are neighbours (rare — happens when two
-          // matches share a neighbour). Dim to keep focus on
-          // match-to-match strokes.
-          return { ...attrs, color: themeColorsRef.current.dimmedEdge }
+          return { ...attrs, color: themeColorsRef.current.dimmedEdge, size: baseSize * 0.6 }
         }
+
+        if (kindFocus) {
+          const bothIn = kindFocus.has(src) && kindFocus.has(tgt)
+          if (bothIn) return attrs
+          return { ...attrs, color: themeColorsRef.current.dimmedEdge, size: baseSize * 0.6 }
+        }
+
         return attrs
       },
     })
@@ -303,106 +297,77 @@ export function GraphCanvasSigma({
     }
   }, [graph])
 
-  // Filter — toggle `hidden` on nodes/edges. Sigma's WebGL renderer
-  // honours the flag without re-layout. Matches against both the
-  // node label (symbol name) and its file path. The matched set then
-  // expands by 1 hop so the surrounding context (callers + callees,
-  // imports, etc.) stays on-screen — without the expansion a match
-  // shows up as a lonely circle disconnected from everything.
-  useEffect(() => {
-    const g = graphRef.current
-    const sig = sigmaRef.current
-    if (!g || !sig) return
-    const term = filter.trim().toLowerCase()
-    const filtering = term.length > 0
-    const kinds = kindFilter && kindFilter.size > 0 ? kindFilter : null
-
-    // Pass 1: which nodes "match" by name/path?
-    const textMatched = new Set<string>()
-    g.forEachNode((id, attrs) => {
-      const name = String(attrs['label'] ?? '').toLowerCase()
-      const filePath = String(attrs['filePath'] ?? '').toLowerCase()
-      const matchesTerm =
-        !filtering || name.includes(term) || filePath.includes(term)
-      if (matchesTerm) textMatched.add(id)
-    })
-
-    // Pass 2: expand by 1 hop so context survives. Used both for
-    // hiding (the non-visible set) AND for the nodeReducer (which
-    // distinguishes a match from a neighbour-of-match).
-    const visible = new Set(textMatched)
-    if (filtering) {
-      for (const id of textMatched) {
-        g.forEachNeighbor(id, (n) => visible.add(n))
-      }
-    }
-
-    // Tell the per-frame reducers what to emphasize. Only populated
-    // when a text filter is active — kind chips alone fall through
-    // to the no-emphasis path (kind chips hide via attrs.hidden
-    // instead).
-    matchesRef.current = filtering ? textMatched : null
-
-    // Hidden flag is now driven by:
-    //   1) kind chip filter (always hides non-matching kinds)
-    //   2) text filter, when active, hides everything outside the
-    //      matched-or-neighbour set
-    g.forEachNode((id, attrs) => {
-      const kindMatch =
-        !kinds || kinds.has(attrs['kind'] as RepoGraphNodeKind)
-      const textVisible = !filtering || visible.has(id)
-      g.setNodeAttribute(id, 'hidden', !(kindMatch && textVisible))
-    })
-    g.forEachEdge((edgeId, _attrs, src, tgt) => {
-      const visibleSrc = !g.getNodeAttribute(src, 'hidden')
-      const visibleTgt = !g.getNodeAttribute(tgt, 'hidden')
-      if (!visibleSrc || !visibleTgt) {
-        g.setEdgeAttribute(edgeId, 'hidden', true)
-        return
-      }
-      // When the text filter is active, only show edges that touch
-      // at least one match so the neighbour-of-different-matches
-      // clutter doesn't bloom.
-      if (filtering) {
-        const touchesMatch = textMatched.has(src) || textMatched.has(tgt)
-        g.setEdgeAttribute(edgeId, 'hidden', !touchesMatch)
-        return
-      }
-      g.setEdgeAttribute(edgeId, 'hidden', false)
-    })
-    sig.refresh()
-  }, [filter, kindFilter])
-
   // No theme-watcher: the graph modal owns its own surface stack
   // (see ./graph-tokens.css). The canvas always renders against a
   // near-black background regardless of the app's light/dark setting
-  // — same as gitnexus's own viewer. If the user wants a light-mode
-  // graph someday, this is where we'd reintroduce the watcher.
+  // — same as gitnexus's own viewer.
 
-  // Selection — bumps the selected node's size + halo, and computes
-  // the neighbour set the reducers use to dim the rest of the graph.
+  // Selection + kind-filter effect. Gitnexus's pattern: the whole
+  // graph stays VISIBLE at all times; selection and filtering only
+  // shift emphasis. Focused nodes are full brightness + base size,
+  // everything else gets aggressive dimming via the per-frame
+  // reducers (sub-base size, near-background color, no label).
+  //
+  // No `hidden` toggling — an earlier version hard-hid non-focus
+  // nodes and the user (correctly) flagged that the rest of the
+  // graph should remain on screen as context. Hiding loses the
+  // shape; dimming keeps it.
+  //
+  // What this effect actually writes:
+  //   - `neighborsRef` for selection focus (selected + 1-hop)
+  //   - `kindFocusRef` for kind-filter focus
+  //   - `highlighted` + `size` on the selected node (halo + bump)
+  //
+  // The reducers below read those refs every frame to apply the
+  // dimming. No `hidden` attribute is set anywhere; we rely on
+  // size + color to communicate emphasis.
   useEffect(() => {
     const g = graphRef.current
     const sig = sigmaRef.current
     if (!g || !sig) return
+
+    // Selection focus = selected + 1-hop neighbours.
+    let focus: Set<string> | null = null
     if (selectedNodeId && g.hasNode(selectedNodeId)) {
-      const focus = new Set<string>([selectedNodeId])
-      // Pull every direct neighbour (incoming + outgoing). Single-hop
-      // is the gitnexus convention; the details panel already lists
-      // the same neighbours so this stays consistent.
-      g.forEachNeighbor(selectedNodeId, (n) => focus.add(n))
-      neighborsRef.current = focus
-    } else {
-      neighborsRef.current = null
+      focus = new Set<string>([selectedNodeId])
+      g.forEachNeighbor(selectedNodeId, (n) => focus!.add(n))
     }
+    neighborsRef.current = focus
+
+    // Kind focus — set of node IDs whose kind matches the active
+    // chip set. Null when no chip is on (== "all kinds focused").
+    const kinds = kindFilter && kindFilter.size > 0 ? kindFilter : null
+    if (kinds) {
+      const ids = new Set<string>()
+      g.forEachNode((id, attrs) => {
+        if (kinds.has(attrs['kind'] as RepoGraphNodeKind)) ids.add(id)
+      })
+      kindFocusRef.current = ids
+    } else {
+      kindFocusRef.current = null
+    }
+
+    // Selected node gets the halo + size bump. Everything else snaps
+    // back to its base size so the focus is unambiguous. The dimming
+    // of non-focus nodes is handled by the nodeReducer below.
     g.forEachNode((id, attrs) => {
+      // Clear any leftover `hidden` from earlier versions of this
+      // code so a stale flag doesn't keep a node off-screen.
+      if (g.getNodeAttribute(id, 'hidden')) {
+        g.setNodeAttribute(id, 'hidden', false)
+      }
       const isSelected = id === selectedNodeId
       const baseSize = (attrs['baseSize'] as number | undefined) ?? 4
       g.setNodeAttribute(id, 'highlighted', isSelected)
       g.setNodeAttribute(id, 'size', isSelected ? baseSize * 1.6 : baseSize)
     })
+    g.forEachEdge((edgeId) => {
+      if (g.getEdgeAttribute(edgeId, 'hidden')) {
+        g.setEdgeAttribute(edgeId, 'hidden', false)
+      }
+    })
     sig.refresh()
-  }, [selectedNodeId])
+  }, [selectedNodeId, kindFilter])
 
   return (
     <div
@@ -467,12 +432,13 @@ function nodeAttributes(node: RepoGraphNode): Record<string, unknown> {
 }
 
 function edgeAttributes(edge: RepoGraphEdge): Record<string, unknown> {
-  // Edges default to a single muted slate so the graph reads as
-  // structure-with-connective-tissue rather than a competing rainbow.
-  // Source-node tint is applied per-frame by the edgeReducer when the
-  // user hovers an incident node — that's where edges earn color.
+  // Edges always render in a single muted slate so the graph reads
+  // as structure + connective tissue, never competing with node hues
+  // for the user's attention. Emphasis on hover / selection comes
+  // from width + brightness shifts (see edgeReducer above), not from
+  // recoloring with the source-node hue.
   return {
-    color: EDGE_DEFAULT,
+    color: EDGE_REST,
     size: EDGE_SIZE[edge.kind] ?? 0.6,
     kind: edge.kind,
     // No labels by default — the canvas already shows direction via
@@ -482,11 +448,26 @@ function edgeAttributes(edge: RepoGraphEdge): Record<string, unknown> {
 }
 
 function runForceLayout(g: Graph): void {
-  // forceAtlas2.assign mutates the node x/y attributes. Settings
-  // tuned for graphs under ~600 nodes; gravity keeps disconnected
-  // components from flying off-screen. `barnesHutOptimize` is the
-  // approximation that makes layout linear-ish in node count.
-  const iterations = Math.max(80, Math.min(400, Math.round(800 / Math.max(1, g.order / 100))))
+  // forceAtlas2.assign mutates the node x/y attributes. `barnesHutOptimize`
+  // is the approximation that makes layout linear-ish in node count, so
+  // we lean on it for anything above ~200 nodes.
+  //
+  // Iteration budget: decays linearly with graph order but floors at
+  // 150 — fewer than that leaves big graphs stuck in their random init
+  // and produces a hairball. The previous formula floored at 80 which
+  // was too few once we lifted NETWORK_CAPS from 600 to 3000.
+  //
+  //    order ≤ 200    → 400 iterations (snappy + tight on small graphs)
+  //    order = 1000   → 350
+  //    order = 2000   → 300
+  //    order = 3000   → 250
+  //    order ≥ 5000   → 150 (the floor — accept a looser layout)
+  //
+  // Wall-clock on M-series with barnes-hut: ~0.2s @ 600 / ~1s @ 1500 /
+  // ~3s @ 3000. Synchronous because the network round-trip dwarfs the
+  // layout cost in practice; a worker is the right next step if we
+  // ever push past 5000.
+  const iterations = Math.min(400, Math.max(150, Math.round(400 - g.order / 20)))
   forceAtlas2.assign(g, {
     iterations,
     settings: {
