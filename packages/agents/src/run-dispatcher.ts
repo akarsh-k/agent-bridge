@@ -368,12 +368,7 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
     // `currentStepStartedAt` lets `run.model.result` compute the per-
     // step wall-clock duration without subscribers having to subtract
     // adjacent event timestamps.
-    const mapState: MapChunkState = {
-      currentStepIndex: -1,
-      currentStepStartedAt: 0,
-      tokenIndex: 0,
-      pendingReasoning: '',
-    }
+    const mapState: MapChunkState = makeInitialMapChunkState()
 
     // Wrap the entire stream-iteration block in the inspector run
     // context (`docs/ARCHITECTURE.md §10`). Mastra's tool-execute
@@ -664,13 +659,37 @@ interface MappedEvent {
  * during one model turn carry the same step index. `tokenIndex` is
  * monotonic per run; the SSE consumer uses it to detect dropped frames.
  */
-interface MapChunkState {
+export interface MapChunkState {
   currentStepIndex: number
   /** Wall-clock ms when the most recent step-start fired, used by
    *  `mapChunkToModelEvent` to compute the per-step `durationMs` on
    *  the matching `run.model.result`. 0 before the first step. */
   currentStepStartedAt: number
   tokenIndex: number
+  /**
+   * Visible text accumulated across `text-delta` chunks within the
+   * current step. Reset to '' on each `step-start`; used as a
+   * fallback at `step-finish` when Mastra's payload doesn't carry a
+   * `text` field. Without this, the `run.model.result` row for
+   * provider adapters that stream deltas but don't summarise into
+   * `step-finish.text` (e.g. some `llama_cpp` / OpenAI-compatible
+   * setups) ends up with `text: ''` — the chat tab renders fine
+   * (it consumes `run.token` directly) but the audit log loses the
+   * model's reply.
+   */
+  pendingText: string
+  /**
+   * Tool calls observed via `tool-call` chunks within the current
+   * step. Reset to [] on each `step-start`; used as a fallback at
+   * `step-finish` when Mastra's payload's `toolCalls` is missing or
+   * empty. Same provider-adapter shape as `pendingText`: tool-call
+   * chunks emit `run.tool.called` events fine on their own, but the
+   * `run.model.result` audit row reads `toolCalls` from step-finish,
+   * which is empty for the affected providers. Without this fallback
+   * the /logs page renders a step that "did nothing" even though the
+   * model invoked a tool.
+   */
+  pendingToolCalls: unknown[]
   /**
    * Reasoning text accumulated across `reasoning-delta` chunks within
    * the current step. Reset to '' on each `step-start`; copied into
@@ -684,6 +703,22 @@ interface MapChunkState {
 }
 
 /**
+ * Factory for a fresh `MapChunkState`. Exported so the dispatcher
+ * smoke can drive `mapChunk` without duplicating the literal — keeps
+ * test fixtures aligned with the production initial values.
+ */
+export function makeInitialMapChunkState(): MapChunkState {
+  return {
+    currentStepIndex: -1,
+    currentStepStartedAt: 0,
+    tokenIndex: 0,
+    pendingText: '',
+    pendingToolCalls: [],
+    pendingReasoning: '',
+  }
+}
+
+/**
  * Map one Mastra chunk to at most one of our `run.*` events. Chunks
  * we don't surface in 3d (reasoning-*, raw, watch, workflow-*) return
  * `null` and get dropped.
@@ -694,7 +729,7 @@ interface MapChunkState {
  *   - `runId: string`         — Mastra-internal run id (unrelated to ours)
  *   - `from: ChunkFrom`       — AGENT | USER | SYSTEM | WORKFLOW | NETWORK
  */
-function mapChunk(
+export function mapChunk(
   chunk: unknown,
   runId: string,
   state: MapChunkState,
@@ -709,6 +744,10 @@ function mapChunk(
     case 'text-delta': {
       const text = typeof payload['text'] === 'string' ? payload['text'] : ''
       if (text.length === 0) return null
+      // Accumulate into pendingText so step-finish can fall back to it
+      // when Mastra's payload doesn't surface a `text` field — see
+      // MapChunkState.pendingText for why this matters.
+      state.pendingText += text
       const idx = state.tokenIndex
       state.tokenIndex += 1
       return {
@@ -729,9 +768,12 @@ function mapChunk(
       state.currentStepIndex =
         explicit !== null ? explicit : state.currentStepIndex + 1
       state.currentStepStartedAt = ts
-      // Drop any reasoning carried over from a prior step. Reasoning is
-      // per-step; if the next step doesn't emit any, the model.result
-      // for it should report `reasoning: null`, not the previous step's.
+      // Drop accumulators carried over from the prior step. Each is
+      // a per-step buffer: if the next step doesn't emit any of the
+      // respective chunk types, model.result should report ''/null/[]
+      // for it, not the previous step's content.
+      state.pendingText = ''
+      state.pendingToolCalls = []
       state.pendingReasoning = ''
       return {
         kind: 'run.step.started',
@@ -778,6 +820,16 @@ function mapChunk(
       }
     }
     case 'tool-call': {
+      // Stash a normalised record into pendingToolCalls so the
+      // matching `run.model.result` at step-finish can populate its
+      // `toolCalls` field even when Mastra's step-finish payload is
+      // missing the toolCalls array. See MapChunkState.pendingToolCalls
+      // for the why.
+      state.pendingToolCalls.push({
+        toolCallId: stringOr(payload['toolCallId'], ''),
+        toolName: stringOr(payload['toolName'], ''),
+        input: payload['args'] ?? payload['input'] ?? null,
+      })
       return {
         kind: 'run.tool.called',
         ts,
@@ -894,7 +946,7 @@ function mapChunk(
  * This is a deliberate departure from the inspector subsystem's 2KB
  * convention; see `RunModelCalledPayload` for the reasoning.
  */
-function mapChunkToModelEvent(
+export function mapChunkToModelEvent(
   chunk: unknown,
   runId: string,
   state: MapChunkState,
@@ -933,10 +985,26 @@ function mapChunkToModelEvent(
       // run-level `outputSummary` which concatenates all steps). The
       // `response` field carries the raw provider response when
       // surfaced; we forward it opaquely.
-      const text = stringOr(payload['text'], '')
-      const toolCalls = Array.isArray(payload['toolCalls'])
+      //
+      // Some provider adapters (notably llama_cpp via the OpenAI-
+      // compatible bridge for Qwen3 / DeepSeek-style models) stream
+      // text-delta chunks correctly but omit a summarised `text` on
+      // step-finish — leaving the audit log row empty while the chat
+      // tab (which reads `run.token` events directly) renders fine.
+      // Fall back to the pendingText accumulator we keep in MapState.
+      const text =
+        stringOr(payload['text'], '') || state.pendingText
+      // Same fallback shape as `text`: providers that stream `tool-call`
+      // chunks but don't include them in `step-finish.toolCalls` would
+      // produce an audit row claiming the step "did nothing" even though
+      // a tool was actually invoked. Per-step accumulator covers that.
+      const payloadToolCalls = Array.isArray(payload['toolCalls'])
         ? (payload['toolCalls'] as ReadonlyArray<unknown>)
         : []
+      const toolCalls: ReadonlyArray<unknown> =
+        payloadToolCalls.length > 0
+          ? payloadToolCalls
+          : state.pendingToolCalls
       // Reasoning comes from MapState (accumulated across `reasoning-
       // delta` chunks during this step), NOT from the step-finish
       // payload — Mastra streams reasoning separately and step-finish

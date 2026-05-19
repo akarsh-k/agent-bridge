@@ -48,6 +48,16 @@ export type {
 export { DrizzleOAuthStorage } from './mcp/oauth-storage.js'
 export { dispatchRun } from './run-dispatcher.js'
 export type { DispatchRunInput } from './run-dispatcher.js'
+// Exported for test harnesses (tests/smoke-dispatcher-mapper.ts). The
+// mapper is a pure function over Mastra-style chunk inputs; exposing
+// it lets us drive synthetic streams through the same logic the
+// production dispatcher uses, without spinning up Mastra.
+export {
+  mapChunk,
+  mapChunkToModelEvent,
+  makeInitialMapChunkState,
+} from './run-dispatcher.js'
+export type { MapChunkState } from './run-dispatcher.js'
 export { createRunRedactor } from './run-redactor.js'
 export type { RunRedactor } from './run-redactor.js'
 export {
