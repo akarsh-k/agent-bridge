@@ -39,29 +39,55 @@ import type {
   RepoGraphNodeKind,
 } from '@agent-bridge/shared'
 
-// Per-kind node colors — same palette as the existing legend / pill
-// dots so the canvas reads consistently with the rest of the UI.
-const KIND_COLOR: Record<RepoGraphNodeKind, string> = {
-  function: '#a78bfa',
-  method: '#67e8f9',
-  class: '#fbbf24',
-  file: '#94a3b8',
-  folder: '#a78bfa',
-  process: '#fbbf24',
-  community: '#f472b6',
+// ─── Color palette ────────────────────────────────────────────────────────
+//
+// Mirrors the CSS tokens in `./graph-tokens.css` (kept in sync by hand;
+// Sigma renders into a WebGL canvas and can't read CSS custom props, so
+// the source of truth is duplicated. Comment-locked: if you change one,
+// change the other.).
+//
+// Node colors and edge colors are deliberately separated — they used to
+// collide (function + folder + edge.calls were all #a78bfa) which made
+// the graph an unreadable purple blob. Each node KIND now has its own
+// perceptually-distinct hue, and edges share a single muted slate so
+// they read as connective tissue. Source-node tint is reapplied on
+// hover-of-incident-node by the edgeReducer, which is when the user
+// actually wants to read an edge.
+
+const NODE_COLOR: Record<RepoGraphNodeKind, string> = {
+  function: '#3b82f6',  // blue   — core "behaviour" node
+  method: '#14b8a6',    // teal   — function-bound-to-class
+  class: '#f59e0b',     // amber  — types / containers
+  file: '#94a3b8',      // slate  — neutral container
+  folder: '#64748b',    // slate-darker — purely structural
+  process: '#ef4444',   // red    — ordered execution flow
+  community: '#ec4899', // pink   — semantic cluster
 }
 
-// Per-edge-kind colors. Aim is for the operator to glance and tell
-// CALLS (violet) from IMPORTS (teal) from CONTAINS (muted grey-violet)
-// without checking the legend. All values are explicit and chosen to
-// work on both light + dark themes — earlier we tried rgba alphas
-// against the canvas background and they vanished on dark mode.
-const EDGE_COLOR: Record<RepoGraphEdge['kind'], string> = {
-  calls: '#a78bfa',
-  imports: '#67e8f9',
-  contains: '#6e6789',
-  step: '#fbbf24',
-  member: '#8a82a8',
+/**
+ * Default edge color — a single muted slate, applied to every edge
+ * regardless of kind. The user reads edges as "connections" by default
+ * and only needs to see the relation kind when they hover a node — at
+ * which point the edgeReducer below tints incident edges with the
+ * SOURCE-node color.
+ *
+ * This is the gitnexus pattern. One muted edge color keeps the graph
+ * legible; the hover interaction is what makes it interactive.
+ */
+const EDGE_DEFAULT = '#3a3a4a'
+
+/**
+ * Per-kind edge SIZES. Width still varies by kind so an operator can
+ * tell CALLS from IMPORTS at a glance even without hovering — calls
+ * and step (active-flow relations) read slightly bolder than the
+ * structural contains/member/imports.
+ */
+const EDGE_SIZE: Record<RepoGraphEdge['kind'], number> = {
+  calls: 1.0,
+  step: 1.1,
+  imports: 0.7,
+  contains: 0.55,
+  member: 0.55,
 }
 
 interface GraphCanvasSigmaProps {
@@ -101,6 +127,10 @@ export function GraphCanvasSigma({
   // emphasis) from "neighbouring context" (rendered dimmer + smaller).
   // Null when no filter is active.
   const matchesRef = useRef<Set<string> | null>(null)
+  // Currently-hovered node id, set by sigma's enterNode/leaveNode events.
+  // Drives the "incident edges light up in source-node color" effect —
+  // the only time edges show kind-color in the default view.
+  const hoveredRef = useRef<string | null>(null)
   // Theme-aware sigma colors. Sigma's `labelColor` is set at init
   // time; we read the live `--text` token from the document root
   // and update via `setSetting(...)` whenever the theme flips
@@ -125,7 +155,7 @@ export function GraphCanvasSigma({
       labelSize: 11,
       labelWeight: '500',
       labelFont:
-        'ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+        '"Outfit", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
       // Only render labels for the higher-degree nodes so dense
       // clusters don't fight for screen real estate.
       labelRenderedSizeThreshold: 6,
@@ -195,8 +225,43 @@ export function GraphCanvasSigma({
         const tgt = g.target(edgeId)
         const focus = neighborsRef.current
         const matches = matchesRef.current
+        const hovered = hoveredRef.current
+
+        // Hover wins over everything else (it's the most immediate
+        // user signal). When a node is hovered, its incident edges
+        // light up in the SOURCE-node color at full alpha + thicker
+        // stroke; every other edge fades. This is the gitnexus pattern:
+        // the user's cursor is the question, the highlighted edges
+        // are the answer.
+        if (hovered && !focus) {
+          if (src === hovered || tgt === hovered) {
+            const sourceKind = g.getNodeAttribute(src, 'kind') as
+              | RepoGraphNodeKind
+              | undefined
+            const tint = sourceKind ? NODE_COLOR[sourceKind] : EDGE_DEFAULT
+            const baseSize = (attrs['size'] as number | undefined) ?? 1
+            return {
+              ...attrs,
+              color: tint,
+              size: baseSize * 1.8,
+              zIndex: 2,
+            }
+          }
+          // Non-incident edges fade WAY back — almost invisible — so
+          // the relevant ones really pop.
+          return { ...attrs, color: themeColorsRef.current.dimmedEdge }
+        }
+
         if (focus) {
-          if (focus.has(src) && focus.has(tgt)) return attrs
+          if (focus.has(src) && focus.has(tgt)) {
+            // Inside the selection focus, paint incident edges in
+            // their SOURCE-node color so the user sees who-calls-whom.
+            const sourceKind = g.getNodeAttribute(src, 'kind') as
+              | RepoGraphNodeKind
+              | undefined
+            const tint = sourceKind ? NODE_COLOR[sourceKind] : EDGE_DEFAULT
+            return { ...attrs, color: tint, zIndex: 1 }
+          }
           return { ...attrs, color: themeColorsRef.current.dimmedEdge }
         }
         if (matches) {
@@ -218,6 +283,17 @@ export function GraphCanvasSigma({
       },
     })
     sig.on('clickNode', ({ node }) => clickRef.current(node))
+    // Hover-of-node lights up the incident edges in source-color via
+    // the edgeReducer. The reducer reads `hoveredRef`, so a single
+    // ref-mutation + refresh is all we need; no React state involved.
+    sig.on('enterNode', ({ node }) => {
+      hoveredRef.current = node
+      sig.refresh()
+    })
+    sig.on('leaveNode', () => {
+      hoveredRef.current = null
+      sig.refresh()
+    })
     sigmaRef.current = sig
     graphRef.current = g
     return () => {
@@ -297,31 +373,11 @@ export function GraphCanvasSigma({
     sig.refresh()
   }, [filter, kindFilter])
 
-  // Theme-watcher — re-read CSS tokens whenever the data-theme attr
-  // on <html> flips or the OS-level prefers-color-scheme changes
-  // under a `theme: system` setting. Cheap (one querySelector + a
-  // few getPropertyValue calls), so we don't bother memoising.
-  useEffect(() => {
-    const apply = () => {
-      const colors = readThemeColors()
-      themeColorsRef.current = colors
-      const sig = sigmaRef.current
-      if (!sig) return
-      sig.setSetting('labelColor', { color: colors.label })
-      sig.refresh()
-    }
-    const mo = new MutationObserver(apply)
-    mo.observe(document.documentElement, {
-      attributes: true,
-      attributeFilter: ['data-theme'],
-    })
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    mq.addEventListener('change', apply)
-    return () => {
-      mo.disconnect()
-      mq.removeEventListener('change', apply)
-    }
-  }, [])
+  // No theme-watcher: the graph modal owns its own surface stack
+  // (see ./graph-tokens.css). The canvas always renders against a
+  // near-black background regardless of the app's light/dark setting
+  // — same as gitnexus's own viewer. If the user wants a light-mode
+  // graph someday, this is where we'd reintroduce the watcher.
 
   // Selection — bumps the selected node's size + halo, and computes
   // the neighbour set the reducers use to dim the rest of the graph.
@@ -393,7 +449,7 @@ function nodeAttributes(node: RepoGraphNode): Record<string, unknown> {
   const baseSize = 3 + Math.sqrt(deg) * 1.4
   return {
     label: shortLabel(node),
-    color: KIND_COLOR[node.kind],
+    color: NODE_COLOR[node.kind],
     size: baseSize,
     baseSize,
     // Initial positions on a 1×1 grid — forceAtlas2 expands and
@@ -411,18 +467,13 @@ function nodeAttributes(node: RepoGraphNode): Record<string, unknown> {
 }
 
 function edgeAttributes(edge: RepoGraphEdge): Record<string, unknown> {
-  // Calls + step are the "active flow" relations and read better
-  // slightly bolder. Contains / member / imports are structural and
-  // stay at the base weight — bumping them too creates visual noise.
-  const size =
-    edge.kind === 'calls' || edge.kind === 'step'
-      ? 2.5
-      : edge.kind === 'imports'
-        ? 1.75
-        : 1.25
+  // Edges default to a single muted slate so the graph reads as
+  // structure-with-connective-tissue rather than a competing rainbow.
+  // Source-node tint is applied per-frame by the edgeReducer when the
+  // user hovers an incident node — that's where edges earn color.
   return {
-    color: EDGE_COLOR[edge.kind],
-    size,
+    color: EDGE_DEFAULT,
+    size: EDGE_SIZE[edge.kind] ?? 0.6,
     kind: edge.kind,
     // No labels by default — the canvas already shows direction via
     // arrow tips. Step edges from the processes mode would benefit
@@ -543,42 +594,22 @@ function makeDrawNodeHover(
 }
 
 function readThemeColors(): ThemeColors {
-  // Detect the active theme so we can pick contrasty defaults
-  // without relying on CSS-variable rgba math (which produced
-  // near-invisible greys against the dark canvas).
-  const isDark =
-    typeof document === 'undefined'
-      ? true
-      : (document.documentElement.dataset['theme'] === 'dark' ||
-          (document.documentElement.dataset['theme'] !== 'light' &&
-            window.matchMedia('(prefers-color-scheme: dark)').matches))
-  if (typeof window === 'undefined') {
-    return {
-      label: '#e5e7eb',
-      dimmedNode: '#4f4a66',
-      dimmedEdge: '#3d3a55',
-      hoverBg: '#16131f',
-      hoverBorder: '#3a3650',
-    }
-  }
-  const styles = getComputedStyle(document.documentElement)
-  const read = (token: string, fallback: string) => {
-    const v = styles.getPropertyValue(token).trim()
-    return v.length > 0 ? v : fallback
-  }
+  // The graph viewer owns its own near-black surface stack (see
+  // ./graph-tokens.css). Labels and dim states are fixed — independent
+  // of the app's data-theme attr. Going theme-reactive made dimmed
+  // nodes vanish against the dark canvas when the app was in light
+  // mode; this approach keeps the viewer legible in every theme.
   return {
-    label: read('--text', isDark ? '#edeaf8' : '#18181b'),
-    // The selected-node focus mode dims everything that isn't a
-    // neighbour. Going too dim (using `--border` etc) made the
-    // dimmed nodes disappear into the canvas on dark theme — pick
-    // theme-explicit mid-greys instead so the structure of the rest
-    // of the graph stays readable.
-    dimmedNode: isDark ? '#4f4a66' : '#cbcad6',
-    dimmedEdge: isDark ? '#3d3a55' : '#dcdae3',
-    // Hover label pill (overrides sigma's hardcoded #FFF). Solid
-    // surface color so it reads as "panel" against the canvas.
-    hoverBg: read('--surface', isDark ? '#16131f' : '#ffffff'),
-    hoverBorder: read('--border', isDark ? '#3a3650' : '#e0dfe6'),
+    label: '#e4e4ed',
+    // Calibrated for the gx-void / gx-deep backdrop (#06060a / #0a0a10).
+    // These sit just above the surface luminance so the structure
+    // is faintly visible without competing with the focus subset.
+    dimmedNode: '#2b2b3a',
+    dimmedEdge: '#1c1c26',
+    // Hover label pill uses the toolbar surface so it reads as
+    // "raised panel" against the canvas.
+    hoverBg: '#16161f',
+    hoverBorder: '#2a2a3a',
   }
 }
 

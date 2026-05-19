@@ -230,7 +230,11 @@ export function GraphModal({ repo, onClose }: GraphModalProps) {
             aria-label="Filter graph nodes by name or file path"
           />
           {mode === 'network' && (
-            <KindFilterChips value={kindFilter} onChange={setKindFilter} />
+            <KindFilterChips
+              value={kindFilter}
+              onChange={setKindFilter}
+              graph={state.kind === 'ready' ? state.graph : null}
+            />
           )}
           <div className="graph-modal-hint">{MODE_HINT[mode]}</div>
         </div>
@@ -256,13 +260,22 @@ export function GraphModal({ repo, onClose }: GraphModalProps) {
             <ErrorState message={state.message} />
           ) : null}
           {state.kind === 'ready' ? (
-            <GraphCanvasSigma
-              graph={state.graph}
-              selectedNodeId={selectedNodeId}
-              filter={filter}
-              kindFilter={kindFilter}
-              onNodeClick={(id) => setSelectedNodeId(id)}
-            />
+            <>
+              <GraphCanvasSigma
+                graph={state.graph}
+                selectedNodeId={selectedNodeId}
+                filter={filter}
+                kindFilter={kindFilter}
+                onNodeClick={(id) => setSelectedNodeId(id)}
+              />
+              {/* Floating legend — only useful in the modes where the
+                  top-toolbar kind chips are hidden (processes /
+                  communities). In `network` the chips already show
+                  the dot-per-kind, so a second legend would be noise. */}
+              {mode !== 'network' && (
+                <GraphLegend graph={state.graph} />
+              )}
+            </>
           ) : null}
           <NodeDetailsPanel
             repoId={repo.id}
@@ -428,13 +441,71 @@ const KIND_CHIPS: ReadonlyArray<{
   { kind: 'folder', label: 'Folders' },
 ]
 
+/**
+ * Floating legend rendered bottom-left of the canvas. Shown only in
+ * modes where the toolbar's kind-filter chips aren't visible (the
+ * chips themselves double as a legend in `network` mode). Lists the
+ * node kinds actually present in the current graph payload — so a
+ * process flow that's only Functions doesn't show a "Classes" entry.
+ */
+function GraphLegend({ graph }: { graph: RepoGraph }) {
+  const presentKinds = useMemo(() => {
+    const seen = new Set<RepoGraphNodeKind>()
+    for (const n of graph.nodes) seen.add(n.kind)
+    // Stable order: most common kinds first, focal-node kinds last.
+    const order: RepoGraphNodeKind[] = [
+      'function',
+      'method',
+      'class',
+      'file',
+      'folder',
+      'process',
+      'community',
+    ]
+    return order.filter((k) => seen.has(k))
+  }, [graph])
+
+  if (presentKinds.length === 0) return null
+
+  return (
+    <div className="graph-modal-legend" role="note" aria-label="Color key">
+      {presentKinds.map((k) => (
+        <span key={k} className="graph-legend-item">
+          <span
+            className={`graph-legend-swatch graph-node-icon-${k}`}
+            aria-hidden
+          />
+          {LABEL_PLURAL[k]}
+        </span>
+      ))}
+      <span className="graph-legend-item" title="Edges fade by default; hover a node to light up its connections">
+        <span className="graph-legend-edge" aria-hidden />
+        edges
+      </span>
+    </div>
+  )
+}
+
 function KindFilterChips({
   value,
   onChange,
+  graph,
 }: {
   value: ReadonlySet<RepoGraphNodeKind>
   onChange: (next: ReadonlySet<RepoGraphNodeKind>) => void
+  /** Current graph payload — used to surface live counts on each
+   *  chip ("Functions · 124"). Null while loading; counts hidden. */
+  graph: RepoGraph | null
 }) {
+  const counts = useMemo(() => {
+    const map: Partial<Record<RepoGraphNodeKind, number>> = {}
+    if (!graph) return map
+    for (const n of graph.nodes) {
+      map[n.kind] = (map[n.kind] ?? 0) + 1
+    }
+    return map
+  }, [graph])
+
   const toggle = (kind: RepoGraphNodeKind) => {
     const next = new Set(value)
     if (next.has(kind)) next.delete(kind)
@@ -448,26 +519,45 @@ function KindFilterChips({
         type="button"
         className={`graph-kind-chip ${!anyActive ? 'is-active' : ''}`}
         onClick={() => onChange(new Set())}
+        title="Show every node kind"
       >
         All
       </button>
       {KIND_CHIPS.map((c) => {
         const active = value.has(c.kind)
+        const count = counts[c.kind]
+        // Chip stays clickable but renders dimmer when there are zero
+        // nodes of this kind in the current payload — gives the
+        // operator a sense of what's available without removing
+        // affordance.
+        const empty = count === 0 || count == null
         return (
           <button
             key={c.kind}
             type="button"
             className={`graph-kind-chip kind-${c.kind} ${active ? 'is-active' : ''}`}
             onClick={() => toggle(c.kind)}
+            style={empty ? { opacity: 0.55 } : undefined}
           >
             <span
               className={`graph-kind-chip-dot graph-node-icon-${c.kind}`}
               aria-hidden
             />
-            {c.label}
+            <span>{c.label}</span>
+            {count != null && (
+              <span className="graph-kind-chip-count" aria-label={`${count} ${c.label.toLowerCase()}`}>
+                {formatCount(count)}
+              </span>
+            )}
           </button>
         )
       })}
     </div>
   )
+}
+
+function formatCount(n: number): string {
+  if (n < 1000) return String(n)
+  if (n < 10_000) return (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k'
+  return Math.round(n / 1000) + 'k'
 }

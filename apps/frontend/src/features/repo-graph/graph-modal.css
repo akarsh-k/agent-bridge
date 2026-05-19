@@ -1,9 +1,24 @@
-/* ---------------------------------------------------------------------------
-   GraphModal — full-screen overlay layered above the workspace canvas.
-   The styling tries to feel more like a "code intelligence" surface than
-   a generic dialog: layered backgrounds, glow accents, custom node cards
-   with per-kind icons + tints, animated CALLS edges.
---------------------------------------------------------------------------- */
+/* ===========================================================================
+   GraphModal — full-screen overlay over the workspace.
+
+   Aesthetic: gitnexus-style "code microscope". Deep near-black surfaces,
+   restrained chrome, saturated node hues that pop because the chrome
+   doesn't compete. Edges are monochrome until hover-of-incident-node, when
+   they take on their source-node hue (rendered in JS via the sigma
+   reducer). Active filter chip is the only place we deploy violet —
+   everywhere else, accent is held in reserve.
+
+   Tokens live in ./graph-tokens.css, scoped to .graph-modal-backdrop so
+   the rest of the app's theme stays untouched.
+=========================================================================== */
+
+@import './graph-tokens.css';
+
+/* Pull in the type pair gitnexus uses. Cheap — the modal only mounts
+   on demand, and the imports are cached after the first open. */
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+/* ---------- Backdrop ------------------------------------------------------ */
 
 .graph-modal-backdrop {
   position: fixed;
@@ -11,78 +26,78 @@
   z-index: 50;
   display: grid;
   place-items: center;
-  padding: 28px;
+  padding: 24px;
+  font-family: var(--gx-font);
+  color: var(--gx-text);
+  /* Single solid void — no purple wash. Atmosphere comes from a single
+     dim cone of light at the center, not gratuitous gradients. */
   background:
     radial-gradient(
-      900px 600px at 50% 25%,
-      rgba(139, 92, 246, 0.18),
-      transparent 70%
+      1100px 700px at 50% 35%,
+      rgba(124, 58, 237, 0.06),
+      transparent 60%
     ),
-    radial-gradient(
-      700px 500px at 80% 90%,
-      rgba(103, 232, 249, 0.08),
-      transparent 70%
-    ),
-    rgba(8, 7, 13, 0.78);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  pointer-events: auto;
-  animation: graph-modal-fade-in 200ms var(--ease-out);
+    rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(12px) saturate(120%);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  animation: gx-fade 220ms var(--gx-ease-out);
 }
 
-@keyframes graph-modal-fade-in {
+@keyframes gx-fade {
   from { opacity: 0; }
-  to { opacity: 1; }
+  to   { opacity: 1; }
 }
+
+/* ---------- Card ---------------------------------------------------------- */
 
 .graph-modal-card {
-  width: min(1280px, 100%);
-  height: min(840px, 100%);
+  width: min(1320px, 100%);
+  height: min(860px, 100%);
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-xl);
-  border: 1px solid var(--border-strong);
-  background:
-    linear-gradient(
-      180deg,
-      var(--surface-hi) 0%,
-      var(--surface) 60%,
-      var(--surface) 100%
-    );
+  border-radius: var(--gx-r-xl);
+  border: 1px solid var(--gx-border-strong);
+  background: var(--gx-deep);
   box-shadow:
-    0 24px 60px -12px rgba(0, 0, 0, 0.6),
-    0 0 0 1px rgba(167, 139, 250, 0.18);
+    0 40px 80px -20px rgba(0, 0, 0, 0.75),
+    0 1px 0 rgba(255, 255, 255, 0.02) inset;
   overflow: hidden;
   position: relative;
+  animation: gx-card-rise 280ms var(--gx-ease-out);
 }
 
+@keyframes gx-card-rise {
+  from { opacity: 0; transform: translateY(8px) scale(0.992); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Hairline accent at the top — the only place we permit accent on the
+   chrome itself. Reads like the bezel of an instrument. */
 .graph-modal-card::before {
-  /* Subtle accent ring along the top — feels like the canvas card has
-     "energy" coming off the heading. */
   content: '';
   position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
+  inset: 0 0 auto 0;
   height: 1px;
   background: linear-gradient(
     90deg,
     transparent 0%,
-    var(--accent-400) 30%,
-    var(--accent-400) 70%,
+    var(--gx-accent-hi) 40%,
+    var(--gx-accent-hi) 60%,
     transparent 100%
   );
-  opacity: 0.6;
+  opacity: 0.55;
   pointer-events: none;
 }
+
+/* ---------- Header -------------------------------------------------------- */
 
 .graph-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 16px 22px 14px;
-  border-bottom: 1px solid var(--border);
+  padding: 18px 22px 16px;
+  border-bottom: 1px solid var(--gx-border);
 }
 
 .graph-modal-heading {
@@ -93,14 +108,14 @@
 }
 
 .graph-modal-eyebrow {
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--accent-300);
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--gx-text-dim);
 }
 
 .graph-modal-eyebrow::before {
@@ -108,60 +123,64 @@
   width: 6px;
   height: 6px;
   border-radius: 999px;
-  background: var(--accent-400);
-  box-shadow: 0 0 12px var(--accent-glow);
+  background: var(--gx-accent-hi);
+  box-shadow: 0 0 10px var(--gx-accent-glow);
 }
 
 .graph-modal-subtitle {
   font-size: 12px;
-  color: var(--text-dim);
+  color: var(--gx-text-muted);
   word-break: break-all;
+  font-family: var(--gx-font-mono);
+  letter-spacing: 0;
 }
 
 .graph-modal-close {
   appearance: none;
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
-  color: var(--text-dim);
-  width: 32px;
-  height: 32px;
-  border-radius: 8px;
+  border: 1px solid var(--gx-border);
+  background: var(--gx-surface);
+  color: var(--gx-text-dim);
+  width: 34px;
+  height: 34px;
+  border-radius: var(--gx-r);
   display: grid;
   place-items: center;
   cursor: pointer;
   transition:
-    background var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out),
-    border-color var(--dur-1) var(--ease-out);
+    background var(--gx-dur-1) var(--gx-ease-out),
+    color var(--gx-dur-1) var(--gx-ease-out),
+    border-color var(--gx-dur-1) var(--gx-ease-out);
 }
 
 .graph-modal-close:hover {
-  background: var(--accent-bg);
-  color: var(--text);
-  border-color: var(--accent-border);
+  background: var(--gx-elevated);
+  color: var(--gx-text);
+  border-color: var(--gx-border-strong);
 }
 
-/* ---------- Toolbar with mode tabs ---------- */
+/* ---------- Toolbar (mode tabs + search + chips) -------------------------- */
 
 .graph-modal-toolbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    'tabs   search  hint'
+    'chips  chips   chips';
+  gap: 10px 14px;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  padding: 12px 22px;
-  border-bottom: 1px solid var(--border);
-  background:
-    linear-gradient(180deg, rgba(167, 139, 250, 0.04), transparent);
+  padding: 12px 22px 14px;
+  border-bottom: 1px solid var(--gx-border);
+  background: var(--gx-surface);
 }
 
 .graph-modal-tabs {
+  grid-area: tabs;
   display: inline-flex;
   gap: 2px;
-  padding: 4px;
-  border-radius: var(--radius);
-  background: var(--surface-raised);
-  border: 1px solid var(--border);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  padding: 3px;
+  border-radius: var(--gx-r);
+  background: var(--gx-deep);
+  border: 1px solid var(--gx-border);
 }
 
 .graph-modal-tab {
@@ -169,64 +188,213 @@
   border: none;
   background: transparent;
   padding: 6px 14px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--gx-r-sm);
   font-size: 12px;
-  font-weight: 600;
-  color: var(--text-dim);
+  font-weight: 500;
+  color: var(--gx-text-muted);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  font-family: var(--gx-font);
+  letter-spacing: 0.01em;
   transition:
-    background var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out),
-    transform var(--dur-1) var(--ease-out);
+    background var(--gx-dur-1) var(--gx-ease-out),
+    color var(--gx-dur-1) var(--gx-ease-out);
 }
 
 .graph-modal-tab:hover:not(.is-active) {
-  color: var(--text);
-  background: var(--surface-hover);
+  color: var(--gx-text);
+  background: var(--gx-hover);
 }
 
 .graph-modal-tab.is-active {
-  color: var(--text);
-  background: linear-gradient(
-    180deg,
-    rgba(167, 139, 250, 0.22),
-    rgba(139, 92, 246, 0.16)
-  );
-  box-shadow:
-    0 0 0 1px var(--accent-border),
-    0 6px 14px -8px var(--accent-glow);
+  color: var(--gx-text);
+  background: var(--gx-elevated);
+  box-shadow: 0 0 0 1px var(--gx-border-strong);
 }
 
 .graph-modal-tab-dot {
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
   flex: 0 0 auto;
-  box-shadow: 0 0 8px currentColor;
+  opacity: 0.9;
 }
-.dot-symbols { background: #a78bfa; color: #a78bfa; }
-.dot-structure { background: #67e8f9; color: #67e8f9; }
-.dot-imports { background: #fbbf24; color: #fbbf24; }
+/* Mode dots — distinct hues, not reused from the node palette so the
+   tab strip reads as its own visual layer. */
+.dot-network      { background: var(--gx-accent-hi); }
+.dot-processes    { background: var(--gx-node-process); }
+.dot-communities  { background: var(--gx-node-community); }
+
+/* Search input — same height as the tab strip so the toolbar reads
+   as one row. */
+.graph-modal-search {
+  grid-area: search;
+  appearance: none;
+  height: 32px;
+  padding: 0 12px 0 32px;
+  border-radius: var(--gx-r);
+  border: 1px solid var(--gx-border);
+  background:
+    /* magnifying-glass glyph rendered in CSS so we don't drag in an
+       icon set just for this */
+    url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12' fill='none' stroke='%236a6a80' stroke-width='1.4'><circle cx='5.2' cy='5.2' r='3.4'/><path d='m8 8 2.5 2.5' stroke-linecap='round'/></svg>")
+      no-repeat 11px 50%,
+    var(--gx-deep);
+  color: var(--gx-text);
+  font-size: 12.5px;
+  font-family: var(--gx-font);
+  letter-spacing: 0.01em;
+  width: 100%;
+  max-width: 360px;
+  justify-self: start;
+  transition:
+    border-color var(--gx-dur-1) var(--gx-ease-out),
+    background-color var(--gx-dur-1) var(--gx-ease-out);
+}
+
+.graph-modal-search::placeholder {
+  color: var(--gx-text-muted);
+}
+
+.graph-modal-search:focus {
+  outline: none;
+  border-color: var(--gx-accent-border);
+  background-color: var(--gx-surface);
+  box-shadow: 0 0 0 3px var(--gx-accent-bg);
+}
 
 .graph-modal-hint {
-  font-size: 12px;
-  color: var(--text-muted);
+  grid-area: hint;
+  font-size: 11px;
+  font-style: italic;
+  color: var(--gx-text-muted);
   text-align: right;
-  flex: 1 1 auto;
-  min-width: 0;
+  max-width: 320px;
+  line-height: 1.45;
 }
 
-/* ---------- Stats bar ---------- */
+/* ---------- Kind-filter chips (row 2 of the toolbar) --------------------- */
+
+.graph-kind-chips {
+  grid-area: chips;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-kind-chip {
+  appearance: none;
+  border: 1px solid var(--gx-border);
+  background: var(--gx-deep);
+  color: var(--gx-text-dim);
+  font-size: 11.5px;
+  font-weight: 500;
+  font-family: var(--gx-font);
+  letter-spacing: 0.01em;
+  padding: 5px 11px;
+  border-radius: var(--gx-r-pill);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  transition:
+    background var(--gx-dur-1) var(--gx-ease-out),
+    color var(--gx-dur-1) var(--gx-ease-out),
+    border-color var(--gx-dur-1) var(--gx-ease-out),
+    transform var(--gx-dur-1) var(--gx-ease-out);
+}
+
+.graph-kind-chip:hover {
+  background: var(--gx-elevated);
+  color: var(--gx-text);
+  border-color: var(--gx-border-strong);
+}
+
+.graph-kind-chip:active {
+  transform: translateY(0.5px);
+}
+
+/* "All" master chip — distinct treatment so it reads as a control,
+   not a kind. Active means "no filter is on". */
+.graph-kind-chip:not([class*='kind-']) {
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 10.5px;
+}
+.graph-kind-chip:not([class*='kind-']).is-active {
+  background: var(--gx-accent-bg);
+  color: var(--gx-text);
+  border-color: var(--gx-accent-border);
+  box-shadow: 0 0 0 1px var(--gx-accent-border) inset;
+}
+
+/* Active kind chip: accent-tinted bg + accent border. The dot keeps
+   its native color so the eye still sees what kind it is. */
+.graph-kind-chip.is-active {
+  background: var(--gx-accent-bg);
+  color: var(--gx-text);
+  border-color: var(--gx-accent-border);
+}
+
+.graph-kind-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  /* Default — no kind class applied; render as muted */
+  background: var(--gx-text-muted);
+  box-shadow: 0 0 0 0 transparent;
+  transition: box-shadow var(--gx-dur-1) var(--gx-ease-out);
+}
+
+.graph-kind-chip.is-active .graph-kind-chip-dot {
+  /* The dot gets a faint glow when active so the chip looks "lit". */
+  box-shadow: 0 0 6px currentColor;
+}
+
+.graph-kind-chip-count {
+  /* Tabular numerals, mono, slightly muted — sits to the right of
+     the label like a count in a tab strip. Separator is a hair-thin
+     vertical line so the chip reads as label-then-count even on
+     dense rows. */
+  margin-left: 2px;
+  padding-left: 8px;
+  font-family: var(--gx-font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--gx-text-muted);
+  border-left: 1px solid var(--gx-border);
+  line-height: 1;
+}
+.graph-kind-chip.is-active .graph-kind-chip-count {
+  color: var(--gx-text-dim);
+  border-left-color: var(--gx-accent-border);
+}
+
+/* Per-kind dot colors — used by .graph-kind-chip-dot AND
+   .graph-stat-icon AND .graph-details-dot. One source of truth. */
+.graph-node-icon-function,  .kind-function .graph-kind-chip-dot,  .graph-details-dot.kind-function  { background: var(--gx-node-function);  color: var(--gx-node-function); }
+.graph-node-icon-method,    .kind-method   .graph-kind-chip-dot,  .graph-details-dot.kind-method    { background: var(--gx-node-method);    color: var(--gx-node-method); }
+.graph-node-icon-class,     .kind-class    .graph-kind-chip-dot,  .graph-details-dot.kind-class     { background: var(--gx-node-class);     color: var(--gx-node-class); }
+.graph-node-icon-file,      .kind-file     .graph-kind-chip-dot,  .graph-details-dot.kind-file      { background: var(--gx-node-file);      color: var(--gx-node-file); }
+.graph-node-icon-folder,    .kind-folder   .graph-kind-chip-dot,  .graph-details-dot.kind-folder    { background: var(--gx-node-folder);    color: var(--gx-node-folder); }
+.graph-node-icon-process,   .kind-process  .graph-kind-chip-dot,  .graph-details-dot.kind-process   { background: var(--gx-node-process);   color: var(--gx-node-process); }
+.graph-node-icon-community, .kind-community .graph-kind-chip-dot, .graph-details-dot.kind-community { background: var(--gx-node-community); color: var(--gx-node-community); }
+
+/* ---------- Stats bar ----------------------------------------------------- */
 
 .graph-modal-stats {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 6px;
   padding: 10px 22px;
-  border-bottom: 1px solid var(--border);
-  background: var(--surface);
+  border-bottom: 1px solid var(--gx-border);
+  background: var(--gx-deep);
   flex-wrap: wrap;
 }
 
@@ -234,180 +402,129 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 10px 4px 8px;
-  border-radius: var(--radius-pill);
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
+  padding: 4px 12px 4px 8px;
+  border-radius: var(--gx-r-pill);
+  background: var(--gx-surface);
   font-size: 11px;
-  color: var(--text-dim);
+  color: var(--gx-text-dim);
+  font-family: var(--gx-font);
+  line-height: 1;
 }
 
 .graph-stat-icon {
-  width: 14px;
-  height: 14px;
-  border-radius: 5px;
-  display: grid;
-  place-items: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: 0 0 auto;
 }
+/* `.graph-stat-icon` wraps `<DotIcon/>` (an svg fill=currentColor). Force
+   bg → none, color stays from the kind class, so the SVG renders solid. */
+.graph-stat .graph-stat-icon svg { display: none; }
 
 .graph-stat-label {
-  letter-spacing: 0.04em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
-  font-size: 10px;
+  font-size: 9.5px;
   font-weight: 600;
+  color: var(--gx-text-muted);
 }
 
 .graph-stat-value {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
-  color: var(--text);
+  color: var(--gx-text);
+  font-family: var(--gx-font-mono);
+  font-size: 11.5px;
 }
 
 .graph-stat-edges {
   margin-left: auto;
+  background: transparent;
+  padding-right: 0;
+}
+.graph-stat-edges .graph-stat-label {
+  letter-spacing: 0.16em;
 }
 
-/* ---------- Body / canvas frame ---------- */
+/* ---------- Body / canvas ------------------------------------------------- */
 
 .graph-modal-body {
   flex: 1;
   position: relative;
   display: flex;
   min-height: 0;
+  background: var(--gx-void);
 }
 
-.graph-flow-frame {
+.graph-sigma-frame {
   flex: 1;
   position: relative;
   min-height: 0;
+  /* Subtle vignette so the canvas reads as a discrete plate. NO violet
+     wash — too much chrome at the edges drowns the node hues. */
   background:
     radial-gradient(
-      1200px 700px at 50% 0%,
-      rgba(139, 92, 246, 0.07),
-      transparent 60%
+      1400px 800px at 50% 50%,
+      rgba(124, 58, 237, 0.025),
+      transparent 70%
     ),
-    var(--bg-canvas);
+    radial-gradient(
+      1800px 1200px at 50% 50%,
+      var(--gx-deep) 0%,
+      var(--gx-void) 100%
+    );
 }
 
-.graph-flow-frame .react-flow {
-  width: 100%;
-  height: 100%;
+.graph-sigma-frame canvas {
+  outline: none;
 }
 
-.graph-flow-frame .react-flow__edge-path {
-  filter: drop-shadow(0 0 6px rgba(167, 139, 250, 0.18));
-}
-
-/* React Flow's animated class drives a marching-ants stroke; we keep it
- * subtle so the dashes feel like data flow, not a barber pole. */
-.graph-flow-frame .graph-edge-calls .react-flow__edge-path {
-  filter: drop-shadow(0 0 6px rgba(167, 139, 250, 0.45));
-}
-
-.graph-flow-frame .graph-edge-imports .react-flow__edge-path {
-  filter: drop-shadow(0 0 6px rgba(103, 232, 249, 0.32));
-}
-
-.graph-modal-controls {
-  background: var(--surface-raised) !important;
-  border: 1px solid var(--border) !important;
-  border-radius: 10px !important;
-  overflow: hidden;
-  box-shadow: var(--shadow-1);
-}
-
-.graph-modal-controls button {
-  background: transparent !important;
-  border-bottom: 1px solid var(--border) !important;
-  color: var(--text-dim) !important;
-  fill: var(--text-dim) !important;
-}
-
-.graph-modal-controls button:hover {
-  background: var(--surface-hover) !important;
-  color: var(--text) !important;
-  fill: var(--text) !important;
-}
-
-.graph-modal-truncation {
-  position: absolute;
-  top: 14px;
-  left: 14px;
-  right: 14px;
-  z-index: 4;
-  padding: 9px 14px;
-  border-radius: var(--radius);
-  background: rgba(251, 191, 36, 0.10);
-  border: 1px solid rgba(251, 191, 36, 0.32);
-  color: var(--text);
-  font-size: 12px;
-  line-height: 1.45;
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-}
-
-.graph-modal-truncation-icon {
-  color: var(--warn);
-  flex: 0 0 auto;
-  font-size: 14px;
-  line-height: 1;
-  margin-top: 1px;
-}
-
-/* ---------- Legend ---------- */
+/* ---------- Floating legend (bottom-left of canvas) ---------------------- */
 
 .graph-modal-legend {
   position: absolute;
-  bottom: 14px;
-  left: 14px;
+  bottom: 16px;
+  left: 16px;
   z-index: 4;
-  padding: 8px 12px;
-  border-radius: var(--radius);
-  background: rgba(15, 14, 23, 0.85);
-  border: 1px solid var(--border);
+  padding: 10px 14px;
+  border-radius: var(--gx-r);
+  background: rgba(16, 16, 24, 0.85);
+  border: 1px solid var(--gx-border);
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 10px 14px;
+  gap: 10px 16px;
   font-size: 11px;
-  color: var(--text-dim);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  color: var(--gx-text-dim);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.6);
 }
 
 .graph-legend-item {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  font-family: var(--gx-font);
 }
 
 .graph-legend-swatch {
-  width: 10px;
-  height: 10px;
-  border-radius: 3px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
   display: inline-block;
+  box-shadow: 0 0 6px currentColor;
 }
 
 .graph-legend-edge {
   width: 18px;
-  height: 2px;
+  height: 1.5px;
   border-radius: 2px;
   display: inline-block;
+  background: var(--gx-edge);
 }
 
-.graph-legend-edge-calls {
-  background: repeating-linear-gradient(
-    90deg,
-    #a78bfa 0 4px,
-    transparent 4px 7px
-  );
-}
-.graph-legend-edge-imports { background: #67e8f9; }
-.graph-legend-edge-contains { background: rgba(167, 139, 250, 0.45); }
-
-/* ---------- State panels ---------- */
+/* ---------- State panels (loading / empty / error) ----------------------- */
 
 .graph-modal-state {
   flex: 1;
@@ -418,44 +535,47 @@
   gap: 14px;
   padding: 32px;
   text-align: center;
+  color: var(--gx-text);
 }
 
 .graph-modal-state-glyph {
-  width: 56px;
-  height: 56px;
-  border-radius: 16px;
+  width: 60px;
+  height: 60px;
+  border-radius: var(--gx-r-lg);
   display: grid;
   place-items: center;
-  background: var(--accent-bg);
-  border: 1px solid var(--accent-border);
-  color: var(--accent-300);
+  background: var(--gx-elevated);
+  border: 1px solid var(--gx-border-strong);
+  color: var(--gx-text-dim);
   font-size: 26px;
-  font-weight: 600;
+  font-weight: 500;
+  font-family: var(--gx-font-mono);
 }
 
 .graph-modal-state-glyph.err {
-  background: var(--danger-bg);
-  border-color: rgba(251, 113, 133, 0.32);
-  color: var(--danger);
+  background: rgba(239, 68, 68, 0.08);
+  border-color: rgba(239, 68, 68, 0.35);
+  color: var(--gx-danger);
 }
 
 .graph-modal-state-title {
   font-weight: 600;
   font-size: 16px;
-  color: var(--text);
+  color: var(--gx-text);
+  letter-spacing: -0.01em;
 }
 .graph-modal-state-title.err {
-  color: var(--danger);
+  color: var(--gx-danger);
 }
 
 .graph-modal-state-message {
   font-size: 13px;
-  color: var(--text-dim);
+  color: var(--gx-text-muted);
   max-width: 460px;
-  line-height: 1.55;
+  line-height: 1.6;
 }
 
-/* ---------- Loading dots ---------- */
+/* ---------- Loading dots -------------------------------------------------- */
 
 .graph-loader {
   display: inline-flex;
@@ -463,255 +583,96 @@
 }
 
 .graph-loader span {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 999px;
-  background: var(--accent-400);
-  opacity: 0.4;
-  animation: graph-loader-bounce 1s var(--ease-out) infinite;
-  box-shadow: 0 0 12px var(--accent-glow);
+  background: var(--gx-accent-hi);
+  opacity: 0.35;
+  animation: gx-bounce 1.1s var(--gx-ease-out) infinite;
+  box-shadow: 0 0 10px var(--gx-accent-glow);
 }
 
-.graph-loader span:nth-child(2) { animation-delay: 0.15s; }
-.graph-loader span:nth-child(3) { animation-delay: 0.3s; }
+.graph-loader span:nth-child(2) { animation-delay: 0.16s; }
+.graph-loader span:nth-child(3) { animation-delay: 0.32s; }
 
-@keyframes graph-loader-bounce {
-  0%, 100% { transform: translateY(0); opacity: 0.35; }
+@keyframes gx-bounce {
+  0%, 100% { transform: translateY(0); opacity: 0.3; }
   50%      { transform: translateY(-6px); opacity: 1; }
 }
 
-/* ---------- Custom React Flow node ---------- */
+/* ---------- Details panel (right side) ----------------------------------- */
 
-.graph-flow-frame .react-flow__node-abNode {
-  /* React Flow wraps the inner DOM in this class; reset its default
-     pill so our card chrome takes over. */
-  padding: 0;
-  border: none;
-  background: transparent;
-  font-family: inherit;
-}
-
-.graph-node {
-  width: 240px;
-  height: 56px;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: var(--radius);
-  border: 1px solid var(--border-strong);
-  background: linear-gradient(
-    180deg,
-    var(--surface-hi) 0%,
-    var(--surface-raised) 100%
-  );
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.03) inset,
-    0 4px 14px -8px rgba(0, 0, 0, 0.6);
-  color: var(--text);
-  position: relative;
-  transition:
-    transform var(--dur-2) var(--ease-spring),
-    border-color var(--dur-2) var(--ease-out),
-    box-shadow var(--dur-2) var(--ease-out);
-}
-
-.graph-node:hover {
-  border-color: var(--accent-border);
-  box-shadow:
-    0 0 0 1px var(--accent-border),
-    0 8px 22px -8px var(--accent-glow);
-  transform: translateY(-1px);
-}
-
-.graph-node-icon {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  flex: 0 0 auto;
-  border: 1px solid currentColor;
-}
-
-.graph-node-text {
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.graph-node-name {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  letter-spacing: -0.01em;
-}
-
-.graph-node-subtitle {
-  font-size: 10.5px;
-  color: var(--text-muted);
-  font-family: var(--font-mono);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.graph-node-degree {
-  flex: 0 0 auto;
-  min-width: 22px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: var(--radius-pill);
-  background: var(--accent-bg);
-  border: 1px solid var(--accent-border);
-  color: var(--accent-300);
-  font-size: 10.5px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.graph-node-handle {
-  width: 6px !important;
-  height: 6px !important;
-  border-radius: 999px !important;
-  background: var(--accent-400) !important;
-  border: 2px solid var(--surface-hi) !important;
-  opacity: 0;
-  transition: opacity var(--dur-1) var(--ease-out);
-}
-
-.graph-node:hover .graph-node-handle { opacity: 1; }
-
-/* Per-kind icon tint. The `.graph-node-icon` border + glyph both
- * inherit `currentColor`. */
-.graph-node-icon-folder {
-  color: #a78bfa;
-  background: rgba(167, 139, 250, 0.14);
-}
-.graph-node-icon-file {
-  color: #94a3b8;
-  background: rgba(148, 163, 184, 0.10);
-}
-.graph-node-icon-function {
-  color: #a78bfa;
-  background: rgba(167, 139, 250, 0.16);
-}
-.graph-node-icon-process {
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.16);
-}
-.graph-node-icon-community {
-  color: #f472b6;
-  background: rgba(244, 114, 182, 0.16);
-}
-.graph-node-icon-method {
-  color: #67e8f9;
-  background: rgba(103, 232, 249, 0.14);
-}
-.graph-node-icon-class {
-  color: #fbbf24;
-  background: rgba(251, 191, 36, 0.14);
-}
-
-/* Node frame tint per kind — subtle, just enough to read the kind
- * without the icon. */
-.graph-node-class {
-  border-color: rgba(251, 191, 36, 0.32);
-  background: linear-gradient(
-    180deg,
-    rgba(251, 191, 36, 0.07) 0%,
-    var(--surface-raised) 100%
-  );
-}
-
-.graph-node-method {
-  border-color: rgba(103, 232, 249, 0.28);
-}
-
-.graph-node-folder {
-  border-color: var(--accent-border);
-}
-
-.graph-node-file .graph-node-name {
-  color: var(--text-dim);
-}
-
-/* ---------- Node details panel ---------- */
-
-.graph-modal-body.is-details-open .graph-flow-frame {
-  border-right: 1px solid var(--border);
+.graph-modal-body.is-details-open .graph-sigma-frame {
+  border-right: 1px solid var(--gx-border);
 }
 
 .graph-details-panel {
-  /* Wider than the original 320px so the source preview stops feeling
-   * cramped — gitnexus's sidebar runs ~30% of the viewport on a
-   * typical laptop and that ratio reads well for code. */
   width: clamp(360px, 32vw, 520px);
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 16px 14px 18px;
+  gap: 14px;
+  padding: 18px 16px 20px;
   overflow-y: auto;
-  background: var(--surface);
-  border-left: 1px solid var(--border);
-  animation: graph-details-slide 220ms var(--ease-out);
+  background: var(--gx-surface);
+  border-left: 1px solid var(--gx-border);
+  animation: gx-details-slide 240ms var(--gx-ease-out);
+  font-family: var(--gx-font);
+  color: var(--gx-text);
 }
 
-@keyframes graph-details-slide {
-  from {
-    opacity: 0;
-    transform: translateX(8px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
+@keyframes gx-details-slide {
+  from { opacity: 0; transform: translateX(10px); }
+  to   { opacity: 1; transform: translateX(0); }
 }
 
 .graph-details-header {
   position: relative;
   padding-right: 28px;
 }
+
 .graph-details-eyebrow {
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-}
-.graph-details-name {
-  margin-top: 4px;
-  font-size: 15px;
+  letter-spacing: 0.14em;
+  color: var(--gx-text-muted);
   font-weight: 600;
-  color: var(--text);
-  line-height: 1.35;
-  word-break: break-word;
 }
+
+.graph-details-name {
+  margin-top: 6px;
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--gx-text);
+  line-height: 1.3;
+  word-break: break-word;
+  letter-spacing: -0.015em;
+  /* Code symbols look more "right" in mono — they ARE code identifiers */
+  font-family: var(--gx-font-mono);
+}
+
 .graph-details-close {
   position: absolute;
-  top: -2px;
-  right: -2px;
-  width: 22px;
-  height: 22px;
+  top: 0;
+  right: -4px;
+  width: 24px;
+  height: 24px;
   border: none;
   background: transparent;
-  color: var(--text-muted);
-  font-size: 18px;
+  color: var(--gx-text-muted);
+  font-size: 20px;
   line-height: 1;
   cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--gx-r-xs);
+  display: grid;
+  place-items: center;
+  transition:
+    background var(--gx-dur-1) var(--gx-ease-out),
+    color var(--gx-dur-1) var(--gx-ease-out);
 }
 .graph-details-close:hover {
-  background: var(--surface-hi);
-  color: var(--text);
+  background: var(--gx-hover);
+  color: var(--gx-text);
 }
 
 .graph-details-row {
@@ -719,39 +680,49 @@
   flex-direction: column;
   gap: 4px;
 }
+
 .graph-details-row-label {
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
+  letter-spacing: 0.12em;
+  color: var(--gx-text-muted);
+  font-weight: 600;
 }
+
 .graph-details-row-value {
   font-size: 12px;
-  color: var(--text-dim);
-  background: transparent;
-  border: none;
-  padding: 4px 6px;
-  border-radius: 4px;
+  color: var(--gx-text-dim);
+  background: var(--gx-deep);
+  border: 1px solid var(--gx-border-faint);
+  padding: 6px 8px;
+  border-radius: var(--gx-r-sm);
   text-align: left;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  font-family: var(--gx-font-mono);
 }
+
 .graph-details-copy {
   cursor: pointer;
+  transition:
+    background var(--gx-dur-1) var(--gx-ease-out),
+    border-color var(--gx-dur-1) var(--gx-ease-out);
 }
 .graph-details-copy:hover {
-  background: var(--surface-hi);
-  color: var(--text);
+  background: var(--gx-elevated);
+  border-color: var(--gx-border);
+  color: var(--gx-text);
 }
+
 .graph-details-copy-hint {
-  font-size: 10px;
+  font-size: 9.5px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-muted);
+  letter-spacing: 0.1em;
+  color: var(--gx-text-muted);
   opacity: 0;
-  transition: opacity 120ms var(--ease-out);
+  transition: opacity 120ms var(--gx-ease-out);
 }
 .graph-details-copy:hover .graph-details-copy-hint {
   opacity: 1;
@@ -759,8 +730,8 @@
 
 .graph-details-divider {
   height: 1px;
-  background: var(--border);
-  margin: 2px 0 6px;
+  background: var(--gx-border);
+  margin: 4px 0 4px;
 }
 
 .graph-details-section {
@@ -768,147 +739,153 @@
   flex-direction: column;
   gap: 6px;
 }
+
 .graph-details-section-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
 }
+
 .graph-details-section-label {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--gx-text-dim);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.12em;
 }
+
 .graph-details-section-count {
-  font-size: 10px;
-  color: var(--text-muted);
+  font-size: 10.5px;
+  color: var(--gx-text-muted);
+  font-family: var(--gx-font-mono);
+  font-variant-numeric: tabular-nums;
 }
+
 .graph-details-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
+
 .graph-details-link {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 9px;
+  padding: 7px 9px;
   border: none;
   background: transparent;
-  color: var(--text);
-  font-size: 12px;
-  border-radius: 4px;
+  color: var(--gx-text);
+  font-size: 12.5px;
+  border-radius: var(--gx-r-sm);
   cursor: pointer;
   text-align: left;
+  font-family: var(--gx-font-mono);
+  transition:
+    background var(--gx-dur-1) var(--gx-ease-out);
 }
 .graph-details-link:hover {
-  background: var(--surface-hi);
+  background: var(--gx-elevated);
 }
+
 .graph-details-link-name {
   flex: 1;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+
 .graph-details-link-meta {
   font-size: 10px;
-  color: var(--text-muted);
+  color: var(--gx-text-muted);
+  text-transform: lowercase;
+  font-family: var(--gx-font);
+  letter-spacing: 0.01em;
 }
+
 .graph-details-dot {
   width: 8px;
   height: 8px;
   flex-shrink: 0;
   border-radius: 50%;
-  background: var(--text-muted);
-}
-.graph-details-dot.kind-function {
-  background: #a78bfa;
-}
-.graph-details-dot.kind-method {
-  background: #67e8f9;
-}
-.graph-details-dot.kind-class {
-  background: #fbbf24;
-}
-.graph-details-dot.kind-folder {
-  background: var(--text-muted);
-}
-.graph-details-dot.kind-file {
-  background: #52507a;
+  background: var(--gx-text-muted);
+  box-shadow: 0 0 4px currentColor;
 }
 
 .graph-details-loading,
 .graph-details-empty,
 .graph-details-error {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--gx-text-muted);
   padding: 8px 6px;
+  font-style: italic;
 }
 .graph-details-error {
-  color: var(--danger);
+  color: var(--gx-danger);
+  font-style: normal;
 }
 
-.graph-flow-frame .react-flow__node-abNode.graph-node-selected {
-  outline: 1.5px solid var(--accent-300);
-  outline-offset: 2px;
-  border-radius: 8px;
-}
+/* ---------- Selection picker (processes / communities) ------------------ */
 
-/* ---------- Selection picker (processes / communities) ---------- */
-
-.graph-modal-body.is-picker-open .graph-flow-frame {
-  border-left: 1px solid var(--border);
+.graph-modal-body.is-picker-open .graph-sigma-frame {
+  border-left: 1px solid var(--gx-border);
 }
 
 .graph-picker {
-  width: 280px;
+  width: 300px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border-right: 1px solid var(--border);
+  background: var(--gx-surface);
+  border-right: 1px solid var(--gx-border);
   overflow: hidden;
+  font-family: var(--gx-font);
 }
 
 .graph-picker-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  padding: 14px 14px 8px;
+  padding: 14px 14px 10px;
   gap: 8px;
+  border-bottom: 1px solid var(--gx-border-faint);
 }
+
 .graph-picker-eyebrow {
   font-size: 10px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
+  letter-spacing: 0.14em;
+  color: var(--gx-text-muted);
+  font-weight: 600;
 }
+
 .graph-picker-count {
-  font-size: 10px;
-  color: var(--text-muted);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 10.5px;
+  color: var(--gx-text-muted);
+  font-family: var(--gx-font-mono);
+  font-variant-numeric: tabular-nums;
 }
 
 .graph-picker-loading,
 .graph-picker-empty,
 .graph-picker-error {
-  padding: 12px 14px;
+  padding: 14px;
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--gx-text-muted);
+  font-style: italic;
 }
 .graph-picker-error {
-  color: var(--danger);
+  color: var(--gx-danger);
+  font-style: normal;
 }
 
 .graph-picker-list {
   list-style: none;
   margin: 0;
-  padding: 4px 6px 12px;
+  padding: 6px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -920,87 +897,86 @@
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 4px;
-  padding: 8px 10px;
+  gap: 5px;
+  padding: 9px 11px;
   border: 1px solid transparent;
   background: transparent;
-  border-radius: 6px;
+  border-radius: var(--gx-r-sm);
   cursor: pointer;
   text-align: left;
   transition:
-    background 120ms var(--ease-out),
-    border-color 120ms var(--ease-out);
+    background var(--gx-dur-1) var(--gx-ease-out),
+    border-color var(--gx-dur-1) var(--gx-ease-out);
 }
 .graph-picker-item:hover {
-  background: var(--surface-hi);
+  background: var(--gx-elevated);
 }
 .graph-picker-item.is-selected {
-  background: var(--surface-hi);
-  border-color: var(--accent-300);
+  background: var(--gx-elevated);
+  border-color: var(--gx-accent-border);
+  /* Hairline indicator on the left edge, gitnexus-style */
+  box-shadow: inset 2px 0 0 0 var(--gx-accent-hi);
 }
 
 .graph-picker-item-title {
   font-size: 13px;
   font-weight: 500;
-  color: var(--text);
+  color: var(--gx-text);
   word-break: break-word;
-  line-height: 1.3;
+  line-height: 1.35;
+  font-family: var(--gx-font-mono);
+  letter-spacing: -0.005em;
 }
+
 .graph-picker-item-meta {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
-  color: var(--text-dim);
+  font-size: 10.5px;
+  color: var(--gx-text-muted);
 }
 
 .graph-picker-chip {
   display: inline-block;
-  padding: 1px 6px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--surface);
-  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: var(--gx-r-pill);
+  border: 1px solid var(--gx-border);
+  background: var(--gx-deep);
+  font-size: 9.5px;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  font-family: var(--gx-font);
+  color: var(--gx-text-muted);
 }
 .graph-picker-chip.chip-cross {
-  border-color: rgba(251, 191, 36, 0.55);
-  color: #fbbf24;
+  border-color: rgba(245, 158, 11, 0.45);
+  color: var(--gx-node-class);
 }
 .graph-picker-chip.chip-intra {
-  border-color: rgba(167, 139, 250, 0.55);
-  color: #a78bfa;
+  border-color: rgba(20, 184, 166, 0.45);
+  color: var(--gx-node-method);
 }
 .graph-picker-chip.chip-cohesion {
-  border-color: rgba(103, 232, 249, 0.45);
-  color: #67e8f9;
+  border-color: rgba(59, 130, 246, 0.45);
+  color: var(--gx-node-function);
 }
 
-/* Color-overrides for the new node kinds so they render distinctly
- * inside the canvas without changing any existing styles. */
-.graph-flow-frame .graph-node-process .graph-node-name,
-.graph-flow-frame .graph-node-community .graph-node-name {
-  color: var(--text);
-}
-
-/* ---------- File-slice preview in the details panel ---------- */
+/* ---------- File-slice preview in the details panel --------------------- */
 
 .graph-file-preview {
   margin: 0;
-  padding: 8px 0;
-  background: var(--surface-hi);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  font-family: var(--font-mono, ui-monospace, monospace);
+  padding: 10px 0;
+  background: var(--gx-deep);
+  border: 1px solid var(--gx-border-faint);
+  border-radius: var(--gx-r);
+  font-family: var(--gx-font-mono);
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.65;
   overflow-x: auto;
   overflow-y: auto;
-  /* Taller than the original 280px so multi-line symbols
-   * (a typical React component, a class with a handful of methods)
-   * fit without the user having to scroll inside the snippet. */
-  max-height: min(60vh, 560px);
+  max-height: min(60vh, 580px);
+  color: var(--gx-text);
 }
 
 .graph-file-preview code {
@@ -1010,131 +986,41 @@
 .graph-file-line {
   display: flex;
   align-items: baseline;
-  gap: 10px;
-  padding: 0 10px;
+  gap: 12px;
+  padding: 0 12px;
   white-space: pre;
 }
 
 .graph-file-line.graph-file-line-highlight {
-  background: color-mix(in srgb, var(--accent-300) 14%, transparent);
+  background: var(--gx-accent-bg);
+  box-shadow: inset 2px 0 0 0 var(--gx-accent-hi);
 }
 
 .graph-file-lineno {
   flex-shrink: 0;
   width: 32px;
   text-align: right;
-  color: var(--text-muted);
-  font-size: 10px;
+  color: var(--gx-text-faint);
+  font-size: 10.5px;
   user-select: none;
 }
 
 .graph-file-content {
-  color: var(--text);
+  color: var(--gx-text);
   white-space: pre;
 }
 
-/* ---------- Toolbar search input ---------- */
+/* ---------- Toolbar variant for wide viewports --------------------------- */
 
-.graph-modal-search {
-  appearance: none;
-  flex: 0 1 220px;
-  min-width: 160px;
-  height: 30px;
-  padding: 4px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
-  color: var(--text);
-  font-size: 12px;
-  font-family: inherit;
-  transition:
-    border-color var(--dur-1) var(--ease-out),
-    background var(--dur-1) var(--ease-out);
-}
-.graph-modal-search::placeholder {
-  color: var(--text-muted);
-}
-.graph-modal-search:focus {
-  outline: none;
-  border-color: var(--accent-300);
-  background: var(--surface);
-}
-
-/* ---------- Filter fade ---------- */
-
-.graph-flow-frame .react-flow__node-abNode.graph-node-faded {
-  opacity: 0.18;
-  transition: opacity 180ms var(--ease-out);
-}
-.graph-flow-frame .react-flow__node-abNode:not(.graph-node-faded) {
-  transition: opacity 180ms var(--ease-out);
-}
-.graph-flow-frame .react-flow__edge.graph-edge-faded {
-  opacity: 0.1;
-  transition: opacity 180ms var(--ease-out);
-}
-
-/* ---------- Sigma canvas frame ---------- */
-
-.graph-sigma-frame {
-  flex: 1;
-  position: relative;
-  min-height: 0;
-  background:
-    radial-gradient(
-      1200px 700px at 50% 0%,
-      rgba(139, 92, 246, 0.07),
-      transparent 60%
-    ),
-    var(--bg-canvas);
-}
-
-/* Sigma's container is a <div> we hand it a ref to; it injects its
- * own <canvas> elements absolutely-positioned inside. Make sure the
- * frame fills its slot or sigma uses a 0×0 viewport. */
-.graph-sigma-frame canvas {
-  outline: none;
-}
-
-/* ---------- Kind-filter chips ---------- */
-
-.graph-kind-chips {
-  display: inline-flex;
-  gap: 4px;
-  align-items: center;
-}
-
-.graph-kind-chip {
-  appearance: none;
-  border: 1px solid var(--border);
-  background: var(--surface-raised);
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 500;
-  padding: 4px 10px;
-  border-radius: 999px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  transition:
-    background var(--dur-1) var(--ease-out),
-    color var(--dur-1) var(--ease-out),
-    border-color var(--dur-1) var(--ease-out);
-  letter-spacing: 0.02em;
-}
-.graph-kind-chip:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-.graph-kind-chip.is-active {
-  background: var(--accent-bg);
-  border-color: var(--accent-border);
-  color: var(--text);
-}
-.graph-kind-chip-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
+@media (max-width: 980px) {
+  .graph-modal-toolbar {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      'tabs'
+      'search'
+      'chips'
+      'hint';
+  }
+  .graph-modal-search { max-width: none; }
+  .graph-modal-hint { text-align: left; }
 }
