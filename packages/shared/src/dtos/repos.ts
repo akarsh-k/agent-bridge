@@ -163,14 +163,32 @@ export type RepoBranchValidationFailure = z.infer<
 >
 
 /**
- * PATCH /api/repos/:id body. Only the secret is user-editable. Everything
- * else (status/paths/index timestamps) belongs to the worker.
+ * PATCH /api/repos/:id body. Only the secret and the embedding-cap
+ * preference are user-editable. Everything else (status / paths /
+ * index timestamps) belongs to the worker.
  */
 export const repoUpdateInputSchema = z
   .object({
-    gitPat: secretInputSchema,
+    gitPat: secretInputSchema.optional(),
+    /**
+     * Embedding-cap preference forwarded to `gitnexus analyze --embeddings`.
+     *
+     *   null → omitted; gitnexus's built-in 50k cap applies
+     *   0    → cap disabled; embed every node
+     *   N    → custom cap
+     *
+     * Required for repos whose node count exceeds the default cap and
+     * for which the operator has explicitly opted in to embedding
+     * everything (via the "Enable embeddings" notice on the detail
+     * page). Persists so future pulls auto-chain into the same setting.
+     */
+    embeddingNodeCap: z.number().int().nonnegative().nullable().optional(),
   })
   .strict()
+  .refine(
+    (v) => v.gitPat !== undefined || v.embeddingNodeCap !== undefined,
+    { message: 'PATCH requires at least one field to update' },
+  )
 
 export type RepoUpdateInput = z.infer<typeof repoUpdateInputSchema>
 
@@ -208,6 +226,14 @@ export const repoResponseSchema = z.object({
    * index job hasn't landed yet) or when the source tree has been wiped.
    */
   indexSummary: repoIndexSummarySchema.nullable(),
+  /**
+   * Embedding-cap preference. See `repoUpdateInputSchema.embeddingNodeCap`
+   * for semantics. `null` is the default and means "use gitnexus's
+   * built-in 50k cap." The UI surfaces the "Embeddings skipped" notice
+   * whenever this value is `null` AND `indexSummary.embeddings === 0`
+   * AND `indexSummary.nodes > 0`.
+   */
+  embeddingNodeCap: z.number().int().nonnegative().nullable(),
   /**
    * Wiki state — orthogonal to `status`, so a repo stays `ready` for
    * agents while its wiki regenerates. `wikiStatus` drives the inspector

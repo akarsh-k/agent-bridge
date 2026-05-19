@@ -219,11 +219,13 @@ export async function pullRepo(
 
 export async function indexRepo(
   repoId: string,
+  opts: { readonly force?: boolean } = {},
 ): Promise<RepoJobStartResponse> {
   const res = await callApi<{ ok: true } & RepoJobStartResponse>(
     fetch(`${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/index`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      body: opts.force ? JSON.stringify({ force: true }) : undefined,
     }),
   )
   return { jobId: res.jobId, streamId: res.streamId }

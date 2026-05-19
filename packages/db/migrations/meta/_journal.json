@@ -78,6 +78,13 @@
       "when": 1779112067190,
       "tag": "0010_slim_shriek",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1779200184633,
+      "tag": "0011_quick_kid_colt",
+      "breakpoints": true
     }
   ]
 }

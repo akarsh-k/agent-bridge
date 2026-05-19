@@ -38,6 +38,7 @@ import {
 } from '@agent-bridge/shared'
 import { Pill, type PillKind } from '../../ui/pill'
 import { useSSE } from '../../lib/use-sse'
+import { useWorkspace } from '../../lib/workspace-context'
 import { fetchWorkerJob, listWorkerJobs } from '../../lib/rpc'
 
 // ─── Phase model ─────────────────────────────────────────────────────────
@@ -121,10 +122,38 @@ interface ProgressReading {
 export function RepoLogTail({ repoId }: { repoId: string }) {
   const streamId = useMemo(() => repoStreamId(repoId), [repoId])
   const { connected, events: liveEvents } = useSSE(streamId, { cap: 400 })
+  const { refreshRepo } = useWorkspace()
   const [history, setHistory] = useState<HistorySnapshot | null>(null)
   const [historyLoading, setHistoryLoading] = useState<boolean>(true)
   const [historyError, setHistoryError] = useState<string | null>(null)
   const [collapsed, setCollapsed] = useState<boolean>(false)
+
+  // Auto-refresh the workspace's copy of this repo whenever a terminal
+  // worker event arrives. Without this the detail page is stuck on the
+  // pre-action status (e.g. shows "Clone" instead of "Pull" after the
+  // initial clone finishes) until a manual reload. Watches the live
+  // SSE stream the log tail already subscribes to, so no second
+  // EventSource and no per-repo polling.
+  //
+  // Fires on `.ok` / `.fail` / `.skipped` of any `repo.*` phase
+  // (clone, pull, index, embed, wiki, delete). `.started` and
+  // `.progress` are skipped — they don't change anything `refreshRepo`
+  // would observe on the row. De-duplicated by event timestamp.
+  const lastRefreshTsRef = useRef<number>(0)
+  useEffect(() => {
+    if (liveEvents.length === 0) return
+    const latest = liveEvents[liveEvents.length - 1]
+    if (!latest) return
+    if (!latest.kind.startsWith('repo.')) return
+    const terminal =
+      latest.kind.endsWith('.ok') ||
+      latest.kind.endsWith('.fail') ||
+      latest.kind.endsWith('.skipped')
+    if (!terminal) return
+    if (latest.ts <= lastRefreshTsRef.current) return
+    lastRefreshTsRef.current = latest.ts
+    void refreshRepo(repoId)
+  }, [liveEvents, refreshRepo, repoId])
 
   // Reset & re-hydrate when the repo changes. Strict-mode-safe: the
   // cancel ref is checked before every set so the second mount of a

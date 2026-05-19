@@ -84,6 +84,7 @@ export function toRepoResponse(
     lastError: row.lastError,
     gitPat: envelopeToSentinel(row.gitPatEnvelope),
     indexSummary: summary ?? null,
+    embeddingNodeCap: row.embeddingNodeCap,
     wikiStatus: row.wikiStatus,
     wikiGeneratedAt: row.wikiGeneratedAt
       ? row.wikiGeneratedAt.toISOString()
@@ -399,22 +400,38 @@ export const reposRouter = new Hono()
       const body = c.req.valid('json')
       const { db } = getDb()
 
-      const nextEnvelope = applySecretInput(body.gitPat)
-      if (nextEnvelope === SECRET_UNCHANGED) {
-        // The schema requires `gitPat` on PATCH, so 'unchanged' here is a
-        // valid but pointless request. Return a 422-equivalent using our
-        // validation code so the client learns to stop sending it.
-        return httpError(c, {
-          code: 'validation_failed',
-          message:
-            'PATCH /api/repos/:id with { gitPat: { action: "unchanged" } } ' +
-            'is a no-op; omit the call or use "set"/"clear".',
-        })
+      // Build the column-set incrementally so a PATCH that only touches
+      // one field doesn't clobber the other. Schema-level `.refine()` on
+      // `repoUpdateInputSchema` already rejects empty bodies, so we
+      // can assume at least one of gitPat / embeddingNodeCap is present.
+      const updates: Partial<typeof schema.repos.$inferInsert> = {}
+
+      if (body.gitPat !== undefined) {
+        const nextEnvelope = applySecretInput(body.gitPat)
+        if (nextEnvelope === SECRET_UNCHANGED) {
+          // 'unchanged' is a no-op intent — fast-fail so the client
+          // learns to stop sending it instead of silently doing
+          // nothing.
+          return httpError(c, {
+            code: 'validation_failed',
+            message:
+              'PATCH with { gitPat: { action: "unchanged" } } is a no-op; ' +
+              'omit the field or use "set"/"clear".',
+          })
+        }
+        updates.gitPatEnvelope = nextEnvelope
+      }
+
+      if (body.embeddingNodeCap !== undefined) {
+        // Pass-through. NULL → revert to gitnexus's built-in cap,
+        // 0 → cap disabled, N → custom cap. See `repos.embedding_node_cap`
+        // in `packages/db/src/schema.ts` for the policy.
+        updates.embeddingNodeCap = body.embeddingNodeCap
       }
 
       const [row] = await db
         .update(schema.repos)
-        .set({ gitPatEnvelope: nextEnvelope })
+        .set(updates)
         .where(eq(schema.repos.id, id))
         .returning()
 

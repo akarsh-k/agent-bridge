@@ -116,6 +116,16 @@ export const runEventKinds = [
   'repo.embed.ok',
   'repo.embed.fail',
   /**
+   * Embedding pass was deliberately skipped by gitnexus's safety cap
+   * (default 50,000 nodes; override per-repo via
+   * `repos.embedding_node_cap`). Distinct from `embed.fail` — nothing
+   * went wrong; gitnexus successfully completed the analyze and chose
+   * not to embed. The UI surfaces this as an inline notice on the
+   * repo detail page with an "Enable embeddings" affordance that
+   * persists the operator's choice on the row.
+   */
+  'repo.embed.skipped',
+  /**
    * Wrapper-tool path telemetry (`docs/ARCHITECTURE.md §10` A4). Emitted from
    * `packages/agents/src/inspector/*` around every wrapper invocation,
    * every internal LLM call (term-expansion), every gitnexus client
@@ -800,6 +810,29 @@ export interface RepoEmbedFailPayload {
   readonly repoId: string
   readonly message: string
   readonly exitCode?: number
+}
+
+/**
+ * Emitted by the worker after a successful analyze when gitnexus
+ * reported `embeddings: 0` despite an embedding provider being
+ * configured. Means gitnexus's `--embeddings <cap>` safety cap
+ * (default 50,000 nodes) kicked in. Informational, not an error.
+ *
+ *   `nodes`           — total node count gitnexus produced
+ *   `capUsed`         — the cap that triggered the skip (50,000 if the
+ *                       row's `embedding_node_cap` was NULL; otherwise
+ *                       the row's value)
+ *   `embeddingProvider` — model name, for UI display
+ *
+ * The frontend surfaces this as an inline notice on the repo detail
+ * page with an "Enable embeddings" action that PATCHes the row's
+ * `embeddingNodeCap` to 0 and triggers a force re-index.
+ */
+export interface RepoEmbedSkippedPayload {
+  readonly repoId: string
+  readonly nodes: number
+  readonly capUsed: number
+  readonly embeddingProvider: string
 }
 
 // ─── `inspector.*` payload shapes ────────────────────────────────────────

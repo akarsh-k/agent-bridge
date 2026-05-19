@@ -5,6 +5,7 @@
  */
 
 import { lazy, Suspense, useMemo, useState } from 'react'
+import type { RepoResponse } from '@agent-bridge/shared'
 import { useWorkspace } from '../../../../lib/workspace-context'
 import { Link } from '../../../../lib/link'
 import { navigate } from '../../../../lib/router'
@@ -45,7 +46,8 @@ const STATUS_PILL: Record<
 }
 
 export function RepoDetailPage({ id }: { id: string }) {
-  const { repos, patchRepo, removeRepo, agentResources } = useWorkspace()
+  const { repos, patchRepo, refreshRepo, removeRepo, agentResources } =
+    useWorkspace()
   const repo = repos.find((r) => r.id === id)
   const dependentAgentIds = useMemo(() => {
     const ids: string[] = []
@@ -105,6 +107,11 @@ export function RepoDetailPage({ id }: { id: string }) {
     try {
       await fn()
       toast.success(`${label} kicked off`)
+      // Pick up the backend's CAS-flipped status immediately
+      // (cloning/pulling/indexing) instead of waiting for the first
+      // SSE frame. RepoLogTail handles the terminal `.ok`/`.fail`
+      // refresh once the worker job finishes.
+      void refreshRepo(repo.id)
     } catch (e) {
       toast.error(
         e instanceof ApiError
@@ -280,6 +287,29 @@ export function RepoDetailPage({ id }: { id: string }) {
         </div>
       )}
 
+      <EmbeddingsSkippedNotice
+        repo={repo}
+        busy={running !== null}
+        onEnable={async () => {
+          setRunning('Enable embeddings')
+          try {
+            await patchRepo(repo.id, { embeddingNodeCap: 0 })
+            await indexRepo(repo.id, { force: true })
+            toast.success('Embedding-cap disabled — re-indexing with embeddings')
+          } catch (e) {
+            toast.error(
+              e instanceof ApiError
+                ? e.message
+                : e instanceof Error
+                  ? e.message
+                  : 'Failed to enable embeddings',
+            )
+          } finally {
+            setRunning(null)
+          }
+        }}
+      />
+
       <div className="ab-card ab-card-pad ab-form-section">
         <div className="ab-section-head">
           <div className="ab-section-title">Index summary</div>
@@ -403,6 +433,111 @@ function Stat({
 function shortRepoName(remoteUrl: string): string {
   const m = remoteUrl.match(/[/:]([^/:]+\/[^/]+?)(?:\.git)?$/)
   return m ? m[1]! : remoteUrl
+}
+
+/** Default `--embeddings <cap>` value gitnexus applies when no override
+ *  is passed. Mirrored from `gitnexus/dist/core/embedding-mode.js`. */
+const GITNEXUS_DEFAULT_EMBED_CAP = 50_000
+
+/**
+ * Inline notice that surfaces gitnexus's silent embedding-cap skip and
+ * offers a one-click opt-in. Rendered when:
+ *
+ *   - the repo's last analyze produced rows of nodes but zero embeddings
+ *     (`indexSummary.nodes > 0 && indexSummary.embeddings === 0`)
+ *   - AND the operator hasn't already overridden the cap
+ *     (`embeddingNodeCap === null`)
+ *
+ * Once the operator clicks "Enable embeddings for this repo," we PATCH
+ * `embeddingNodeCap = 0` (disable cap entirely) and trigger a force
+ * re-index. The persisted setting means future pulls auto-chain into
+ * the same behaviour — no re-prompting.
+ */
+function EmbeddingsSkippedNotice({
+  repo,
+  busy,
+  onEnable,
+}: {
+  repo: RepoResponse
+  busy: boolean
+  onEnable: () => void | Promise<void>
+}) {
+  const summary = repo.indexSummary
+  const skipDetected =
+    summary !== null &&
+    typeof summary.nodes === 'number' &&
+    summary.nodes > 0 &&
+    summary.embeddings === 0 &&
+    repo.embeddingNodeCap === null
+
+  if (!skipDetected) return null
+
+  return (
+    <div
+      role="status"
+      className="ab-alert ab-alert-warn"
+      style={{
+        // Multi-line body — the dot lives inline with the title row
+        // below instead of as a side-sibling, so the default
+        // `align-items: center` rule on .ab-alert doesn't pull it
+        // toward the body's vertical midpoint. Single-column flex.
+        flexDirection: 'column',
+        alignItems: 'stretch',
+        gap: 0,
+      }}
+    >
+      <div
+        className="ab-alert-body"
+        style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
+      >
+        <div
+          className="ab-alert-title"
+          style={{ display: 'flex', alignItems: 'center', gap: 10 }}
+        >
+          <span
+            className="ab-alert-dot"
+            aria-hidden="true"
+            style={{ background: 'var(--warn)' }}
+          />
+          Embeddings skipped
+        </div>
+        <div
+          style={{
+            fontSize: 13,
+            lineHeight: 1.55,
+            color: 'var(--text-dim)',
+            paddingLeft: 18, /* dot (8) + gap (10) — line text up with title */
+          }}
+        >
+          gitnexus indexed{' '}
+          <span className="ab-mono" style={{ color: 'var(--text)' }}>
+            {summary?.nodes?.toLocaleString() ?? '?'}
+          </span>{' '}
+          nodes, but skipped embedding generation because the count exceeded
+          its default{' '}
+          <span className="ab-mono">
+            {GITNEXUS_DEFAULT_EMBED_CAP.toLocaleString()}
+          </span>
+          -node safety cap. Without embeddings, semantic search falls back to
+          BM25 only. Inspector queries will be less precise. Enabling will
+          embed every node on the next analyze. The choice persists across
+          future pulls.
+        </div>
+        <div
+          style={{
+            marginTop: 6,
+            display: 'flex',
+            gap: 8,
+            paddingLeft: 18,
+          }}
+        >
+          <Button variant="primary" onClick={onEnable} disabled={busy}>
+            {busy ? 'Working…' : 'Enable embeddings for this repo'}
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function formatTs(iso: string): string {

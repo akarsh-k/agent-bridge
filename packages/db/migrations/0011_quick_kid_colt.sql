@@ -1,0 +1,1 @@
+ALTER TABLE "repos" ADD COLUMN "embedding_node_cap" integer;

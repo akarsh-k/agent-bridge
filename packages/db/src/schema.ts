@@ -235,6 +235,22 @@ export const repos = pgTable(
     /** AES-256-GCM envelope. Nullable for public repos. */
     gitPatEnvelope: text('git_pat_envelope'),
     /**
+     * Embedding node-count cap passed to `gitnexus analyze --embeddings`.
+     *
+     *   NULL → don't pass a value; gitnexus applies its built-in
+     *           50,000-node safety cap (the default for unconfigured
+     *           workspaces).
+     *   0    → pass `--embeddings 0`; cap disabled, every node embedded.
+     *   N    → pass `--embeddings N`; custom cap.
+     *
+     * Persisted per-repo because the right answer depends on that
+     * repo's size and the operator's memory + cost budget. The UI's
+     * "Embeddings skipped" notice on the repo detail page is the
+     * canonical place to change this — operator picks Embed-anyway,
+     * we flip to 0, future pulls auto-chain with the new cap.
+     */
+    embeddingNodeCap: integer('embedding_node_cap'),
+    /**
      * Wiki state — orthogonal to `status`. A repo stays `ready`
      * for agents while its wiki regenerates. `wiki_status` drives the
      * inspector dot + button enablement; the worker owns every transition

@@ -260,16 +260,12 @@ export async function handleIndexRepoJob(
       }
     }
 
-    await publish({
-      kind: 'repo.embed.started',
-      ts: now(),
-      streamId,
-      data: {
-        repoId: input.repoId,
-        providerKind: embeddingProvider.kind,
-        model: embeddingProvider.defaultModel ?? '(unset)',
-      },
-    })
+    // We used to emit `repo.embed.started` here, before gitnexus even
+    // booted. That lit up the "Embedding" phase chip for the entire
+    // analyze pass — including the scan/parse/scope-resolution phases
+    // where the embedder isn't touched at all. The chip is now fired
+    // lazily by the onLine handler below when gitnexus's own output
+    // shows it has entered the embed phase.
   }
 
   // Capture the most recent meaningful error line gitnexus prints. When
@@ -281,6 +277,12 @@ export async function handleIndexRepoJob(
   // gitnexus's known error markers and keep the latest. The catch
   // block below uses this when present.
   let capturedError: string | null = null
+  // True once gitnexus's output indicates it has entered the embedding
+  // phase. Gates the `repo.embed.*` terminal emissions below so the
+  // Embedding phase chip only animates while embedding actually runs
+  // (and doesn't fire at all on incremental analyses where gitnexus
+  // skips embedding entirely).
+  let embedPhaseSeen = false
   // Coalesce progress events to ~1/sec. On a sqlalchemy-scale embed
   // gitnexus emits thousands of stderr lines; persisting + streaming
   // all of them is what made the repo-detail page laggy. Error
@@ -295,10 +297,33 @@ export async function handleIndexRepoJob(
       mode: input.mode,
       force: input.force,
       embeddings: true,
+      embeddingNodeCap: row.embeddingNodeCap ?? null,
       env: embeddingEnv,
       onLine: async (line) => {
         const cleaned = redactSecrets(line, redactList)
         if (looksLikeFatalLine(cleaned)) capturedError = cleaned
+
+        // Detect the embedding-phase transition. Gitnexus's pino
+        // logs include "🔍 Querying embeddable nodes..." right at
+        // the start of the embed pipeline, and "embedBatch" appears
+        // in every per-batch log thereafter — either one marks
+        // "we're actually embedding now". Once seen we emit the
+        // started event and disarm the detector so it only fires
+        // once per analyze run.
+        if (embeddingProvider && !embedPhaseSeen && looksLikeEmbedPhase(cleaned)) {
+          embedPhaseSeen = true
+          await publish({
+            kind: 'repo.embed.started',
+            ts: now(),
+            streamId,
+            data: {
+              repoId: input.repoId,
+              providerKind: embeddingProvider.kind,
+              model: embeddingProvider.defaultModel ?? '(unset)',
+            },
+          })
+        }
+
         if (!progressThrottle.shouldEmit()) return
         await publish({
           kind: 'repo.index.progress',
@@ -338,10 +363,39 @@ export async function handleIndexRepoJob(
         summary,
       } satisfies RepoIndexOkPayload,
     })
-    if (embeddingProvider) {
-      // Index + embed run in one process (`gitnexus analyze --embeddings`)
-      // so a clean index exit also implies embeddings completed. We don't
-      // get a separate file count from gitnexus, so leave `files: null`.
+    // Skip-detection fires when gitnexus completed analyze cleanly
+    // but produced zero embeddings despite a provider being configured.
+    // That happens when gitnexus's `--embeddings` safety cap triggers
+    // (default 50,000 nodes; per-repo override via
+    // `repos.embedding_node_cap`). The UI shows an "Enable embeddings"
+    // notice driven by this event.
+    const embedSkipped =
+      !!embeddingProvider &&
+      typeof summary.nodes === 'number' &&
+      summary.nodes > 0 &&
+      summary.embeddings === 0
+    if (embedSkipped) {
+      const GITNEXUS_DEFAULT_EMBED_CAP = 50_000
+      await publish({
+        kind: 'repo.embed.skipped',
+        ts: Date.now(),
+        streamId,
+        data: {
+          repoId: row.id,
+          nodes: summary.nodes ?? 0,
+          capUsed: row.embeddingNodeCap ?? GITNEXUS_DEFAULT_EMBED_CAP,
+          embeddingProvider: embeddingProvider?.defaultModel ?? '(unset)',
+        },
+      })
+    }
+    if (embeddingProvider && embedPhaseSeen && !embedSkipped) {
+      // Only emit embed.ok if gitnexus actually entered the embed
+      // phase during this analyze (see `embedPhaseSeen` detection
+      // in onLine above). Incremental analyses with no changed
+      // files skip the embed pipeline entirely; firing a fake
+      // "Embeddings finished" event on those would suggest work
+      // happened that didn't. The skipped path above already
+      // covered the gitnexus-cap case so we don't double-emit.
       await publish({
         kind: 'repo.embed.ok',
         ts: Date.now(),
@@ -380,7 +434,11 @@ export async function handleIndexRepoJob(
     const lastError = capturedError
       ? `${capturedError}\n\n(Exit: ${message})`
       : message
-    if (embeddingProvider) {
+    if (embeddingProvider && embedPhaseSeen) {
+      // Same gate as the success path: only signal an embed-phase
+      // failure if gitnexus actually got there. If it crashed
+      // earlier (during scan/parse/scope), it's an index failure,
+      // not an embed one — `failAndPublish` below carries that.
       await publish({
         kind: 'repo.embed.fail',
         ts: Date.now(),
@@ -427,6 +485,34 @@ function looksLikeFatalLine(line: string): boolean {
   return false
 }
 
+/**
+ * Heuristic. Is this stderr line a signal that gitnexus has entered
+ * the embedding pipeline? We watch for it so the "Embedding" phase
+ * chip only lights up when the embedder is genuinely being called,
+ * not for the duration of the whole `gitnexus analyze` pass.
+ *
+ * Markers observed in gitnexus 1.6.5 pino logs:
+ *   - "🔍 Querying embeddable nodes..."  — first line of the embed
+ *                                          phase, fires once
+ *   - "embedBatch"                       — appears in every batched
+ *                                          embed log (success + error)
+ *   - "Phase: embed"                     — explicit phase marker some
+ *                                          versions ship
+ *
+ * False positives would just flip the chip slightly early, which is
+ * fine — the chip stays on through index.ok anyway. False negatives
+ * mean the chip never lights up, in which case the operator sees
+ * Index running and never sees a separate Embed phase, which still
+ * accurately reflects what happened (no embed pipeline ran).
+ */
+function looksLikeEmbedPhase(line: string): boolean {
+  if (line.length === 0) return false
+  if (line.includes('Querying embeddable nodes')) return true
+  if (line.includes('embedBatch')) return true
+  if (/Phase:\s*embed\b/i.test(line)) return true
+  return false
+}
+
 export interface IndexRepoJobResult {
   readonly repoId: string
   readonly status: 'ready' | 'error'
@@ -459,6 +545,21 @@ interface RunAnalyzeArgs {
    */
   readonly embeddings: boolean
   /**
+   * Per-repo embedding-cap override (`repos.embedding_node_cap`).
+   *
+   *   null → omit the value; gitnexus's default 50,000-node cap
+   *           applies. The UI surfaces a "skipped" notice if that cap
+   *           triggers on a real repo.
+   *   0    → pass `--embeddings 0`; cap disabled, embed everything.
+   *   N    → pass `--embeddings N`; custom cap.
+   *
+   * Only consulted when `embeddings === true`. The operator sets this
+   * via the "Enable embeddings for this repo" affordance on the
+   * detail page; once persisted, every subsequent analyze (manual or
+   * auto-chained off a pull) reads the same value.
+   */
+  readonly embeddingNodeCap: number | null
+  /**
    * Extra env vars layered on top of the sandbox baseline. Used to pass
    * `GITNEXUS_EMBEDDING_*` so gitnexus's embedder calls the workspace
    * embedding provider's `/v1/embeddings` endpoint instead of the
@@ -486,7 +587,7 @@ interface RunAnalyzeArgs {
  *     rebuild from scratch (`docs/ARCHITECTURE.md §10` D16/A5).
  */
 async function runAnalyze(args: RunAnalyzeArgs): Promise<void> {
-  const { descriptor, sourceDir, force, embeddings, env, onLine } = args
+  const { descriptor, sourceDir, force, embeddings, embeddingNodeCap, env, onLine } = args
 
   const gitnexusArgs = [
     'analyze',
@@ -500,7 +601,18 @@ async function runAnalyze(args: RunAnalyzeArgs): Promise<void> {
     gitnexusArgs.push('-f')
   }
   if (embeddings) {
-    gitnexusArgs.push('--embeddings')
+    if (embeddingNodeCap !== null) {
+      // Operator-set cap. `0` → cap disabled; `N` → custom cap. Gitnexus
+      // parses the number after the flag; passing `--embeddings 0`
+      // disables the safety cap entirely (see
+      // gitnexus/dist/core/embedding-mode.js:deriveEmbeddingCap).
+      gitnexusArgs.push('--embeddings', String(embeddingNodeCap))
+    } else {
+      // No operator override — bare flag, gitnexus's built-in 50,000
+      // cap applies. The skip-detection path below surfaces this in
+      // the UI so the operator can opt in.
+      gitnexusArgs.push('--embeddings')
+    }
   }
 
   const child = runGitnexus(gitnexusArgs, {
