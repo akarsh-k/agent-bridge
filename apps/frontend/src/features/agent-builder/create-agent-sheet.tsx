@@ -29,6 +29,7 @@ import { navigate } from '../../lib/router'
 import { toast } from '../../ui/toast-store'
 import { useDirtyClose } from '../../lib/use-dirty-close'
 import { useDefaultProviderId } from '../../lib/use-default-provider'
+import { DEFAULT_INSPECTOR_SYSTEM_PROMPT } from '@agent-bridge/shared'
 
 const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/
 
@@ -272,6 +273,16 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
   const [slug, setSlug] = useState('')
   const [slugTouched, setSlugTouched] = useState(false)
   const [description, setDescription] = useState('')
+  // Pre-filled with the inspector default the first time the operator
+  // lands on Step 2 with the Repo Inspector template selected. Tracked
+  // by `systemPromptSeededFor` so switching templates back and forth
+  // doesn't overwrite operator edits, and so flipping to Build-Your-Own
+  // clears the textarea (the constant is only meaningful for inspector
+  // agents — see `DEFAULT_INSPECTOR_SYSTEM_PROMPT` for why).
+  const [systemPrompt, setSystemPrompt] = useState('')
+  const [systemPromptSeededFor, setSystemPromptSeededFor] = useState<
+    AgentTemplate | null
+  >(null)
   const [providerId, setProviderId] = useState<string | null>(
     defaultProviderId &&
       llmProviders.some((p) => p.id === defaultProviderId)
@@ -285,6 +296,20 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
   const slugInvalid = effectiveSlug.length > 0 && !slugValid
 
   const chosen = TEMPLATES.find((t) => t.id === template) ?? null
+
+  // Seed the system-prompt textarea when the operator changes template.
+  // Inspector → fill with the default; Build-Your-Own → clear. Only
+  // re-seed on actual template changes so the operator's edits survive
+  // re-renders. Done as a derived-state-from-props update during render
+  // (the recognised React 19 pattern) instead of useEffect.
+  if (template !== systemPromptSeededFor) {
+    setSystemPromptSeededFor(template)
+    setSystemPrompt(
+      template !== null && chosen?.inspectorEnabled
+        ? DEFAULT_INSPECTOR_SYSTEM_PROMPT
+        : '',
+    )
+  }
 
   const providerOpts: DropdownOption[] = useMemo(
     () =>
@@ -301,7 +326,10 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
     template !== null ||
     name.length > 0 ||
     description.length > 0 ||
-    providerId !== null
+    providerId !== null ||
+    // Edited away from the seeded default for the current template.
+    systemPrompt !==
+      (chosen?.inspectorEnabled ? DEFAULT_INSPECTOR_SYSTEM_PROMPT : '')
   const guardedClose = useDirtyClose(dirty && !busy, onClose)
 
   const submit = async () => {
@@ -312,7 +340,7 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
         name: name.trim(),
         slug: effectiveSlug,
         description: description.trim() || null,
-        systemPrompt: '',
+        systemPrompt,
         llmProviderId: providerId ?? null,
         memoryEnabled: false,
         inspectorEnabled: chosen.inspectorEnabled,
@@ -527,6 +555,31 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
           placeholder="One sentence. Helps you tell agents apart later."
           rows={2}
         />
+        <span className="ab-field-help">
+          Shown in the agents list. Not sent to the model.
+        </span>
+      </div>
+
+      <div className="ab-field" style={{ marginTop: 14 }}>
+        <label className="ab-field-label" htmlFor="ca-prompt">
+          System prompt
+        </label>
+        <textarea
+          id="ca-prompt"
+          className="ab-textarea"
+          value={systemPrompt}
+          onChange={(e) => setSystemPrompt(e.target.value)}
+          placeholder={
+            chosen.inspectorEnabled
+              ? 'How the agent should answer questions about the attached repos.'
+              : 'Optional. How the agent should respond.'
+          }
+          rows={4}
+        />
+        <span className="ab-field-help">
+          Prepended to every conversation. Edit or clear as you like. You can
+          change this later in the agent's Build tab.
+        </span>
       </div>
 
       <div className="ab-field" style={{ marginTop: 14 }}>

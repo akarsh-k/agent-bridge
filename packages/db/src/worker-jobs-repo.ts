@@ -18,7 +18,7 @@
  * shape.
  */
 
-import { eq, sql } from 'drizzle-orm'
+import { eq } from 'drizzle-orm'
 
 import type { AgentBridgeDb } from './client.js'
 import {

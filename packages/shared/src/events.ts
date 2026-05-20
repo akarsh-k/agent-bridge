@@ -509,6 +509,15 @@ export interface RunStepFinishedPayload {
   readonly stepIndex: number
   readonly messageId: string
   readonly finishReason: string | null
+  /** True when `finishReason` was DERIVED by the dispatcher because the
+   *  provider didn't surface one on `step-finish`. Source-of-truth values
+   *  from the provider leave this `false`/absent. Derivation is shallow
+   *  (`tool-calls` if any tool calls landed this step, else `stop` if text
+   *  was emitted, else null) so the operator sees a plausible reason while
+   *  still being able to tell it's not the model's actual self-report — e.g.
+   *  we'd guess `tool-calls` even if the real cause was `length` (truncated
+   *  mid-call). Treat as advisory in incident review. */
+  readonly finishReasonInferred?: boolean
   readonly usage?: {
     readonly inputTokens: number | null
     readonly outputTokens: number | null
@@ -579,6 +588,11 @@ export interface RunModelResultPayload {
    *  provider didn't emit it. */
   readonly reasoning: string | null
   readonly finishReason: string | null
+  /** True when `finishReason` was DERIVED by the dispatcher. See
+   *  `RunStepFinishedPayload.finishReasonInferred` for semantics and
+   *  caveats — same flag, mirrored here so a /logs row can be honest about
+   *  the value's provenance without joining to the matching step row. */
+  readonly finishReasonInferred?: boolean
   /** Wall-clock duration from step-start to step-finish. Lets the
    *  operator spot which step was the slow one in a multi-step run
    *  without doing arithmetic on adjacent timestamps. */
@@ -676,6 +690,23 @@ export interface RunFinishedPayload {
   readonly outputTextLength: number
   readonly stepCount: number
   readonly durationMs: number
+  /**
+   * Effective `maxSteps` the dispatcher used for this run (per-agent
+   * override from `agents.max_steps`, else the dispatcher default).
+   * Always set so the /logs row can render "N steps / cap M" without a
+   * second query.
+   */
+  readonly maxSteps: number
+  /**
+   * `true` when the agent loop terminated because Mastra ran out of
+   * steps (i.e. `stepCount >= maxSteps`) rather than because the model
+   * voluntarily stopped. When true, the response may be missing the
+   * synthesis turn — the model was mid-tool-call when the cap hit and
+   * never got a chance to write the final answer. /logs surfaces this
+   * as a "Hit step limit" chip so operators don't blame an empty
+   * output_summary on a different bug.
+   */
+  readonly stepsExhausted: boolean
   readonly usage?: {
     readonly inputTokens: number | null
     readonly outputTokens: number | null

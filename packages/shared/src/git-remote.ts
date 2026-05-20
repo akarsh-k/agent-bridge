@@ -34,14 +34,20 @@ export type GitRemoteErrorKind =
   | 'unknown'
 
 export class GitRemoteError extends Error {
+  readonly kind: GitRemoteErrorKind
+  readonly exitCode: number | null
+  readonly stderr: string
   constructor(
     message: string,
-    readonly kind: GitRemoteErrorKind,
-    readonly exitCode: number | null,
-    readonly stderr: string,
+    kind: GitRemoteErrorKind,
+    exitCode: number | null,
+    stderr: string,
   ) {
     super(message)
     this.name = 'GitRemoteError'
+    this.kind = kind
+    this.exitCode = exitCode
+    this.stderr = stderr
   }
 }
 

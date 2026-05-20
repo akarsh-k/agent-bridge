@@ -85,6 +85,13 @@
       "when": 1779200184633,
       "tag": "0011_quick_kid_colt",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1779208235353,
+      "tag": "0012_aberrant_wilson_fisk",
+      "breakpoints": true
     }
   ]
 }

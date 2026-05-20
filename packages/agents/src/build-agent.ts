@@ -218,7 +218,26 @@ export interface BuiltAgentMeta {
    * one tool affordance.
    */
   readonly inspector: InspectorMountMeta
+  /**
+   * Effective cap on the agent loop (model→tool→model turns). Reads
+   * `agents.max_steps`; falls back to {@link DEFAULT_MAX_STEPS} when the
+   * column is NULL. The dispatcher uses this value for Mastra's
+   * `streamOptions.maxSteps` and writes it onto `run.finished` so /logs
+   * can render "Hit step limit (N/N)" without joining back to the agent
+   * row at query time.
+   */
+  readonly maxSteps: number
 }
+
+/**
+ * Default `maxSteps` when `agents.max_steps` is NULL. Comment-of-record
+ * for the rationale lives at the dispatcher's old hard-coded literal:
+ * 10 covers list_repos + 2-3 wrappers + synthesis with headroom, and a
+ * run that regularly hits it usually wants a tighter prompt rather than
+ * a bigger budget. Agents that legitimately need more (deep research,
+ * multi-repo traversal) set `agents.max_steps` per-row.
+ */
+export const DEFAULT_MAX_STEPS = 10
 
 export interface MemoryMountMeta {
   /** Mirrors `agents.memory_enabled`. */
@@ -555,6 +574,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
       inspector: mountedInspector
         ? mountedInspector.meta
         : emptyInspectorMountMeta(),
+      maxSteps: agentRow.maxSteps ?? DEFAULT_MAX_STEPS,
     },
     secrets,
     subscribeMcpLogs,

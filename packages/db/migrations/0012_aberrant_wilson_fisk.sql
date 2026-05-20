@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "max_steps" integer;

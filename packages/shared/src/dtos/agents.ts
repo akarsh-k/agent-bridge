@@ -24,6 +24,25 @@ import { agentMemoryConfigSchema } from './memory.js'
  */
 const AGENT_SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/
 
+/**
+ * Suggested operator-facing system prompt for newly-created Repo Inspector
+ * agents. The Inspector toolkit's own system prompt is auto-attached at
+ * runtime (see `loadInspectorSystemPrompt` in `packages/agents`) and
+ * covers the *mechanics* (which tools exist, how to call them). This
+ * constant covers the *behaviour*: grounding rule, citation rule, and
+ * the "say so" rule for empty results. Kept deliberately short so it
+ * does not get cargo-culted onto unrelated agents and so an operator
+ * scanning it can actually read every line.
+ *
+ * Used by the create-agent sheet to pre-fill the system-prompt textarea
+ * when the operator picks the Repo Inspector template. Not seeded
+ * server-side: the operator must see and approve it before it lands in
+ * the DB. Empty-string default on the column stays intact for the
+ * Build-Your-Own template and for any client that creates agents
+ * outside the UI.
+ */
+export const DEFAULT_INSPECTOR_SYSTEM_PROMPT = `You are a code research assistant for the repositories attached to this workspace. Your job is to answer questions about how the code works, where things live, and what depends on what. Every claim you make points back to a file path or snippet the tools returned.`
+
 const baseFields = {
   slug: z.string().regex(AGENT_SLUG_RE, 'slug must be a URL-safe kebab string'),
   name: z.string().trim().min(1).max(120),
@@ -45,6 +64,15 @@ const baseFields = {
    * Bridge-tools tab like any other custom tool.
    */
   inspectorEnabled: z.boolean(),
+  /**
+   * Per-agent cap on model→tool→model loop depth. `null` means "use the
+   * dispatcher default" (10); set a positive integer to override. Lower
+   * for fast Q&A agents to surface runaways early; higher for deep
+   * research agents that legitimately traverse multi-repo queries. Server
+   * stores null when omitted; dispatcher reads it and writes the
+   * effective cap onto `run.finished`.
+   */
+  maxSteps: z.number().int().min(1).max(100).nullable(),
 } as const
 
 /**
@@ -65,6 +93,8 @@ export const agentCreateInputSchema = z
     /** Defaults to `true` on the server (Repo-inspector template). Pass
      *  `false` from the Build-your-own-agent creation flow. */
     inspectorEnabled: baseFields.inspectorEnabled.optional(),
+    /** Defaults to null on the server (= dispatcher default 10). */
+    maxSteps: baseFields.maxSteps.optional(),
   })
   .strict()
 
@@ -90,6 +120,7 @@ export const agentUpdateInputSchema = z
      *  boot-fail if any repos are attached; the auto-created
      *  ask_agent row stays put unless the operator deletes it. */
     inspectorEnabled: baseFields.inspectorEnabled.optional(),
+    maxSteps: baseFields.maxSteps.optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, {
@@ -112,6 +143,7 @@ export const agentResponseSchema = z.object({
   memoryEnabled: z.boolean(),
   memoryConfig: agentMemoryConfigSchema.nullable(),
   inspectorEnabled: z.boolean(),
+  maxSteps: z.number().int().nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 })

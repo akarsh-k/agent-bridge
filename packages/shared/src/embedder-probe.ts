@@ -30,18 +30,24 @@ export type EmbedderProbeErrorKind =
   | 'unknown'
 
 export class EmbedderProbeError extends Error {
+  readonly kind: EmbedderProbeErrorKind
+  /** HTTP status from the server, or `null` if the request never
+   *  produced a response (DNS, TCP, TLS, timeout, …). */
+  readonly status: number | null
+  /** Truncated response body, useful for diagnostics on the UI
+   *  when the failure is a 4xx/5xx with a structured error message. */
+  readonly responseBody: string
   constructor(
     message: string,
-    readonly kind: EmbedderProbeErrorKind,
-    /** HTTP status from the server, or `null` if the request never
-     *  produced a response (DNS, TCP, TLS, timeout, …). */
-    readonly status: number | null,
-    /** Truncated response body — useful for diagnostics on the UI
-     *  when the failure is a 4xx/5xx with a structured error message. */
-    readonly responseBody: string,
+    kind: EmbedderProbeErrorKind,
+    status: number | null,
+    responseBody: string,
   ) {
     super(message)
     this.name = 'EmbedderProbeError'
+    this.kind = kind
+    this.status = status
+    this.responseBody = responseBody
   }
 }
 

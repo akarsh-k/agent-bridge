@@ -38,6 +38,21 @@ export function BuildTab({ agentId }: { agentId: string }) {
   const [slug, setSlug] = useState('')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [providerId, setProviderId] = useState<string | null>(null)
+  // Blank string = "use default"; positive integer = override. We keep
+  // the input as a string so the user can clear the field cleanly
+  // (controlled inputs of type=number with `value={null}` warn). Parsed
+  // to `number | null` at save time.
+  const [maxStepsInput, setMaxStepsInput] = useState('')
+
+  const parsedMaxSteps = useMemo<number | null | 'invalid'>(() => {
+    const trimmed = maxStepsInput.trim()
+    if (trimmed === '') return null
+    const n = Number(trimmed)
+    if (!Number.isFinite(n) || !Number.isInteger(n) || n < 1 || n > 100) {
+      return 'invalid'
+    }
+    return n
+  }, [maxStepsInput])
 
   const draft = useMemo(
     () => ({
@@ -45,8 +60,9 @@ export function BuildTab({ agentId }: { agentId: string }) {
       slug,
       systemPrompt,
       llmProviderId: providerId,
+      maxSteps: parsedMaxSteps === 'invalid' ? null : parsedMaxSteps,
     }),
-    [name, slug, systemPrompt, providerId],
+    [name, slug, systemPrompt, providerId, parsedMaxSteps],
   )
 
   const isDirty = useMemo(() => {
@@ -60,7 +76,8 @@ export function BuildTab({ agentId }: { agentId: string }) {
       draft.name !== agent.name.trim() ||
       draft.slug !== agent.slug ||
       draft.systemPrompt !== agent.systemPrompt ||
-      draft.llmProviderId !== agent.llmProviderId
+      draft.llmProviderId !== agent.llmProviderId ||
+      draft.maxSteps !== agent.maxSteps
     )
   }, [agent, seededFor, draft])
 
@@ -88,12 +105,17 @@ export function BuildTab({ agentId }: { agentId: string }) {
         toast.error('Name is required before saving.')
         throw new Error('name required')
       }
+      if (parsedMaxSteps === 'invalid') {
+        toast.error('Step limit must be an integer between 1 and 100.')
+        throw new Error('maxSteps invalid')
+      }
       try {
         await patchAgent(agent.id, {
           name: draft.name,
           slug: draft.slug,
           systemPrompt: draft.systemPrompt,
           llmProviderId: draft.llmProviderId,
+          maxSteps: draft.maxSteps,
         })
         toast.success('Identity saved')
       } catch (e) {
@@ -113,6 +135,7 @@ export function BuildTab({ agentId }: { agentId: string }) {
       setSlug(agent.slug)
       setSystemPrompt(agent.systemPrompt)
       setProviderId(agent.llmProviderId)
+      setMaxStepsInput(agent.maxSteps === null ? '' : String(agent.maxSteps))
     },
   })
 
@@ -122,6 +145,7 @@ export function BuildTab({ agentId }: { agentId: string }) {
     setSlug(agent.slug)
     setSystemPrompt(agent.systemPrompt)
     setProviderId(agent.llmProviderId)
+    setMaxStepsInput(agent.maxSteps === null ? '' : String(agent.maxSteps))
   }
 
   const provider = useMemo(
@@ -285,6 +309,33 @@ export function BuildTab({ agentId }: { agentId: string }) {
                 </code>
               </span>
             )}
+          </div>
+          <div className="ab-field">
+            <label className="ab-field-label" htmlFor="b-max-steps">
+              Step limit
+            </label>
+            <input
+              id="b-max-steps"
+              className="ab-input ab-mono"
+              type="text"
+              inputMode="numeric"
+              placeholder="default (10)"
+              value={maxStepsInput}
+              onChange={(e) => setMaxStepsInput(e.target.value)}
+              aria-invalid={parsedMaxSteps === 'invalid' ? true : undefined}
+            />
+            <span
+              className="ab-field-help"
+              style={
+                parsedMaxSteps === 'invalid'
+                  ? { color: 'var(--warn)' }
+                  : undefined
+              }
+            >
+              {parsedMaxSteps === 'invalid'
+                ? 'Enter an integer between 1 and 100, or leave blank.'
+                : 'Max tool turns per run before the agent loop stops. Blank uses the default (10). Raise for deep research agents; lower for fast Q&A. Each step also includes the prior tool results in the next prompt, so token cost grows faster than linear with the cap.'}
+            </span>
           </div>
         </div>
       </div>

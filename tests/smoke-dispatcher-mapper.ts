@@ -369,6 +369,150 @@ console.log('\n• step-finish with no text anywhere stays empty')
   )
 }
 
+// ── 9. finishReason: explicit payload value preserved, not inferred ──────
+
+console.log('\n• finishReason flows through verbatim when provider supplies it')
+
+{
+  const { events } = drive([
+    { type: 'step-start', payload: { messageId: 'm1' } },
+    { type: 'text-delta', payload: { text: 'hi' } },
+    {
+      type: 'step-finish',
+      payload: { toolCalls: [], finishReason: 'length', modelId: 'test' },
+    },
+  ])
+  const step = events.find((e) => e.kind === 'run.step.finished')
+  const result = events.find((e) => e.kind === 'run.model.result')
+  check(
+    'run.step.finished.finishReason preserves explicit "length"',
+    step?.data['finishReason'] === 'length',
+    `got=${JSON.stringify(step?.data['finishReason'])}`,
+  )
+  check(
+    'run.step.finished.finishReasonInferred absent when payload supplies value',
+    step?.data['finishReasonInferred'] === undefined,
+    `got=${JSON.stringify(step?.data['finishReasonInferred'])}`,
+  )
+  check(
+    'run.model.result.finishReasonInferred absent when payload supplies value',
+    result?.data['finishReasonInferred'] === undefined,
+    `got=${JSON.stringify(result?.data['finishReasonInferred'])}`,
+  )
+}
+
+// ── 10. finishReason derived to "tool-calls" when missing + tool-call seen ─
+
+console.log('\n• finishReason derived from pendingToolCalls when omitted')
+
+{
+  const { events } = drive([
+    { type: 'step-start', payload: { messageId: 'm1' } },
+    {
+      type: 'tool-call',
+      payload: {
+        toolCallId: 'tc1',
+        toolName: 'find_in_codebase',
+        args: { query: 'foo' },
+      },
+    },
+    {
+      type: 'step-finish',
+      payload: { modelId: 'test' }, // no finishReason, no toolCalls array
+    },
+  ])
+  const step = events.find((e) => e.kind === 'run.step.finished')
+  const result = events.find((e) => e.kind === 'run.model.result')
+  check(
+    'run.step.finished.finishReason inferred to "tool-calls"',
+    step?.data['finishReason'] === 'tool-calls',
+    `got=${JSON.stringify(step?.data['finishReason'])}`,
+  )
+  check(
+    'run.step.finished.finishReasonInferred === true',
+    step?.data['finishReasonInferred'] === true,
+    `got=${JSON.stringify(step?.data['finishReasonInferred'])}`,
+  )
+  check(
+    'run.model.result.finishReason inferred to "tool-calls"',
+    result?.data['finishReason'] === 'tool-calls',
+    `got=${JSON.stringify(result?.data['finishReason'])}`,
+  )
+  check(
+    'run.model.result.finishReasonInferred === true',
+    result?.data['finishReasonInferred'] === true,
+    `got=${JSON.stringify(result?.data['finishReasonInferred'])}`,
+  )
+}
+
+// ── 11. finishReason derived to "stop" when text-only step omits it ────────
+
+console.log('\n• finishReason derived to "stop" when only text observed')
+
+{
+  const { events } = drive([
+    { type: 'step-start', payload: { messageId: 'm1' } },
+    { type: 'text-delta', payload: { text: 'hello' } },
+    {
+      type: 'step-finish',
+      payload: { text: 'hello', modelId: 'test' }, // no finishReason
+    },
+  ])
+  const step = events.find((e) => e.kind === 'run.step.finished')
+  const result = events.find((e) => e.kind === 'run.model.result')
+  check(
+    'run.step.finished.finishReason inferred to "stop"',
+    step?.data['finishReason'] === 'stop',
+    `got=${JSON.stringify(step?.data['finishReason'])}`,
+  )
+  check(
+    'run.step.finished.finishReasonInferred === true',
+    step?.data['finishReasonInferred'] === true,
+  )
+  check(
+    'run.model.result.finishReason inferred to "stop"',
+    result?.data['finishReason'] === 'stop',
+    `got=${JSON.stringify(result?.data['finishReason'])}`,
+  )
+  check(
+    'run.model.result.finishReasonInferred === true',
+    result?.data['finishReasonInferred'] === true,
+  )
+}
+
+// ── 12. finishReason stays null when nothing observed and payload omits ───
+
+console.log('\n• finishReason stays null + non-inferred when step did nothing')
+
+{
+  const { events } = drive([
+    { type: 'step-start', payload: { messageId: 'm1' } },
+    { type: 'step-finish', payload: { modelId: 'test' } },
+  ])
+  const step = events.find((e) => e.kind === 'run.step.finished')
+  const result = events.find((e) => e.kind === 'run.model.result')
+  check(
+    'run.step.finished.finishReason stays null',
+    step?.data['finishReason'] === null,
+    `got=${JSON.stringify(step?.data['finishReason'])}`,
+  )
+  check(
+    'run.step.finished.finishReasonInferred absent (no signal to derive from)',
+    step?.data['finishReasonInferred'] === undefined,
+    `got=${JSON.stringify(step?.data['finishReasonInferred'])}`,
+  )
+  check(
+    'run.model.result.finishReason stays null',
+    result?.data['finishReason'] === null,
+    `got=${JSON.stringify(result?.data['finishReason'])}`,
+  )
+  check(
+    'run.model.result.finishReasonInferred absent (no signal to derive from)',
+    result?.data['finishReasonInferred'] === undefined,
+    `got=${JSON.stringify(result?.data['finishReasonInferred'])}`,
+  )
+}
+
 // ── Summary ─────────────────────────────────────────────────────────────────
 
 console.log('\n' + '━'.repeat(60))

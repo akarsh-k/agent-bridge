@@ -257,9 +257,15 @@ function CallsiteBadge({
 
 function RunDetailBody({ data }: { data: RunDetailResponse }) {
   const { run, events } = data
+  // Pull the cap-exhausted signal off the most recent run.finished event
+  // so the header can render "Hit step limit (N/M)" without a schema
+  // round-trip onto the `runs` table. The dispatcher always emits exactly
+  // one run.finished per completed run; we just guard for legacy rows
+  // (pre-stepsExhausted field) by treating undefined as absent.
+  const stepLimit = extractStepLimit(events)
   return (
     <>
-      <RunHeader run={run} />
+      <RunHeader run={run} stepLimit={stepLimit} />
       {run.errorMessage && <RunErrorCard message={run.errorMessage} />}
       <CollapsibleBody title="Input prompt" body={run.inputPrompt} />
       {run.outputSummary !== null && (
@@ -388,7 +394,47 @@ function capitalise(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
-function RunHeader({ run }: { run: RunDetailResponse['run'] }) {
+interface StepLimitSummary {
+  readonly exhausted: boolean
+  readonly stepCount: number
+  readonly maxSteps: number
+}
+
+function extractStepLimit(
+  events: RunDetailResponse['events'],
+): StepLimitSummary | null {
+  // Walk newest-first; pick the first run.finished. Multiple shouldn't
+  // happen (dispatcher emits one) but the timeline is robust to
+  // duplicates so we are too.
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i]
+    if (!e || e.kind !== 'run.finished') continue
+    const p = e.payload
+    if (!p || typeof p !== 'object') return null
+    const rec = p as Record<string, unknown>
+    const exhausted = rec['stepsExhausted']
+    const stepCount = rec['stepCount']
+    const maxSteps = rec['maxSteps']
+    if (
+      typeof exhausted !== 'boolean' ||
+      typeof stepCount !== 'number' ||
+      typeof maxSteps !== 'number' ||
+      maxSteps <= 0
+    ) {
+      return null
+    }
+    return { exhausted, stepCount, maxSteps }
+  }
+  return null
+}
+
+function RunHeader({
+  run,
+  stepLimit,
+}: {
+  run: RunDetailResponse['run']
+  stepLimit: StepLimitSummary | null
+}) {
   const [showDebug, setShowDebug] = useState(false)
   const metrics: Array<{ label: string; value: string }> = [
     {
@@ -428,6 +474,20 @@ function RunHeader({ run }: { run: RunDetailResponse['run'] }) {
         {metrics.map((m) => (
           <Metric key={m.label} label={m.label} value={m.value} />
         ))}
+        {stepLimit && (
+          <Metric
+            label="Steps"
+            value={`${stepLimit.stepCount} / ${stepLimit.maxSteps}`}
+          />
+        )}
+        {stepLimit?.exhausted && (
+          <span
+            title="The agent loop hit its step limit before the model finished. The response may be missing the final synthesis turn. Raise the agent's Step limit if this is a deep-research workload."
+            style={{ display: 'inline-flex' }}
+          >
+            <Pill kind="warn">Hit step limit</Pill>
+          </span>
+        )}
         <button
           type="button"
           onClick={() => setShowDebug((s) => !s)}

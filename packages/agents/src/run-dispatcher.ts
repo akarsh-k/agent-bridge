@@ -331,20 +331,22 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
     // inspector-enabled agent that may legitimately need 4-6 wrapper
     // calls before the synthesis turn (a 5-tool-call run hit the cap
     // before getting a chance to write its answer — 0 tokens emitted,
-    // empty `output_summary`). 10 covers the typical case
-    // (list_repos + 2-3 wrappers + synthesis = ~5) with headroom for
-    // the multi-wrapper IDE queries; if a run regularly hits 10, the
-    // model is over-searching and the prompt or tool routing needs
-    // tightening rather than a bigger budget.
+    // empty `output_summary`). Default of 10 (DEFAULT_MAX_STEPS in
+    // build-agent.ts) covers the typical case (list_repos + 2-3 wrappers
+    // + synthesis = ~5) with headroom for the multi-wrapper IDE queries.
+    // Per-agent override comes from `agents.max_steps` and is resolved
+    // at buildAgent time onto `meta.maxSteps`; we just consume the
+    // resolved value here.
+    const effectiveMaxSteps = built.meta.maxSteps
     const streamOptions = memoryIds
       ? {
           memory: {
             thread: memoryIds.mastraThreadId,
             resource: memoryIds.mastraResourceId,
           },
-          maxSteps: 10,
+          maxSteps: effectiveMaxSteps,
         }
-      : { maxSteps: 10 }
+      : { maxSteps: effectiveMaxSteps }
 
     // Mastra 1.28 returns `ReadableStream<ChunkType>` for
     // `.fullStream`. It implements async iteration natively.
@@ -544,6 +546,13 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
       outputTextLength: accumulatedText.length,
       stepCount,
       durationMs: Date.now() - startedAt,
+      maxSteps: effectiveMaxSteps,
+      // Mastra terminates the loop the moment stepCount hits the cap;
+      // there is no `finishReason` value that reliably distinguishes
+      // "cap hit" from "model said stop on its last allowed turn." We
+      // use the count comparison directly so /logs can render the chip
+      // without parsing provider-specific reasons.
+      stepsExhausted: stepCount >= effectiveMaxSteps,
       ...(lastUsage ? { usage: lastUsage } : {}),
     }
 
@@ -805,6 +814,7 @@ export function mapChunk(
       // they don't carry text we need to surface.
       return null
     case 'step-finish': {
+      const fr = resolveFinishReason(payload['finishReason'], state)
       return {
         kind: 'run.step.finished',
         ts,
@@ -814,7 +824,8 @@ export function mapChunk(
             stringOrNumberOrNull(payload['stepIndex']) ??
             Math.max(0, state.currentStepIndex),
           messageId: stringOr(payload['messageId'], ''),
-          finishReason: stringOr(payload['finishReason'], null),
+          finishReason: fr.value,
+          ...(fr.inferred ? { finishReasonInferred: true } : {}),
           usage: pickUsage(payload['usage']),
         } satisfies RunStepFinishedPayload,
       }
@@ -921,10 +932,14 @@ export function mapChunk(
           finishReason: stringOr(payload['finishReason'], null),
           // These fields get overwritten with accumulated state after
           // the stream drains; the dispatcher ignores this payload's
-          // fields except `finishReason` + `usage`.
+          // fields except `finishReason` + `usage`. `maxSteps` /
+          // `stepsExhausted` get filled in at the same point — placeholders
+          // here keep the type satisfied during the mid-stream emit.
           outputTextLength: 0,
           stepCount: 0,
           durationMs: 0,
+          maxSteps: 0,
+          stepsExhausted: false,
           usage: pickUsage(payload['usage']),
         } satisfies RunFinishedPayload,
       }
@@ -1020,6 +1035,7 @@ export function mapChunkToModelEvent(
         state.currentStepStartedAt > 0
           ? Math.max(0, ts - state.currentStepStartedAt)
           : 0
+      const fr = resolveFinishReason(payload['finishReason'], state)
       return {
         kind: 'run.model.result',
         ts,
@@ -1030,7 +1046,8 @@ export function mapChunkToModelEvent(
           text,
           toolCalls,
           reasoning,
-          finishReason: stringOr(payload['finishReason'], null),
+          finishReason: fr.value,
+          ...(fr.inferred ? { finishReasonInferred: true } : {}),
           durationMs,
           usage: pickUsage(payload['usage']),
           response,
@@ -1066,6 +1083,40 @@ function stringOr<T>(value: unknown, fallback: T): string | T {
 
 function stringOrNumberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+/**
+ * Resolve `finishReason` at step-finish, preferring the provider's stated
+ * value and falling back to a shallow derivation when absent. Same
+ * `pending*` accumulators that back the text/toolCalls fallbacks already
+ * tell us what the step actually did:
+ *
+ *   - any pendingToolCalls → 'tool-calls'
+ *   - else any pendingText → 'stop'
+ *   - else → null
+ *
+ * The derivation is intentionally crude: a real provider value of `length`
+ * (truncation mid-emit) looks identical to us, so we'd guess `tool-calls`
+ * or `stop` and miss the truncation signal. The `inferred` flag lets the
+ * audit row mark the value as advisory, not authoritative.
+ *
+ * Returns `{ value, inferred }` so call sites can attach both to the
+ * outgoing event payload without re-checking which branch was taken.
+ */
+function resolveFinishReason(
+  payloadValue: unknown,
+  state: MapChunkState,
+): { value: string | null; inferred: boolean } {
+  if (typeof payloadValue === 'string') {
+    return { value: payloadValue, inferred: false }
+  }
+  if (state.pendingToolCalls.length > 0) {
+    return { value: 'tool-calls', inferred: true }
+  }
+  if (state.pendingText.length > 0) {
+    return { value: 'stop', inferred: true }
+  }
+  return { value: null, inferred: false }
 }
 
 /**

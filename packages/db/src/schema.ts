@@ -165,6 +165,21 @@ export const agents = pgTable(
      * created before this column landed.
      */
     inspectorEnabled: boolean('inspector_enabled').notNull().default(true),
+    /**
+     * Per-agent cap on the number of model→tool→model turns Mastra runs
+     * before terminating. `null` means "use the dispatcher default" (10 at
+     * the time of writing); set a positive integer to override. The
+     * dispatcher reads this row, falls back to the default when null,
+     * and writes both the effective value and the cap-hit flag onto
+     * `run.finished` so /logs can show "Hit step limit (N/N)".
+     *
+     * Why per-agent: a fast "Q&A" agent that should never need more than
+     * 4 tool turns benefits from a tight cap (a runaway loop costs less
+     * and surfaces the misbehavior earlier); a "deep research" agent that
+     * legitimately needs 15-20 tool turns to traverse a multi-repo query
+     * needs the headroom. Hardcoded 10 had to serve both, badly.
+     */
+    maxSteps: integer('max_steps'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
