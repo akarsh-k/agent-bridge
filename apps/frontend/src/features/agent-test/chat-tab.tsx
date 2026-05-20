@@ -16,7 +16,6 @@ import { createPortal } from 'react-dom'
 import { useWorkspace } from '../../lib/workspace-context'
 import { useChat, type ChatMessage } from '../../lib/use-chat'
 import { Markdown } from '../../ui/markdown'
-import { ChatRunTimeline } from './chat-run-timeline'
 import {
   ArrowRightIcon,
   PlusIcon,
@@ -48,10 +47,16 @@ const KIND_CHIP_GLYPH: Record<MentionItem['kind'], string> = {
   mcp: 'M',
 }
 
-export function ChatTab({ agentId }: { agentId: string }) {
+export function ChatTab({
+  agentId,
+  initialThreadId,
+}: {
+  agentId: string
+  initialThreadId?: string
+}) {
   const { agents, agentResources } = useWorkspace()
   const agent = agents.find((a) => a.id === agentId)
-  const chat = useChat({ agentId })
+  const chat = useChat({ agentId, urlThreadId: initialThreadId })
   const [draft, setDraft] = useState('')
   const threadRef = useRef<HTMLDivElement | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -290,21 +295,48 @@ export function ChatTab({ agentId }: { agentId: string }) {
         disabled={chat.activeRunId !== null || chat.sending}
       />
       <div className="ab-chat-main">
+        {agent && !agent.memoryEnabled && (
+          <div
+            role="note"
+            style={{
+              padding: '8px 14px',
+              fontSize: 12,
+              color: 'var(--text-muted)',
+              background: 'var(--surface-hi)',
+              borderBottom: '1px solid var(--border)',
+              lineHeight: 1.5,
+            }}
+          >
+            <strong style={{ color: 'var(--text)' }}>Memory is off.</strong>{' '}
+            This conversation won't be saved after you leave or navigate
+            away. Turn on memory in the Memory tab to keep history across
+            sessions.
+          </div>
+        )}
         <div className="ab-chat-thread" ref={threadRef}>
           {chat.messages.length === 0 ? (
-            <div className="ab-msg ab-msg-bot">
-              <div className="ab-msg-avatar is-bot">
-                {(agent?.name ?? 'A').charAt(0).toUpperCase()}
-              </div>
-              <div>
-                <div className="ab-msg-bubble">
-                  Hi — I'm {agent?.name ?? 'here'}. Ask me anything about the
-                  resources I'm wired up with. Type{' '}
-                  <code className="ab-mono">@</code> to reference a repo,
-                  skill, tool, or MCP.
+            // Suppress the greeting while the load-messages effect is in
+            // flight or a resumed run is still streaming. Without this
+            // gate the empty `messages: []` window flashes the greeting
+            // bubble alongside a highlighted thread row in the sidebar,
+            // which reads as "two conversations active." Loading state
+            // owns the brief in-between; the greeting is reserved for
+            // genuine "no conversation yet."
+            chat.loadingMessages || chat.activeRunId ? null : (
+              <div className="ab-msg ab-msg-bot">
+                <div className="ab-msg-avatar is-bot">
+                  {(agent?.name ?? 'A').charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <div className="ab-msg-bubble">
+                    Hi — I'm {agent?.name ?? 'here'}. Ask me anything about
+                    the resources I'm wired up with. Type{' '}
+                    <code className="ab-mono">@</code> to reference a repo,
+                    skill, tool, or MCP.
+                  </div>
                 </div>
               </div>
-            </div>
+            )
           ) : (
             chat.messages.map((m) => (
               <MessageRow
@@ -598,9 +630,6 @@ function MessageRow({
             </>
           )}
         </div>
-        {msg.role === 'assistant' && msg.runId && (
-          <ChatRunTimeline runId={msg.runId} status={msg.status} />
-        )}
       </div>
     </div>
   )

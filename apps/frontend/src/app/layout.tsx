@@ -65,6 +65,7 @@ function RouterOutlet() {
         kind: 'agent-detail' as const,
         id: ad.id,
         tab: t,
+        threadId: ad.threadId,
       }
     }
     const ld = matchLibraryDetail(path)
@@ -163,7 +164,11 @@ function RouterOutlet() {
       {route.kind === 'home' && <HomePage />}
       {route.kind === 'agents' && <AgentsListPage />}
       {route.kind === 'agent-detail' && (
-        <AgentDetailPage id={route.id} initialTab={route.tab} />
+        <AgentDetailPage
+          id={route.id}
+          initialTab={route.tab}
+          initialThreadId={route.threadId}
+        />
       )}
       {route.kind === 'providers' && <ProvidersPage />}
       {route.kind === 'repos' && <ReposPage />}

@@ -405,3 +405,79 @@ export async function getById(
     .limit(1)
   return row ?? null
 }
+
+/**
+ * Find the most recent non-terminal run for a given Mastra thread,
+ * scoped to the agent. Used by the chat tab on mount: if the user
+ * navigated away mid-stream and comes back, this returns the in-flight
+ * run so the hook can re-subscribe to its SSE stream. Returns `null`
+ * when no run is pending/running (the common case — past completed
+ * runs don't need reconnection).
+ *
+ * Why scope by agentId too: defense-in-depth. `mastra_thread_id` is
+ * UUID-shaped and unique in practice, but the index lookup is cheap and
+ * the agent scope means a thread-id leak couldn't surface another
+ * agent's run to a malicious caller.
+ *
+ * Uses the `runs_thread_started_idx` partial index
+ * (`(mastra_thread_id, started_at) WHERE mastra_thread_id IS NOT NULL`)
+ * for the descending lookup.
+ */
+export interface ActiveRunForThread {
+  readonly runId: string
+  readonly streamId: string
+  readonly status: 'pending' | 'running'
+  /**
+   * Raw user prompt the dispatcher recorded for this run. Returned
+   * alongside the run id so the chat UI can reconstruct the user
+   * bubble when Mastra hasn't yet persisted the message to its
+   * thread/messages store. That window is small but very real: Mastra
+   * batches message writes around the stream's `finish` chunk, so a
+   * user who hits send and navigates away within ~1s sees the chat
+   * vanish entirely on return without this fallback. The dispatcher
+   * may prepend a `_Request origin: ..._` callsite block to the
+   * prompt; consumers should strip that before rendering if a clean
+   * user message is preferred.
+   */
+  readonly inputPrompt: string
+  /** Run's `started_at` timestamp (ISO8601). Used to position the user
+   *  bubble's `createdAt` so the chat sort stays stable across the
+   *  resume boundary. */
+  readonly startedAt: string
+}
+
+export async function findActiveForThread(
+  handle: AgentBridgeDb,
+  agentId: string,
+  mastraThreadId: string,
+): Promise<ActiveRunForThread | null> {
+  const [row] = await handle.db
+    .select({
+      id: runs.id,
+      streamId: runs.streamId,
+      status: runs.status,
+      inputPrompt: runs.inputPrompt,
+      startedAt: runs.startedAt,
+    })
+    .from(runs)
+    .where(
+      and(
+        eq(runs.agentId, agentId),
+        eq(runs.mastraThreadId, mastraThreadId),
+        inArray(runs.status, ['pending', 'running']),
+      ),
+    )
+    .orderBy(sql`${runs.startedAt} desc`)
+    .limit(1)
+  if (!row) return null
+  // `status` on the row is the broader `RunStatus` union; narrow it
+  // here since the WHERE clause guarantees it's pending|running. The
+  // cast is structurally safe — the SQL filter is authoritative.
+  return {
+    runId: row.id,
+    streamId: row.streamId,
+    status: row.status as 'pending' | 'running',
+    inputPrompt: row.inputPrompt,
+    startedAt: row.startedAt.toISOString(),
+  }
+}

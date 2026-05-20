@@ -71,3 +71,34 @@ export const agentThreadParamSchema = z.object({
   threadId: z.string().min(1),
 })
 export type AgentThreadParam = z.infer<typeof agentThreadParamSchema>
+
+// ─── Active run for thread ───────────────────────────────────────────────
+
+/**
+ * Returned by `GET /api/agents/:agentId/threads/:threadId/active-run`.
+ * `run` is null when no pending/running row exists for the thread
+ * (the common case for past conversations). When non-null, the chat
+ * tab uses `runId` to re-subscribe to the SSE stream, restoring the
+ * stream after a route change.
+ */
+export const agentThreadActiveRunResponseSchema = z.object({
+  ok: z.literal(true),
+  run: z
+    .object({
+      runId: z.uuid(),
+      streamId: z.string(),
+      status: z.enum(['pending', 'running']),
+      /** The dispatched prompt text. Lets the chat UI reconstruct the
+       *  user bubble when Mastra has not yet persisted the message to
+       *  its store (the small but real window between POST /runs and
+       *  the run's `finish` chunk). May begin with a callsite block. */
+      inputPrompt: z.string(),
+      /** When the run began. Used to keep the user bubble's createdAt
+       *  consistent with the audit log. */
+      startedAt: z.iso.datetime(),
+    })
+    .nullable(),
+})
+export type AgentThreadActiveRunResponse = z.infer<
+  typeof agentThreadActiveRunResponseSchema
+>

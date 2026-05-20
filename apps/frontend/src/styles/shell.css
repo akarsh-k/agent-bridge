@@ -2717,6 +2717,12 @@ button.ab-list-row {
   text-transform: uppercase;
   color: var(--text-muted);
 }
+/* "+ New conversation" is an ACTION (do something), not a STATE
+   indicator (you are here). The active thread row owns the filled-accent
+   look as the unambiguous "currently selected" signal; this button uses
+   a ghost/outlined treatment so the two don't visually collide in the
+   sidebar (and users don't read two stacked accent boxes as two active
+   threads). Hover bumps it to filled to invite the click. */
 .ab-thread-rail-new {
   width: 100%;
   display: flex;
@@ -2724,9 +2730,9 @@ button.ab-list-row {
   gap: 8px;
   padding: 8px 10px;
   border-radius: var(--radius);
-  background: var(--accent-bg);
+  background: transparent;
   color: var(--accent-300);
-  border: 1px solid var(--accent-border);
+  border: 1px dashed var(--accent-border);
   cursor: pointer;
   font: inherit;
   font-size: 12px;
@@ -2737,7 +2743,8 @@ button.ab-list-row {
     border-color var(--dur-1) var(--ease-out);
 }
 .ab-thread-rail-new:hover {
-  background: var(--accent-bg-hi);
+  background: var(--accent-bg);
+  border-style: solid;
 }
 [data-theme='light'] .ab-thread-rail-new {
   color: var(--accent-500);

@@ -59,6 +59,22 @@ export interface UseSSEOptions {
 export interface UseSSEResult {
   connected: boolean
   events: readonly RunEvent[]
+  /**
+   * Monotonic sequence offset of `events[0]`. Lets consumers track
+   * "events I've processed" by SEQUENCE rather than ARRAY INDEX, which
+   * is the only way to stay correct across buffer trims.
+   *
+   * For any `i`, the seq of `events[i]` is `seqOffset + i`. After
+   * processing through seq `N`, find unprocessed events at
+   * `events.slice(Math.max(0, N - seqOffset + 1))`. When events get
+   * evicted off the front (cap reached), `seqOffset` jumps forward;
+   * consumers tracking by seq stay aligned. A consumer that's fallen
+   * more than `cap` events behind will see a gap (its lastSeq is below
+   * the new `seqOffset`), which is also the signal to take recovery
+   * action (e.g. re-fetch from a persistent source). Reset to 0 on
+   * `streamId` change.
+   */
+  seqOffset: number
   clear: () => void
 }
 
@@ -66,6 +82,8 @@ interface StreamState {
   streamId: string | null
   connected: boolean
   events: RunEvent[]
+  /** Internal mirror of {@link UseSSEResult.seqOffset}. See the docs there. */
+  seqOffset: number
 }
 
 export function useSSE(
@@ -78,12 +96,13 @@ export function useSSE(
     streamId,
     connected: false,
     events: [],
+    seqOffset: 0,
   }))
 
   // Canonical "reset state on prop change" pattern: setState-in-render
   // triggers an immediate restart of the render, no flicker, no effect.
   if (state.streamId !== streamId) {
-    setState({ streamId, connected: false, events: [] })
+    setState({ streamId, connected: false, events: [], seqOffset: 0 })
   }
 
   useEffect(() => {
@@ -106,8 +125,17 @@ export function useSSE(
         // into a new stream's buffer; this guard keeps them isolated.
         if (prev.streamId !== streamId) return prev
         const next = [...prev.events, result.data]
-        const trimmed = next.length > cap ? next.slice(next.length - cap) : next
-        return { ...prev, events: trimmed }
+        // When the buffer overflows we drop the oldest events. The
+        // `seqOffset` jumps forward by the number we dropped so the
+        // seq-of-events[0] stays correct. Consumers that key off seq
+        // (instead of array index) stay aligned across the trim.
+        const dropped = Math.max(0, next.length - cap)
+        const trimmed = dropped > 0 ? next.slice(dropped) : next
+        return {
+          ...prev,
+          events: trimmed,
+          seqOffset: prev.seqOffset + dropped,
+        }
       })
     }
 
@@ -141,11 +169,20 @@ export function useSSE(
   }, [streamId, cap])
 
   const clear = () =>
-    setState((prev) => ({ ...prev, events: [] }))
+    setState((prev) => ({
+      ...prev,
+      events: [],
+      // Roll seqOffset forward by the number we just dropped so any
+      // consumer with `lastSeq >= old seqOffset + len` continues to see
+      // its tracking pointer as already-past-everything (no events
+      // pending). New events arriving after `clear()` get fresh seqs.
+      seqOffset: prev.seqOffset + prev.events.length,
+    }))
 
   return {
     connected: state.connected,
     events: state.events,
+    seqOffset: state.seqOffset,
     clear,
   }
 }

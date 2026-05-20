@@ -107,16 +107,27 @@ export type AgentTabSegment = (typeof AGENT_TABS)[number]
 
 export function matchAgentDetail(
   path: string,
-): { id: string; tab?: AgentTabSegment } | null {
+): { id: string; tab?: AgentTabSegment; threadId?: string } | null {
   const parts = path.split('/').filter(Boolean)
-  if (parts.length < 2 || parts.length > 3) return null
+  // 2 = /agents/:id
+  // 3 = /agents/:id/<tab>
+  // 4 = /agents/:id/chat/<threadId>  (only chat carries a sub-resource)
+  if (parts.length < 2 || parts.length > 4) return null
   if (parts[0] !== 'agents') return null
   const id = parts[1]!
   if (!UUID_RE.test(id)) return null
   if (parts.length === 2) return { id }
   const tab = parts[2] as string
   if (!(AGENT_TABS as ReadonlyArray<string>).includes(tab)) return null
-  return { id, tab: tab as AgentTabSegment }
+  if (parts.length === 3) return { id, tab: tab as AgentTabSegment }
+  // 4-segment form is reserved for the chat tab's per-thread URL so
+  // each conversation can be bookmarked / linked. Reject combos like
+  // `/agents/:id/resources/<anything>` so we don't accidentally swallow
+  // typos as valid routes.
+  if (tab !== 'chat') return null
+  const threadId = parts[3]!
+  if (!UUID_RE.test(threadId)) return null
+  return { id, tab: 'chat', threadId }
 }
 
 /**

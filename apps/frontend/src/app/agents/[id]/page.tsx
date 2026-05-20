@@ -77,11 +77,17 @@ function normalizeTab(raw: string | undefined): TabId {
 export function AgentDetailPage({
   id,
   initialTab,
+  initialThreadId,
 }: {
   id: string
   /** Raw URL segment — may be a legacy alias like 'build' / 'memory'
    * which `normalizeTab` folds into the corresponding active tab. */
   initialTab?: string
+  /** Optional chat thread captured from `/agents/:id/chat/:threadId`.
+   *  Only set when `initialTab === 'chat'`. The chat tab uses this as
+   *  the URL-driven source of truth for the active thread; thread
+   *  switches inside the tab push a new URL via `navigate`. */
+  initialThreadId?: string
 }) {
   const initial = normalizeTab(initialTab)
   const { agents, removeAgent, status } = useWorkspace()
@@ -364,7 +370,7 @@ export function AgentDetailPage({
       )}
       {tab === 'chat' && (
         <Suspense fallback={<LoadingRow label="Loading…" />}>
-          <ChatTab agentId={agent.id} />
+          <ChatTab agentId={agent.id} initialThreadId={initialThreadId} />
         </Suspense>
       )}
       {tab === 'bridge' && (

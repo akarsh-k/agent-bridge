@@ -21,7 +21,7 @@ import {
   agentRunsAgentIdParamSchema,
   agentThreadParamSchema,
 } from '@agent-bridge/shared'
-import { schema } from '@agent-bridge/db'
+import { runsRepo, schema } from '@agent-bridge/db'
 import {
   deleteAgentThread,
   getAgentThreadMessages,
@@ -97,6 +97,29 @@ export const agentThreadsRouter = new Hono()
           createdAt: m.createdAt.toISOString(),
         })),
       })
+    },
+  )
+  .get(
+    '/:threadId/active-run',
+    zValidator('param', agentThreadParamSchema, (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    }),
+    async (c) => {
+      const { agentId, threadId } = c.req.valid('param')
+      const db = getDb()
+      if (!(await assertAgentExists(db, agentId))) {
+        return httpError(c, {
+          code: 'not_found',
+          message: `agent ${agentId} not found`,
+        })
+      }
+      // Returns the most recent pending/running run for this thread,
+      // or null if every run for it has already finished. The chat
+      // tab uses this on mount to recover from a route change that
+      // unmounted the previous SSE subscription.
+      const active = await runsRepo.findActiveForThread(db, agentId, threadId)
+      return c.json({ ok: true as const, run: active })
     },
   )
   .delete(

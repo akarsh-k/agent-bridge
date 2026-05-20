@@ -724,6 +724,42 @@ export async function getAgentThreadMessages(
 }
 
 /**
+ * Look up the in-flight run for a thread (if any). Returns `null` when
+ * every run for the thread has finished — that's the common case. The
+ * chat tab calls this on mount / thread switch so a navigation away
+ * mid-stream doesn't strand the assistant message: when the user comes
+ * back, we re-subscribe to the live SSE stream of the still-running
+ * run instead of showing whatever partial state Mastra had persisted.
+ */
+export interface ActiveRunForThread {
+  readonly runId: string
+  readonly streamId: string
+  readonly status: 'pending' | 'running'
+  /** Raw prompt text from `runs.input_prompt`. The chat UI uses this
+   *  to rebuild the user bubble when the load-messages effect runs
+   *  before Mastra has persisted the message — common when the user
+   *  hits send and navigates away in the same second. */
+  readonly inputPrompt: string
+  readonly startedAt: string
+}
+
+export async function getActiveRunForThread(
+  agentId: string,
+  threadId: string,
+): Promise<ActiveRunForThread | null> {
+  const res = await callApi<{
+    ok: true
+    run: ActiveRunForThread | null
+  }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/threads/${encodeURIComponent(threadId)}/active-run`,
+      { method: 'GET' },
+    ),
+  )
+  return res.run
+}
+
+/**
  * Delete a thread + every message in it. Mastra cascades the
  * `mastra.messages` rows.
  */

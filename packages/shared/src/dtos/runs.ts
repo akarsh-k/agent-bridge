@@ -154,6 +154,19 @@ export function formatCallsiteBlock(callsite: Callsite | null): string {
   return `_Request origin: ${clientLine} · ${callsite.agent.slug}_\n\n`
 }
 
+/**
+ * Inverse of {@link formatCallsiteBlock}. Strips the prepended
+ * `_Request origin: ..._` metadata line from a persisted
+ * `runs.input_prompt` so consumers can render a clean user bubble.
+ * Tolerant of variations (callsite missing, different whitespace
+ * trailing the block) and a no-op when the prompt doesn't start with
+ * the marker.
+ */
+export function stripCallsiteBlock(prompt: string): string {
+  const match = prompt.match(/^_Request origin:[^\n]*_\n+/)
+  return match ? prompt.slice(match[0].length) : prompt
+}
+
 export const runListRowSchema = z.object({
   id: z.uuid(),
   agentId: z.uuid(),
