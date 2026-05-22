@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ADD COLUMN "mini_repo_token_cap" integer;

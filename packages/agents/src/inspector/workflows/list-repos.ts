@@ -14,24 +14,20 @@
  * to pick a `repo_hint` for subsequent wrapper calls.
  */
 
-import type {
-  AttachedRepo,
-  InspectorMinirepoBuiltPayload,
-  InspectorToolCalledPayload,
-  InspectorToolResultPayload,
-} from '@agent-bridge/shared'
-import { INSPECTOR_PREVIEW_BYTES_CAP } from '@agent-bridge/shared'
+import type { AttachedRepo } from '@agent-bridge/shared'
 
 import { finalizeMiniRepo } from '../mini-repo.js'
-import {
-  emitInspectorEvent,
-  getInspectorRunContext,
-  previewJson,
-} from '../run-context.js'
 import type { MiniRepo } from '../types.js'
+import {
+  emitMinirepoBuilt,
+  emitToolCalled,
+  emitToolResult,
+} from '../wrapper-telemetry.js'
 
 export interface ListReposInput {
   readonly repos: readonly AttachedRepo[]
+  /** Per-call mini-repo token cap; falls back to the module default when omitted. */
+  readonly miniRepoTokenCap?: number
 }
 
 /**
@@ -39,54 +35,47 @@ export interface ListReposInput {
  * inspector telemetry events through the run-context AsyncLocalStorage.
  * The work itself is still synchronous; await is only there to
  * sequence event publishes.
+ *
+ * Routed through `emitMinirepoBuilt` so the resulting mini-repo lands
+ * on `runs.minirepo_json` like every other wrapper. That makes
+ * `list_repos` visible in the chat-tab tool-call cards and the IDE
+ * D17 envelope, and gives the `no_repos_attached` warning a path to
+ * the event payload.
  */
 export async function runListRepos(input: ListReposInput): Promise<MiniRepo> {
-  const { repos } = input
-  const ctx = getInspectorRunContext()
-  const runId = ctx?.runId ?? ''
-  const startedAt = Date.now()
+  const { repos, miniRepoTokenCap } = input
+  const handle = await emitToolCalled('list_repos', {})
 
-  const argsPreview = previewJson({}, INSPECTOR_PREVIEW_BYTES_CAP)
-  await emitInspectorEvent('inspector.tool.called', {
-    runId,
-    wrapperName: 'list_repos',
-    argsPreview: argsPreview.preview,
-    truncated: argsPreview.truncated,
-  } satisfies InspectorToolCalledPayload)
+  const miniRepo = buildListReposMiniRepo(repos, miniRepoTokenCap)
 
-  const miniRepo = buildListReposMiniRepo(repos)
-
-  await emitInspectorEvent('inspector.minirepo.built', {
-    runId,
+  await emitMinirepoBuilt('list_repos', miniRepo)
+  await emitToolResult({
+    handle,
     wrapperName: 'list_repos',
-    fileCount: 0,
-    chunkCount: 0,
-    tokensUsed: miniRepo.tokens_used,
-    tokensCap: miniRepo.tokens_cap,
-    truncated: false,
-  } satisfies InspectorMinirepoBuiltPayload)
-  await emitInspectorEvent('inspector.tool.result', {
-    runId,
-    wrapperName: 'list_repos',
-    durationMs: Date.now() - startedAt,
     status: 'ok',
-  } satisfies InspectorToolResultPayload)
+  })
 
   return miniRepo
 }
 
-function buildListReposMiniRepo(repos: readonly AttachedRepo[]): MiniRepo {
+function buildListReposMiniRepo(
+  repos: readonly AttachedRepo[],
+  cap: number | undefined,
+): MiniRepo {
   if (repos.length === 0) {
-    return finalizeMiniRepo({
-      wrapper: 'list_repos',
-      summary: 'This agent has no repos attached.',
-      intent: 'list_repos',
-      expansions: [],
-      files: [],
-      graph_subset: { nodes: [], edges: [] },
-      cross_repo_relationships: [],
-      warnings: ['no_repos_attached'],
-    })
+    return finalizeMiniRepo(
+      {
+        wrapper: 'list_repos',
+        summary: 'This agent has no repos attached.',
+        intent: 'list_repos',
+        expansions: [],
+        files: [],
+        graph_subset: { nodes: [], edges: [] },
+        cross_repo_relationships: [],
+        warnings: ['no_repos_attached'],
+      },
+      cap,
+    )
   }
 
   // Render the inventory inline in `summary` so the LLM picks it up
@@ -107,14 +96,17 @@ function buildListReposMiniRepo(repos: readonly AttachedRepo[]): MiniRepo {
     ...lines,
   ].join('\n')
 
-  return finalizeMiniRepo({
-    wrapper: 'list_repos',
-    summary,
-    intent: 'list_repos',
-    expansions: [],
-    files: [],
-    graph_subset: { nodes: [], edges: [] },
-    cross_repo_relationships: [],
-    warnings: [],
-  })
+  return finalizeMiniRepo(
+    {
+      wrapper: 'list_repos',
+      summary,
+      intent: 'list_repos',
+      expansions: [],
+      files: [],
+      graph_subset: { nodes: [], edges: [] },
+      cross_repo_relationships: [],
+      warnings: [],
+    },
+    cap,
+  )
 }

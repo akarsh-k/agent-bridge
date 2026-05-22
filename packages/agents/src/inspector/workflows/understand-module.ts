@@ -45,12 +45,14 @@ export interface UnderstandModuleInput {
   /** File path OR symbol name. */
   readonly anchor: string
   readonly repoHint?: string | null
+  /** Per-call mini-repo token cap; falls back to the module default when omitted. */
+  readonly miniRepoTokenCap?: number
 }
 
 export async function runUnderstandModule(
   input: UnderstandModuleInput,
 ): Promise<MiniRepo> {
-  const { tools, repos, anchor, repoHint } = input
+  const { tools, repos, anchor, repoHint, miniRepoTokenCap } = input
   const handle = await emitToolCalled('understand_module', {
     anchor,
     repo_hint: repoHint,
@@ -63,6 +65,7 @@ export async function runUnderstandModule(
         summary: 'Pass an `anchor` (file path or symbol) to explain.',
         warnings: ['empty anchor'],
       }),
+      miniRepoTokenCap,
     )
     await emitMinirepoBuilt('understand_module', result)
     await emitToolResult({
@@ -93,6 +96,7 @@ export async function runUnderstandModule(
         summary,
         warnings: [message],
       }),
+      miniRepoTokenCap,
     )
     await emitMinirepoBuilt('understand_module', result)
     await emitToolResult({
@@ -266,25 +270,28 @@ export async function runUnderstandModule(
       ? `Couldn't find "${trimmed}" in repo ${target.label}. The path/symbol may not be indexed; try a more specific name.`
       : `Anchor "${trimmed}" in ${target.label}: ${files.length} file(s) — body + ${Math.max(0, files.length - 1)} dependency(ies) (depth ≤ ${DEPENDENCY_DEPTH}).`
 
-  const miniRepo = finalizeMiniRepo({
-    wrapper: 'understand_module',
-    summary,
-    intent: 'understand',
-    expansions: [trimmed],
-    files,
-    graph_subset: { nodes: [], edges: [] },
-    cross_repo_relationships: [],
-    warnings,
-    resolved_repo: {
-      repo_id: target.repo_id,
-      label: target.label,
-      matched_signal: resolution.matched_signal,
+  const miniRepo = finalizeMiniRepo(
+    {
+      wrapper: 'understand_module',
+      summary,
+      intent: 'understand',
+      expansions: [trimmed],
+      files,
+      graph_subset: { nodes: [], edges: [] },
+      cross_repo_relationships: [],
+      warnings,
+      resolved_repo: {
+        repo_id: target.repo_id,
+        label: target.label,
+        matched_signal: resolution.matched_signal,
+      },
+      // "high" when the anchor + at least one dependency landed; "medium"
+      // when only the anchor came back; "low" when nothing did.
+      confidence:
+        files.length >= 2 ? 'high' : files.length >= 1 ? 'medium' : 'low',
     },
-    // "high" when the anchor + at least one dependency landed; "medium"
-    // when only the anchor came back; "low" when nothing did.
-    confidence:
-      files.length >= 2 ? 'high' : files.length >= 1 ? 'medium' : 'low',
-  })
+    miniRepoTokenCap,
+  )
 
   await emitMinirepoBuilt('understand_module', miniRepo)
   await emitToolResult({

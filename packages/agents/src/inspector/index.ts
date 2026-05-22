@@ -35,6 +35,7 @@ import {
 } from '@agent-bridge/shared'
 
 import { loadAttachedRepos } from './repo-loader.js'
+import { MINI_REPO_TOKEN_CAP } from './types.js'
 
 import type { ToolDict } from './gitnexus-callers.js'
 import {
@@ -66,6 +67,14 @@ export interface MountInspectorToolsInput {
    * scripts that want to isolate gitnexus behaviour.
    */
   readonly modelConfig?: MastraModelConfig
+  /**
+   * Effective per-wrapper mini-repo token cap. Closure-captured by each
+   * wrapper factory and threaded into `finalizeMiniRepo(draft, cap)`.
+   * When omitted, wrappers fall back to the module-level
+   * {@link MINI_REPO_TOKEN_CAP} default — keeps tests and smoke scripts
+   * that bypass `buildAgent` working without a config.
+   */
+  readonly miniRepoTokenCap?: number
 }
 
 export interface InspectorMountMeta {
@@ -96,7 +105,8 @@ export interface MountedInspector {
 export async function mountInspectorTools(
   input: MountInspectorToolsInput,
 ): Promise<MountedInspector> {
-  const { db, agentId, gitnexusTools, modelConfig } = input
+  const { db, agentId, gitnexusTools, modelConfig, miniRepoTokenCap } = input
+  const cap = miniRepoTokenCap ?? MINI_REPO_TOKEN_CAP
 
   // Load once at mount; per-call state changes (e.g. a repo flipping
   // status mid-run) trigger a BuiltAgent cache invalidation in
@@ -104,7 +114,7 @@ export async function mountInspectorTools(
   const repos = await loadAttachedRepos({ db, agentId, readyOnly: false })
 
   const tools: Record<string, Tool<any, any, any, any>> = {
-    list_repos: buildListReposTool(repos),
+    list_repos: buildListReposTool(repos, cap),
   }
 
   if (gitnexusTools !== null) {
@@ -112,16 +122,18 @@ export async function mountInspectorTools(
       repos,
       gitnexusTools,
       modelConfig,
+      cap,
     )
-    tools['trace_flow'] = buildTraceFlowTool(repos, gitnexusTools)
+    tools['trace_flow'] = buildTraceFlowTool(repos, gitnexusTools, cap)
     tools['assess_change_impact'] = buildAssessChangeImpactTool(
       repos,
       gitnexusTools,
       db,
       agentId,
+      cap,
     )
-    tools['debug_help'] = buildDebugHelpTool(repos, gitnexusTools)
-    tools['understand_module'] = buildUnderstandModuleTool(repos, gitnexusTools)
+    tools['debug_help'] = buildDebugHelpTool(repos, gitnexusTools, cap)
+    tools['understand_module'] = buildUnderstandModuleTool(repos, gitnexusTools, cap)
   }
 
   return {
@@ -180,6 +192,7 @@ function buildFindInCodebaseTool(
   repos: readonly AttachedRepo[],
   gitnexusTools: ToolDict,
   modelConfig: MastraModelConfig | undefined,
+  miniRepoTokenCap: number,
 ): Tool<any, any, any, any> {
   // No `outputSchema` — our `MiniRepo` type uses `readonly` arrays
   // (correct for an immutable payload), but Mastra's `createTool`
@@ -197,6 +210,7 @@ function buildFindInCodebaseTool(
         repos,
         query: input.query,
         repoHint: input.repo_hint ?? null,
+        miniRepoTokenCap,
         ...(input.max_files !== undefined ? { maxFiles: input.max_files } : {}),
         ...(modelConfig ? { modelConfig } : {}),
       }),
@@ -207,6 +221,7 @@ const listReposInputSchema = z.object({}).strict()
 
 function buildListReposTool(
   repos: readonly AttachedRepo[],
+  miniRepoTokenCap: number,
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'list_repos',
@@ -214,7 +229,7 @@ function buildListReposTool(
     inputSchema: listReposInputSchema,
     // outputSchema omitted for the same readonly-array reason as
     // find_in_codebase; mirrors the closure we captured at mount.
-    execute: async () => runListRepos({ repos }),
+    execute: async () => runListRepos({ repos, miniRepoTokenCap }),
   })
 }
 
@@ -262,6 +277,7 @@ const traceFlowInputSchema = z
 function buildTraceFlowTool(
   repos: readonly AttachedRepo[],
   gitnexusTools: ToolDict,
+  miniRepoTokenCap: number,
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'trace_flow',
@@ -271,6 +287,7 @@ function buildTraceFlowTool(
       runTraceFlow({
         tools: gitnexusTools,
         repos,
+        miniRepoTokenCap,
         ...(input.start_path ? { startPath: input.start_path } : {}),
         ...(input.start_symbol ? { startSymbol: input.start_symbol } : {}),
         ...(input.goal ? { goal: input.goal } : {}),
@@ -310,6 +327,7 @@ function buildAssessChangeImpactTool(
   gitnexusTools: ToolDict,
   db: AgentBridgeDb,
   agentId: string,
+  miniRepoTokenCap: number,
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'assess_change_impact',
@@ -324,6 +342,7 @@ function buildAssessChangeImpactTool(
         anchors: input.anchors,
         changeKind: input.change_kind as ChangeKind,
         repoHint: input.repo_hint ?? null,
+        miniRepoTokenCap,
       }),
   })
 }
@@ -361,6 +380,7 @@ const debugHelpInputSchema = z
 function buildDebugHelpTool(
   repos: readonly AttachedRepo[],
   gitnexusTools: ToolDict,
+  miniRepoTokenCap: number,
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'debug_help',
@@ -371,6 +391,7 @@ function buildDebugHelpTool(
         tools: gitnexusTools,
         repos,
         errorText: input.error_text,
+        miniRepoTokenCap,
         ...(input.query ? { query: input.query } : {}),
         repoHint: input.repo_hint ?? null,
       }),
@@ -401,6 +422,7 @@ const understandModuleInputSchema = z
 function buildUnderstandModuleTool(
   repos: readonly AttachedRepo[],
   gitnexusTools: ToolDict,
+  miniRepoTokenCap: number,
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'understand_module',
@@ -412,6 +434,7 @@ function buildUnderstandModuleTool(
         repos,
         anchor: input.anchor,
         repoHint: input.repo_hint ?? null,
+        miniRepoTokenCap,
       }),
   })
 }

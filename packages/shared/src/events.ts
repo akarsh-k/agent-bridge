@@ -152,9 +152,11 @@ export const runEventKinds = [
    *                                 truncated payload preview.
    *  - `inspector.minirepo.built`   mini-repo finalised. Carries file
    *                                 count, total tokens, truncation
-   *                                 stats. NOT the mini-repo body
-   *                                 itself — that lands on
-   *                                 `runs.minirepo_json` per D17.
+   *                                 stats, and any `warnings[]` the
+   *                                 mini-repo stamped (truncation,
+   *                                 `no_repos_attached`, etc.). NOT
+   *                                 the mini-repo body itself — that
+   *                                 lands on `runs.minirepo_json` per D17.
    *  - `inspector.fallback`         the LLM term-expansion failed or
    *                                 was unparsable. Wrapper continues
    *                                 with raw query as the only
@@ -1004,6 +1006,17 @@ export interface InspectorMinirepoBuiltPayload {
   readonly tokensCap: number
   /** `true` when truncation rules in §5 fired. */
   readonly truncated: boolean
+  /**
+   * Verbatim `MiniRepo.warnings` strings. Propagated whenever the
+   * mini-repo carries any warning (truncation messages like
+   * `"dropped 3 chunk(s) to fit under 12000-token cap"`,
+   * `no_repos_attached`, gitnexus partial-traversal flags, etc.), so
+   * the Logs UI can surface them without the operator having to dig
+   * into `runs.minirepo_json`. Elided when there are no warnings to
+   * keep the payload tight; consumers should treat an absent field
+   * the same as an empty array.
+   */
+  readonly warnings?: readonly string[]
 }
 
 export interface InspectorFallbackPayload {

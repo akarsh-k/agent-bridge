@@ -105,6 +105,7 @@ function toAgentResponse(row: AgentRow): AgentResponse {
     memoryConfig: row.memoryConfig,
     inspectorEnabled: row.inspectorEnabled,
     maxSteps: row.maxSteps,
+    miniRepoTokenCap: row.miniRepoTokenCap,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   })
@@ -141,6 +142,9 @@ export const agentsRouter = new Hono()
               ? { inspectorEnabled: body.inspectorEnabled }
               : {}),
             ...(body.maxSteps !== undefined ? { maxSteps: body.maxSteps } : {}),
+            ...(body.miniRepoTokenCap !== undefined
+              ? { miniRepoTokenCap: body.miniRepoTokenCap }
+              : {}),
           })
           .returning()
 
@@ -241,6 +245,8 @@ export const agentsRouter = new Hono()
       if ('memoryConfig' in body) patch.memoryConfig = body.memoryConfig ?? null
       if ('inspectorEnabled' in body) patch.inspectorEnabled = body.inspectorEnabled
       if ('maxSteps' in body) patch.maxSteps = body.maxSteps ?? null
+      if ('miniRepoTokenCap' in body)
+        patch.miniRepoTokenCap = body.miniRepoTokenCap ?? null
 
       // When the operator flips `memoryEnabled` true without
       // simultaneously authoring a `memoryConfig`, seed Mastra's

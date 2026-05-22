@@ -90,6 +90,7 @@ export async function emitMinirepoBuilt(
     tokensUsed: miniRepo.tokens_used,
     tokensCap: miniRepo.tokens_cap,
     truncated: miniRepo.warnings.some((w) => w.includes('to fit under')),
+    ...(miniRepo.warnings.length > 0 ? { warnings: miniRepo.warnings } : {}),
   } satisfies InspectorMinirepoBuiltPayload)
 
   // Persist to `runs.minirepo_json` (`docs/ARCHITECTURE.md §10`).

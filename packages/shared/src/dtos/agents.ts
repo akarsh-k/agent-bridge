@@ -73,6 +73,18 @@ const baseFields = {
    * effective cap onto `run.finished`.
    */
   maxSteps: z.number().int().min(1).max(100).nullable(),
+  /**
+   * Per-agent token cap on the mini-repo payload each inspector wrapper
+   * returns to the LLM. `null` means "use the module default"
+   * (`MINI_REPO_TOKEN_CAP`, 12_000 at the time of writing); set a
+   * positive integer to override. Lower for small-repo agents where the
+   * default already wastes headroom; higher for monorepo agents whose
+   * wrapper calls keep tripping the cap (visible as `truncated` warnings
+   * on `inspector.minirepo.built`). Range is 2_000–64_000: floor leaves
+   * room for graph + relationships after files, ceiling keeps a single
+   * call from dominating the model's context window.
+   */
+  miniRepoTokenCap: z.number().int().min(2_000).max(64_000).nullable(),
 } as const
 
 /**
@@ -95,6 +107,8 @@ export const agentCreateInputSchema = z
     inspectorEnabled: baseFields.inspectorEnabled.optional(),
     /** Defaults to null on the server (= dispatcher default 10). */
     maxSteps: baseFields.maxSteps.optional(),
+    /** Defaults to null on the server (= module default MINI_REPO_TOKEN_CAP). */
+    miniRepoTokenCap: baseFields.miniRepoTokenCap.optional(),
   })
   .strict()
 
@@ -121,6 +135,7 @@ export const agentUpdateInputSchema = z
      *  ask_agent row stays put unless the operator deletes it. */
     inspectorEnabled: baseFields.inspectorEnabled.optional(),
     maxSteps: baseFields.maxSteps.optional(),
+    miniRepoTokenCap: baseFields.miniRepoTokenCap.optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, {
@@ -144,6 +159,7 @@ export const agentResponseSchema = z.object({
   memoryConfig: agentMemoryConfigSchema.nullable(),
   inspectorEnabled: z.boolean(),
   maxSteps: z.number().int().nullable(),
+  miniRepoTokenCap: z.number().int().nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 })

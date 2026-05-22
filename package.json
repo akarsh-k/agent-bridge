@@ -28,6 +28,7 @@
     "test:worker-jobs": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-worker-jobs.ts",
     "test:dispatcher-mapper": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-dispatcher-mapper.ts",
     "test:gitnexus-callers": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-gitnexus-callers.ts",
+    "test:mini-repo-cap": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-mini-repo-cap.ts",
     "secret:generate": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\""
   },
   "keywords": [

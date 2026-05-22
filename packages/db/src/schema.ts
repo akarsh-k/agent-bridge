@@ -180,6 +180,23 @@ export const agents = pgTable(
      * needs the headroom. Hardcoded 10 had to serve both, badly.
      */
     maxSteps: integer('max_steps'),
+    /**
+     * Per-inspector-wrapper-call token cap on the mini-repo payload
+     * returned to the LLM. `null` means "use the default constant"
+     * ({@link MINI_REPO_TOKEN_CAP} in `packages/agents/src/inspector/types.ts`,
+     * 12_000 at the time of writing); set a positive integer to override.
+     * Range is bounded in the DTO; the wrapper's `finalizeMiniRepo` step
+     * truncates files → graph → relationships (in that order) to fit
+     * under the effective cap and stamps `warnings[]` so the Logs UI
+     * can surface what was dropped.
+     *
+     * Why per-agent: an agent attached to a single small repo gets fine
+     * answers under the default; an agent traversing a large monorepo
+     * with deep graph payloads runs into the cap on every wrapper call
+     * and benefits from raising it. A global bump would waste tokens
+     * for the small-repo case.
+     */
+    miniRepoTokenCap: integer('mini_repo_token_cap'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },

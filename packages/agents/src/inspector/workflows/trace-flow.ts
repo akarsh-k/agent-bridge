@@ -66,10 +66,20 @@ export interface TraceFlowInput {
   readonly startSymbol?: string
   readonly goal?: string
   readonly repoHint?: string | null
+  /** Per-call mini-repo token cap; falls back to the module default when omitted. */
+  readonly miniRepoTokenCap?: number
 }
 
 export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
-  const { tools, repos, startPath, startSymbol, goal, repoHint } = input
+  const {
+    tools,
+    repos,
+    startPath,
+    startSymbol,
+    goal,
+    repoHint,
+    miniRepoTokenCap,
+  } = input
   const handle = await emitToolCalled('trace_flow', {
     start_path: startPath,
     start_symbol: startSymbol,
@@ -85,6 +95,7 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
           'Pass either `start_path` or `start_symbol` to anchor the trace.',
         warnings: ['no anchor provided'],
       }),
+      miniRepoTokenCap,
     )
     await emitMinirepoBuilt('trace_flow', result)
     await emitToolResult({
@@ -115,6 +126,7 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
         summary,
         warnings: [message],
       }),
+      miniRepoTokenCap,
     )
     await emitMinirepoBuilt('trace_flow', result)
     await emitToolResult({
@@ -275,23 +287,26 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
       ? `No downstream hops found for "${anchor}" in repo ${target.label}${goalSuffix}.`
       : `Traced ${sorted.length} downstream hop(s) from "${anchor}" in repo ${target.label}${goalSuffix}${strategySuffix}; fetched context for ${files.length} closest file(s).`
 
-  const miniRepo = finalizeMiniRepo({
-    wrapper: 'trace_flow',
-    summary,
-    intent: 'trace',
-    expansions: [anchor],
-    files,
-    graph_subset: { nodes, edges },
-    cross_repo_relationships: [],
-    warnings,
-    resolved_repo: {
-      repo_id: target.repo_id,
-      label: target.label,
-      matched_signal: resolution.matched_signal,
+  const miniRepo = finalizeMiniRepo(
+    {
+      wrapper: 'trace_flow',
+      summary,
+      intent: 'trace',
+      expansions: [anchor],
+      files,
+      graph_subset: { nodes, edges },
+      cross_repo_relationships: [],
+      warnings,
+      resolved_repo: {
+        repo_id: target.repo_id,
+        label: target.label,
+        matched_signal: resolution.matched_signal,
+      },
+      confidence:
+        nodes.length >= 5 ? 'high' : nodes.length >= 1 ? 'medium' : 'low',
     },
-    confidence:
-      nodes.length >= 5 ? 'high' : nodes.length >= 1 ? 'medium' : 'low',
-  })
+    miniRepoTokenCap,
+  )
 
   await emitMinirepoBuilt('trace_flow', miniRepo)
   await emitToolResult({

@@ -92,6 +92,13 @@
       "when": 1779208235353,
       "tag": "0012_aberrant_wilson_fisk",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1779460581365,
+      "tag": "0013_add_agents_mini_repo_token_cap",
+      "breakpoints": true
     }
   ]
 }

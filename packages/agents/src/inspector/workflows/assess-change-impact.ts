@@ -65,12 +65,23 @@ export interface AssessChangeImpactInput {
   readonly anchors: readonly string[]
   readonly changeKind: ChangeKind
   readonly repoHint?: string | null
+  /** Per-call mini-repo token cap; falls back to the module default when omitted. */
+  readonly miniRepoTokenCap?: number
 }
 
 export async function runAssessChangeImpact(
   input: AssessChangeImpactInput,
 ): Promise<MiniRepo> {
-  const { tools, repos, db, agentId, anchors, changeKind, repoHint } = input
+  const {
+    tools,
+    repos,
+    db,
+    agentId,
+    anchors,
+    changeKind,
+    repoHint,
+    miniRepoTokenCap,
+  } = input
 
   const handle = await emitToolCalled('assess_change_impact', {
     anchors,
@@ -87,6 +98,7 @@ export async function runAssessChangeImpact(
         summary: 'Pass at least one file path or symbol name to assess.',
         warnings: ['no anchors'],
       }),
+      miniRepoTokenCap,
     )
     await emitMinirepoBuilt('assess_change_impact', result)
     await emitToolResult({
@@ -117,6 +129,7 @@ export async function runAssessChangeImpact(
         summary,
         warnings: [message],
       }),
+      miniRepoTokenCap,
     )
     await emitMinirepoBuilt('assess_change_impact', result)
     await emitToolResult({
@@ -134,25 +147,28 @@ export async function runAssessChangeImpact(
   // `add` is structurally empty. Emit a clean summary + empty mini-repo
   // rather than calling gitnexus on a path that doesn't exist yet.
   if (changeKind === 'add') {
-    const miniRepo = finalizeMiniRepo({
-      wrapper: 'assess_change_impact',
-      summary: `Change kind "add" has no blast radius. nothing existing references "${trimmedAnchors.join('", "')}" yet in repo ${target.label}.`,
-      intent: 'impact',
-      expansions: trimmedAnchors,
-      files: [],
-      graph_subset: { nodes: [], edges: [] },
-      cross_repo_relationships: [],
-      warnings: [],
-      resolved_repo: {
-        repo_id: target.repo_id,
-        label: target.label,
-        matched_signal: resolution.matched_signal,
+    const miniRepo = finalizeMiniRepo(
+      {
+        wrapper: 'assess_change_impact',
+        summary: `Change kind "add" has no blast radius. nothing existing references "${trimmedAnchors.join('", "')}" yet in repo ${target.label}.`,
+        intent: 'impact',
+        expansions: trimmedAnchors,
+        files: [],
+        graph_subset: { nodes: [], edges: [] },
+        cross_repo_relationships: [],
+        warnings: [],
+        resolved_repo: {
+          repo_id: target.repo_id,
+          label: target.label,
+          matched_signal: resolution.matched_signal,
+        },
+        // "add" is a deterministic empty-blast-radius result; high
+        // confidence that there's nothing to find, not low confidence
+        // that we missed something.
+        confidence: 'high',
       },
-      // "add" is a deterministic empty-blast-radius result; high
-      // confidence that there's nothing to find, not low confidence
-      // that we missed something.
-      confidence: 'high',
-    })
+      miniRepoTokenCap,
+    )
     await emitMinirepoBuilt('assess_change_impact', miniRepo)
     await emitToolResult({
       handle,
@@ -510,23 +526,26 @@ export async function runAssessChangeImpact(
     : ''
   const summary = `${changeKind.toUpperCase()} of ${trimmedAnchors.length} anchor(s) in ${target.label}: ${sameRepoCount} same-repo + ${crossCount} cross-repo file(s) affected.${riskSuffix}${processSuffix} ${crossSummary}${apiSummary}${partialSuffix}`
 
-  const miniRepo = finalizeMiniRepo({
-    wrapper: 'assess_change_impact',
-    summary,
-    intent: 'impact',
-    expansions: trimmedAnchors,
-    files,
-    graph_subset: { nodes: [], edges: [] },
-    cross_repo_relationships: crossEdges,
-    warnings,
-    resolved_repo: {
-      repo_id: target.repo_id,
-      label: target.label,
-      matched_signal: resolution.matched_signal,
+  const miniRepo = finalizeMiniRepo(
+    {
+      wrapper: 'assess_change_impact',
+      summary,
+      intent: 'impact',
+      expansions: trimmedAnchors,
+      files,
+      graph_subset: { nodes: [], edges: [] },
+      cross_repo_relationships: crossEdges,
+      warnings,
+      resolved_repo: {
+        repo_id: target.repo_id,
+        label: target.label,
+        matched_signal: resolution.matched_signal,
+      },
+      confidence:
+        files.length >= 3 ? 'high' : files.length >= 1 ? 'medium' : 'low',
     },
-    confidence:
-      files.length >= 3 ? 'high' : files.length >= 1 ? 'medium' : 'low',
-  })
+    miniRepoTokenCap,
+  )
 
   await emitMinirepoBuilt('assess_change_impact', miniRepo)
   await emitToolResult({

@@ -43,6 +43,9 @@ export function BuildTab({ agentId }: { agentId: string }) {
   // (controlled inputs of type=number with `value={null}` warn). Parsed
   // to `number | null` at save time.
   const [maxStepsInput, setMaxStepsInput] = useState('')
+  // Per-wrapper mini-repo token cap. Same blank-as-default convention as
+  // `maxStepsInput`. Range is 2_000–64_000 (mirrors the DTO bounds).
+  const [miniRepoCapInput, setMiniRepoCapInput] = useState('')
 
   const parsedMaxSteps = useMemo<number | null | 'invalid'>(() => {
     const trimmed = maxStepsInput.trim()
@@ -54,6 +57,21 @@ export function BuildTab({ agentId }: { agentId: string }) {
     return n
   }, [maxStepsInput])
 
+  const parsedMiniRepoCap = useMemo<number | null | 'invalid'>(() => {
+    const trimmed = miniRepoCapInput.trim()
+    if (trimmed === '') return null
+    const n = Number(trimmed)
+    if (
+      !Number.isFinite(n) ||
+      !Number.isInteger(n) ||
+      n < 2_000 ||
+      n > 64_000
+    ) {
+      return 'invalid'
+    }
+    return n
+  }, [miniRepoCapInput])
+
   const draft = useMemo(
     () => ({
       name: name.trim(),
@@ -61,8 +79,10 @@ export function BuildTab({ agentId }: { agentId: string }) {
       systemPrompt,
       llmProviderId: providerId,
       maxSteps: parsedMaxSteps === 'invalid' ? null : parsedMaxSteps,
+      miniRepoTokenCap:
+        parsedMiniRepoCap === 'invalid' ? null : parsedMiniRepoCap,
     }),
-    [name, slug, systemPrompt, providerId, parsedMaxSteps],
+    [name, slug, systemPrompt, providerId, parsedMaxSteps, parsedMiniRepoCap],
   )
 
   const isDirty = useMemo(() => {
@@ -77,7 +97,8 @@ export function BuildTab({ agentId }: { agentId: string }) {
       draft.slug !== agent.slug ||
       draft.systemPrompt !== agent.systemPrompt ||
       draft.llmProviderId !== agent.llmProviderId ||
-      draft.maxSteps !== agent.maxSteps
+      draft.maxSteps !== agent.maxSteps ||
+      draft.miniRepoTokenCap !== agent.miniRepoTokenCap
     )
   }, [agent, seededFor, draft])
 
@@ -109,6 +130,12 @@ export function BuildTab({ agentId }: { agentId: string }) {
         toast.error('Step limit must be an integer between 1 and 100.')
         throw new Error('maxSteps invalid')
       }
+      if (parsedMiniRepoCap === 'invalid') {
+        toast.error(
+          'Tool response budget must be an integer between 2,000 and 64,000.',
+        )
+        throw new Error('miniRepoTokenCap invalid')
+      }
       try {
         await patchAgent(agent.id, {
           name: draft.name,
@@ -116,6 +143,7 @@ export function BuildTab({ agentId }: { agentId: string }) {
           systemPrompt: draft.systemPrompt,
           llmProviderId: draft.llmProviderId,
           maxSteps: draft.maxSteps,
+          miniRepoTokenCap: draft.miniRepoTokenCap,
         })
         toast.success('Identity saved')
       } catch (e) {
@@ -136,6 +164,9 @@ export function BuildTab({ agentId }: { agentId: string }) {
       setSystemPrompt(agent.systemPrompt)
       setProviderId(agent.llmProviderId)
       setMaxStepsInput(agent.maxSteps === null ? '' : String(agent.maxSteps))
+      setMiniRepoCapInput(
+        agent.miniRepoTokenCap === null ? '' : String(agent.miniRepoTokenCap),
+      )
     },
   })
 
@@ -146,6 +177,9 @@ export function BuildTab({ agentId }: { agentId: string }) {
     setSystemPrompt(agent.systemPrompt)
     setProviderId(agent.llmProviderId)
     setMaxStepsInput(agent.maxSteps === null ? '' : String(agent.maxSteps))
+    setMiniRepoCapInput(
+      agent.miniRepoTokenCap === null ? '' : String(agent.miniRepoTokenCap),
+    )
   }
 
   const provider = useMemo(
@@ -334,9 +368,40 @@ export function BuildTab({ agentId }: { agentId: string }) {
             >
               {parsedMaxSteps === 'invalid'
                 ? 'Enter an integer between 1 and 100, or leave blank.'
-                : 'Max tool turns per run before the agent loop stops. Blank uses the default (10). Raise for deep research agents; lower for fast Q&A. Each step also includes the prior tool results in the next prompt, so token cost grows faster than linear with the cap.'}
+                : 'How many tool calls the agent can make before it has to give a final answer. Blank uses the default (10). Raise it for agents that need to chase multiple leads through complex code. Lower it for fast Q&A agents where one or two calls is usually enough. Each call carries the previous results forward, so token cost grows quickly as you raise this.'}
             </span>
           </div>
+          {agent.inspectorEnabled && (
+            <div className="ab-field">
+              <label className="ab-field-label" htmlFor="b-mini-repo-cap">
+                Tool response budget
+              </label>
+              <input
+                id="b-mini-repo-cap"
+                className="ab-input ab-mono"
+                type="text"
+                inputMode="numeric"
+                placeholder="default (12,000 tokens)"
+                value={miniRepoCapInput}
+                onChange={(e) => setMiniRepoCapInput(e.target.value)}
+                aria-invalid={
+                  parsedMiniRepoCap === 'invalid' ? true : undefined
+                }
+              />
+              <span
+                className="ab-field-help"
+                style={
+                  parsedMiniRepoCap === 'invalid'
+                    ? { color: 'var(--warn)' }
+                    : undefined
+                }
+              >
+                {parsedMiniRepoCap === 'invalid'
+                  ? 'Enter an integer between 2,000 and 64,000, or leave blank.'
+                  : 'How much code and context each Inspector tool (find_in_codebase, trace_flow, etc.) can pack into one response. Blank uses the default (12,000 tokens). Raise this if run logs show repeated "dropped … to fit under cap" warnings on large repos. Lower it on small repos to keep responses lean.'}
+              </span>
+            </div>
+          )}
         </div>
       </div>
 

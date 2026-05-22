@@ -78,6 +78,12 @@ export interface FindInCodebaseInput {
    * the only expansion (deterministic mode).
    */
   readonly modelConfig?: MastraModelConfig
+  /**
+   * Per-call token cap on the finalised mini-repo. When omitted, falls
+   * back to the module-level {@link MINI_REPO_TOKEN_CAP} default — the
+   * mount layer normally supplies the agent's resolved value.
+   */
+  readonly miniRepoTokenCap?: number
 }
 
 /**
@@ -88,7 +94,15 @@ export interface FindInCodebaseInput {
 export async function runFindInCodebase(
   input: FindInCodebaseInput,
 ): Promise<MiniRepo> {
-  const { tools, repos, query, repoHint, maxFiles = 12, modelConfig } = input
+  const {
+    tools,
+    repos,
+    query,
+    repoHint,
+    maxFiles = 12,
+    modelConfig,
+    miniRepoTokenCap,
+  } = input
 
   const ctx = getInspectorRunContext()
   const runId = ctx?.runId ?? ''
@@ -113,6 +127,7 @@ export async function runFindInCodebase(
         summary: 'Empty query — nothing to search for.',
         warnings: ['empty query'],
       }),
+      miniRepoTokenCap,
     )
     await emitToolResult({
       runId,
@@ -135,6 +150,7 @@ export async function runFindInCodebase(
         summary: buildResolutionFailureSummary(resolution),
         warnings: [resolution.message],
       }),
+      miniRepoTokenCap,
     )
     await emitToolResult({
       runId,
@@ -582,27 +598,30 @@ export async function runFindInCodebase(
         : `Gitnexus returned ${totalHits} match(es) but none parsed cleanly.`
       : `Found ${files.length} file match(es) for "${trimmed}" across ${targets.length} repo(s) using ${expansions.length} term variant(s).`
 
-  const miniRepo = finalizeMiniRepo({
-    wrapper: 'find_in_codebase',
-    summary,
-    intent: 'find',
-    expansions,
-    files,
-    graph_subset: { nodes: [], edges: [] },
-    cross_repo_relationships: [],
-    warnings,
-    ...(resolution.ok === true
-      ? {
-          resolved_repo: {
-            repo_id: resolution.repo.repo_id,
-            label: resolution.repo.label,
-            matched_signal: resolution.matched_signal,
-          },
-        }
-      : {}),
-    confidence:
-      files.length >= 3 ? 'high' : files.length >= 1 ? 'medium' : 'low',
-  })
+  const miniRepo = finalizeMiniRepo(
+    {
+      wrapper: 'find_in_codebase',
+      summary,
+      intent: 'find',
+      expansions,
+      files,
+      graph_subset: { nodes: [], edges: [] },
+      cross_repo_relationships: [],
+      warnings,
+      ...(resolution.ok === true
+        ? {
+            resolved_repo: {
+              repo_id: resolution.repo.repo_id,
+              label: resolution.repo.label,
+              matched_signal: resolution.matched_signal,
+            },
+          }
+        : {}),
+      confidence:
+        files.length >= 3 ? 'high' : files.length >= 1 ? 'medium' : 'low',
+    },
+    miniRepoTokenCap,
+  )
 
   // The shared `emitMinirepoBuilt` also persists the mini-repo
   // to `runs.minirepo_json`. Replaces the inline event emit so the

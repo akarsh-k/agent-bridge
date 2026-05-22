@@ -391,15 +391,21 @@ export function summarizeEvent(
       const used = num(p['tokensUsed'])
       const cap = num(p['tokensCap'])
       const truncated = bool(p['truncated']) ?? false
+      const warnings = strArr(p['warnings'])
       const parts: string[] = []
       if (files !== null) parts.push(`${files} file${files === 1 ? '' : 's'}`)
       if (chunks !== null)
         parts.push(`${chunks} chunk${chunks === 1 ? '' : 's'}`)
       if (used !== null && cap !== null) parts.push(`${used}/${cap} tok`)
-      if (truncated) parts.push('truncated')
+      if (truncated) {
+        // Surface what was actually dropped so operators can judge
+        // whether to raise the cap. Older events that pre-date the
+        // `warnings` field fall back to the bare `truncated` marker.
+        parts.push(warnings ? warnings.join('; ') : 'truncated')
+      }
       return {
         title: `Mini-repo built: ${w}`,
-        summary: parts.length > 0 ? parts.join(' · ') : null,
+        summary: parts.length > 0 ? truncate(parts.join(' · '), 220) : null,
         tone: truncated ? 'warn' : 'neutral',
         group: 'inspector',
         isError: false,
@@ -646,6 +652,11 @@ function num(v: unknown): number | null {
 }
 function bool(v: unknown): boolean | null {
   return typeof v === 'boolean' ? v : null
+}
+function strArr(v: unknown): readonly string[] | null {
+  if (!Array.isArray(v)) return null
+  const out = v.filter((x): x is string => typeof x === 'string' && x.length > 0)
+  return out.length > 0 ? out : null
 }
 function deepGet(obj: Record<string, unknown>, path: ReadonlyArray<string>): unknown {
   let cur: unknown = obj

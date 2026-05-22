@@ -96,6 +96,7 @@ import {
   type InspectorMountMeta,
   type MountedInspector,
 } from './inspector/index.js'
+import { MINI_REPO_TOKEN_CAP } from './inspector/types.js'
 import {
   INSPECTOR_SYSTEM_PROMPT_HEADING,
   loadInspectorSystemPrompt,
@@ -227,6 +228,16 @@ export interface BuiltAgentMeta {
    * row at query time.
    */
   readonly maxSteps: number
+  /**
+   * Effective per-inspector-wrapper mini-repo token cap. Reads
+   * `agents.mini_repo_token_cap`; falls back to {@link MINI_REPO_TOKEN_CAP}
+   * when the column is NULL. Closure-captured by each wrapper at mount
+   * time and passed into `finalizeMiniRepo(draft, cap)`; the cap also
+   * lands on the `inspector.minirepo.built` event payload (`tokensCap`)
+   * so the Logs UI shows the operator the value their truncation message
+   * is measured against.
+   */
+  readonly miniRepoTokenCap: number
 }
 
 /**
@@ -474,6 +485,12 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
   // Inspector-disabled agents skip this mount entirely. The agent's
   // tool dict becomes only the external MCPs (and any future native
   // tools); the LLM has no auto-attached toolkit.
+  //
+  // Resolve the per-agent mini-repo token cap once so the mount call
+  // and the returned meta stay in sync (both need the effective value;
+  // computing twice invites drift if the fallback ever changes).
+  const effectiveMiniRepoTokenCap =
+    agentRow.miniRepoTokenCap ?? MINI_REPO_TOKEN_CAP
   let mountedInspector: MountedInspector | null = null
   try {
     if (inspectorEnabled) {
@@ -486,6 +503,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
         // Sibling tools-less Agent reuses the base URL + key
         // we already decrypted above.
         modelConfig,
+        miniRepoTokenCap: effectiveMiniRepoTokenCap,
       })
     }
   } catch (err) {
@@ -575,6 +593,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
         ? mountedInspector.meta
         : emptyInspectorMountMeta(),
       maxSteps: agentRow.maxSteps ?? DEFAULT_MAX_STEPS,
+      miniRepoTokenCap: effectiveMiniRepoTokenCap,
     },
     secrets,
     subscribeMcpLogs,

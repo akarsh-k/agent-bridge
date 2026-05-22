@@ -54,10 +54,12 @@ export interface DebugHelpInput {
   /** Optional free-form developer query. */
   readonly query?: string
   readonly repoHint?: string | null
+  /** Per-call mini-repo token cap; falls back to the module default when omitted. */
+  readonly miniRepoTokenCap?: number
 }
 
 export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
-  const { tools, repos, errorText, query, repoHint } = input
+  const { tools, repos, errorText, query, repoHint, miniRepoTokenCap } = input
   const handle = await emitToolCalled('debug_help', {
     error_text_chars: errorText.length,
     query,
@@ -71,6 +73,7 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
         summary: 'Pass the error text or stack trace to debug.',
         warnings: ['empty error_text'],
       }),
+      miniRepoTokenCap,
     )
     await emitMinirepoBuilt('debug_help', result)
     await emitToolResult({
@@ -97,6 +100,7 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
         summary,
         warnings: [resolution.message],
       }),
+      miniRepoTokenCap,
     )
     await emitMinirepoBuilt('debug_help', result)
     await emitToolResult({
@@ -118,6 +122,7 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
           'Could not extract any file paths or symbol names from the error text.',
         warnings: ['no candidates extracted'],
       }),
+      miniRepoTokenCap,
     )
     await emitMinirepoBuilt('debug_help', result)
     await emitToolResult({
@@ -285,29 +290,32 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
       ? `No matches in ${targets.length} repo(s) for ${candidates.length} candidate(s) extracted from the error text.`
       : `Found ${files.length} suspect call site(s) across ${targets.length} repo(s) from ${candidates.length} candidate(s) (${candidates.slice(0, 4).join(', ')}${candidates.length > 4 ? '…' : ''}).`
 
-  const miniRepo = finalizeMiniRepo({
-    wrapper: 'debug_help',
-    summary,
-    intent: 'debug',
-    expansions: candidates,
-    files,
-    graph_subset: { nodes: [], edges: [] },
-    cross_repo_relationships: [],
-    warnings,
-    // `debug_help` can run in single-repo OR all-repo mode (allowAll:
-    // true). Only stamp `resolved_repo` when the resolver picked one.
-    ...(resolution.ok === true
-      ? {
-          resolved_repo: {
-            repo_id: resolution.repo.repo_id,
-            label: resolution.repo.label,
-            matched_signal: resolution.matched_signal,
-          },
-        }
-      : {}),
-    confidence:
-      files.length >= 3 ? 'high' : files.length >= 1 ? 'medium' : 'low',
-  })
+  const miniRepo = finalizeMiniRepo(
+    {
+      wrapper: 'debug_help',
+      summary,
+      intent: 'debug',
+      expansions: candidates,
+      files,
+      graph_subset: { nodes: [], edges: [] },
+      cross_repo_relationships: [],
+      warnings,
+      // `debug_help` can run in single-repo OR all-repo mode (allowAll:
+      // true). Only stamp `resolved_repo` when the resolver picked one.
+      ...(resolution.ok === true
+        ? {
+            resolved_repo: {
+              repo_id: resolution.repo.repo_id,
+              label: resolution.repo.label,
+              matched_signal: resolution.matched_signal,
+            },
+          }
+        : {}),
+      confidence:
+        files.length >= 3 ? 'high' : files.length >= 1 ? 'medium' : 'low',
+    },
+    miniRepoTokenCap,
+  )
   await emitMinirepoBuilt('debug_help', miniRepo)
   await emitToolResult({
     handle,
