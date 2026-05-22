@@ -278,7 +278,12 @@ function splitList(raw: string): string[] {
   if (cleaned.length === 0) return []
   const parts = cleaned
     .split(/[,;]+/)
-    .map((s) => s.trim().replace(/^["']|["']$/g, '').trim())
+    .map((s) =>
+      s
+        .trim()
+        .replace(/^["']|["']$/g, '')
+        .trim(),
+    )
     .filter((s) => s.length > 0 && s.length <= 80)
   return parts.slice(0, 12)
 }

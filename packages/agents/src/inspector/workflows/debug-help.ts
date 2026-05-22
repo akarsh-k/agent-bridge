@@ -31,18 +31,11 @@ import {
   type GitnexusQueryHit,
   type ToolDict,
 } from '../gitnexus-callers.js'
-import {
-  keywordSearch,
-  type KeywordHit,
-} from '../keyword-search.js'
+import { keywordSearch, type KeywordHit } from '../keyword-search.js'
 import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
 import { readFileChunkFromDisk } from '../read-source.js'
 import { resolveRepoForWrapper } from '../run-context.js'
-import type {
-  MiniRepo,
-  MiniRepoChunk,
-  MiniRepoFile,
-} from '../types.js'
+import type { MiniRepo, MiniRepoChunk, MiniRepoFile } from '../types.js'
 import {
   emitMinirepoBuilt,
   emitToolCalled,
@@ -73,10 +66,12 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
 
   const trimmedError = errorText.trim()
   if (trimmedError.length === 0) {
-    const result = finalizeMiniRepo(emptyDraft({
-      summary: 'Pass the error text or stack trace to debug.',
-      warnings: ['empty error_text'],
-    }))
+    const result = finalizeMiniRepo(
+      emptyDraft({
+        summary: 'Pass the error text or stack trace to debug.',
+        warnings: ['empty error_text'],
+      }),
+    )
     await emitMinirepoBuilt('debug_help', result)
     await emitToolResult({
       handle,
@@ -87,16 +82,22 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
     return result
   }
 
-  const resolution = resolveRepoForWrapper({ repos, hint: repoHint, allowAll: true })
+  const resolution = resolveRepoForWrapper({
+    repos,
+    hint: repoHint,
+    allowAll: true,
+  })
   if (resolution.ok === false || resolution.ok === 'clarify') {
     const summary =
       resolution.ok === 'clarify'
         ? `${resolution.message}. Pick one: ${resolution.candidates.map((c) => c.label).join(', ')}.`
         : `Could not resolve repo: ${resolution.message}`
-    const result = finalizeMiniRepo(emptyDraft({
-      summary,
-      warnings: [resolution.message],
-    }))
+    const result = finalizeMiniRepo(
+      emptyDraft({
+        summary,
+        warnings: [resolution.message],
+      }),
+    )
     await emitMinirepoBuilt('debug_help', result)
     await emitToolResult({
       handle,
@@ -111,10 +112,13 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
 
   const candidates = extractCandidates(trimmedError, query?.trim() ?? '')
   if (candidates.length === 0) {
-    const result = finalizeMiniRepo(emptyDraft({
-      summary: 'Could not extract any file paths or symbol names from the error text.',
-      warnings: ['no candidates extracted'],
-    }))
+    const result = finalizeMiniRepo(
+      emptyDraft({
+        summary:
+          'Could not extract any file paths or symbol names from the error text.',
+        warnings: ['no candidates extracted'],
+      }),
+    )
     await emitMinirepoBuilt('debug_help', result)
     await emitToolResult({
       handle,
@@ -242,20 +246,37 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
     })
     if (chunk) {
       chunks = [
-        { start_line: chunk.startLine, end_line: chunk.endLine, content: chunk.content },
+        {
+          start_line: chunk.startLine,
+          end_line: chunk.endLine,
+          content: chunk.content,
+        },
       ]
     } else if (h.hit.snippet) {
       chunks = [
-        { start_line: h.hit.line ?? 1, end_line: h.hit.line ?? 1, content: h.hit.snippet },
+        {
+          start_line: h.hit.line ?? 1,
+          end_line: h.hit.line ?? 1,
+          content: h.hit.snippet,
+        },
       ]
     }
+    // Tag with the gitnexus-detected business flow when present. Lets
+    // the LLM say "the error is in the Login flow at step 2" instead
+    // of just "the error is in src/auth/middleware.ts." See find-in-
+    // codebase.ts for the symmetric tagging on search results.
+    const processSuffix = h.hit.processLabel
+      ? h.hit.stepIndex
+        ? `; in ${h.hit.processLabel} flow (step ${h.hit.stepIndex})`
+        : `; in ${h.hit.processLabel} flow`
+      : ''
     files.push({
       repo_id: h.repo.repo_id,
       repo_label: h.repo.label,
       path: h.hit.path,
       language: chunk?.language ?? inferLanguage(h.hit.path),
       chunks,
-      why: `matched candidate "${h.candidate}" extracted from error text`,
+      why: `matched candidate "${h.candidate}" extracted from error text${processSuffix}`,
     })
   }
 
@@ -316,7 +337,10 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
  * appended at the end so developer-supplied terms are last (and
  * de-duped against extracted ones).
  */
-function extractCandidates(errorText: string, query: string): readonly string[] {
+function extractCandidates(
+  errorText: string,
+  query: string,
+): readonly string[] {
   const out = new Set<string>()
   const add = (s: string): void => {
     const trimmed = s.trim()
@@ -328,8 +352,7 @@ function extractCandidates(errorText: string, query: string): readonly string[] 
 
   // File paths with extensions (TS/JS/Py/Go/Rust/Java/Ruby/PHP/etc.).
   // Matches `a/b/c.ext` and trims trailing `:N[:M]`.
-  const pathRe =
-    /\b([A-Za-z0-9_\-./]+\.[a-zA-Z]{1,8})(?::\d+(?::\d+)?)?\b/g
+  const pathRe = /\b([A-Za-z0-9_\-./]+\.[a-zA-Z]{1,8})(?::\d+(?::\d+)?)?\b/g
   let m: RegExpExecArray | null
   while ((m = pathRe.exec(errorText)) && out.size < MAX_CANDIDATES * 2) {
     if (m[1]) add(m[1])

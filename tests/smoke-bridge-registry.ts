@@ -370,7 +370,16 @@ async function assertDefaultEnvelopeFocused(
     nextActions.length >= 1,
     `count=${nextActions.length}`,
   )
-  const allHaveBothPatches = nextActions.every((a) => {
+  // Mixed-kind envelope; only `cross_repo` carries
+  // `args_patch.{repo_hint, remote_url}`. Fixture seeds edges, so we
+  // expect ≥1 cross_repo entry.
+  const crossRepoEntries = nextActions.filter((a) => a['kind'] === 'cross_repo')
+  check(
+    'next_actions: includes ≥1 cross_repo entry from seeded edges',
+    crossRepoEntries.length >= 1,
+    `cross_repo_count=${crossRepoEntries.length}`,
+  )
+  const crossRepoWellFormed = crossRepoEntries.every((a) => {
     const patch = a['args_patch'] as Record<string, unknown> | undefined
     return (
       typeof patch?.['repo_hint'] === 'string' &&
@@ -378,9 +387,9 @@ async function assertDefaultEnvelopeFocused(
     )
   })
   check(
-    'next_actions[*].args_patch carries BOTH repo_hint and remote_url',
-    allHaveBothPatches,
-    `first=${JSON.stringify(nextActions[0]).slice(0, 200)}`,
+    'next_actions[kind=cross_repo].args_patch carries BOTH repo_hint and remote_url',
+    crossRepoWellFormed,
+    `first=${JSON.stringify(crossRepoEntries[0]).slice(0, 200)}`,
   )
 }
 

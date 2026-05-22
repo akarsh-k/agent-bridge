@@ -311,6 +311,15 @@ export function useChat(input: UseChatInput): UseChatResult {
   // user just clicked "New conversation" and the thread hasn't been
   // used yet — backfilling would publish a shareable URL for a thread
   // that doesn't exist server-side.
+  //
+  // Note: we deliberately do NOT setUrlSyncedFor here. After navigate
+  // fires, the router emits a popstate-like change; the layout re-
+  // renders with the new `urlThreadId` prop; the render-body
+  // URL-driven sync block detects `urlThreadId !== urlSyncedFor` and
+  // pulls the new value into state on the same render cycle. Doing
+  // it inside this effect would be a synchronous setState-in-effect
+  // (caught by the React 19 lint rule) AND would be redundant with
+  // the render-body path.
   useEffect(() => {
     if (!agentId) return
     if (urlThreadId) return
@@ -320,7 +329,6 @@ export function useChat(input: UseChatInput): UseChatResult {
     if (window.location.pathname === expected) return
     if (!window.location.pathname.startsWith(`/agents/${agentId}/chat`)) return
     navigate(expected, { replace: true })
-    setUrlSyncedFor(threadId)
   }, [agentId, urlThreadId, threadId, pendingNewThread])
 
   const streamId = activeRunId ? runStreamId(activeRunId) : null
@@ -382,6 +390,52 @@ export function useChat(input: UseChatInput): UseChatResult {
       }
     }
   }, [events, seqOffset, activeRunId])
+
+  // Stuck-run watchdog. The SSE bus has no replay, and the dispatcher
+  // flips `status='completed'` BEFORE publishing `run.finished` — so a
+  // run that terminates between our `findActiveForThread` query and
+  // the EventSource subscribe leaves `activeRunId` set on a drained
+  // stream. UI gates (send / switch / newThread) freeze. Same shape
+  // when a worker crashes and leaves `status='running'` orphaned.
+  //
+  // Poll `getActiveRunForThread` while `activeRunId` is set: 2s
+  // initial catches the race, 8s recurring catches orphans. The
+  // normal SSE clear cancels both via effect cleanup.
+  useEffect(() => {
+    if (!agentId) return
+    if (!activeRunId) return
+    let cancelled = false
+
+    const recover = async () => {
+      if (cancelled) return
+      let active: { runId: string } | null
+      try {
+        active = await rpcGetActiveRunForThread(agentId, threadId)
+      } catch {
+        // Network blip; let the next tick retry.
+        return
+      }
+      if (cancelled) return
+      // Watched run is no longer active — clear the gates so the UI unfreezes.
+      if (active && active.runId === activeRunId) return
+      setActiveRunId(null)
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.runId === activeRunId && m.status === 'streaming'
+            ? { ...m, status: 'done' }
+            : m,
+        ),
+      )
+    }
+
+    const initial = window.setTimeout(recover, 2_000)
+    const interval = window.setInterval(recover, 8_000)
+    return () => {
+      cancelled = true
+      window.clearTimeout(initial)
+      window.clearInterval(interval)
+    }
+  }, [agentId, threadId, activeRunId])
 
   const resourceId = useMemo(
     () => (agentId ? `agent:${agentId}` : ''),

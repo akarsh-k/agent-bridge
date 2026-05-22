@@ -31,6 +31,7 @@
 import type { AttachedRepo } from '@agent-bridge/shared'
 
 import {
+  callGitnexusCypher,
   callGitnexusImpact,
   type GitnexusImpactRow,
   type ToolDict,
@@ -78,10 +79,13 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
 
   const anchor = (startPath ?? startSymbol ?? '').trim()
   if (anchor.length === 0) {
-    const result = finalizeMiniRepo(emptyDraft({
-      summary: 'Pass either `start_path` or `start_symbol` to anchor the trace.',
-      warnings: ['no anchor provided'],
-    }))
+    const result = finalizeMiniRepo(
+      emptyDraft({
+        summary:
+          'Pass either `start_path` or `start_symbol` to anchor the trace.',
+        warnings: ['no anchor provided'],
+      }),
+    )
     await emitMinirepoBuilt('trace_flow', result)
     await emitToolResult({
       handle,
@@ -92,7 +96,11 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
     return result
   }
 
-  const resolution = resolveRepoForWrapper({ repos, hint: repoHint, allowAll: false })
+  const resolution = resolveRepoForWrapper({
+    repos,
+    hint: repoHint,
+    allowAll: false,
+  })
   if (resolution.ok !== true) {
     const message =
       resolution.ok === 'all'
@@ -102,10 +110,12 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
       resolution.ok === 'clarify'
         ? `${message}. Pick one: ${resolution.candidates.map((c) => c.label).join(', ')}.`
         : `Could not resolve repo: ${message}`
-    const result = finalizeMiniRepo(emptyDraft({
-      summary,
-      warnings: [message],
-    }))
+    const result = finalizeMiniRepo(
+      emptyDraft({
+        summary,
+        warnings: [message],
+      }),
+    )
     await emitMinirepoBuilt('trace_flow', result)
     await emitToolResult({
       handle,
@@ -117,29 +127,63 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
   }
   const target = resolution.repo
 
-  // Walk downstream from the anchor. Failures here stop the trace —
-  // there's no useful recovery (the alternative would be returning an
-  // empty graph, which a caller would correctly read as "nothing to
-  // trace" and possibly act on misleadingly).
+  // Walk downstream from the anchor. We prefer a Cypher query that
+  // walks ONLY CALLS edges (variable length 1..N). That gives a
+  // call-graph trace without the IMPORTS noise gitnexus_impact mixes
+  // in — IMPORTS reach EVERYTHING the file transitively pulls, which
+  // is rarely what the user means by "follow the flow." When Cypher
+  // returns rows, we use them. When it returns nothing or errors
+  // (gitnexus version pre-cypher, anchor not in the graph, etc.), we
+  // fall back to the broader impact walk so the wrapper still produces
+  // something useful instead of an empty trace.
   const warnings: string[] = []
   let rows: readonly GitnexusImpactRow[] = []
-  try {
-    rows = await withGitnexusCall(
-      'trace_flow',
-      'gitnexus_impact',
-      { repo: target.label, target: anchor, direction: 'downstream', depth: TRACE_DEPTH_CAP },
-      () =>
-        callGitnexusImpact({
-          tools,
+  let usedStrategy: 'cypher' | 'impact' | 'none' = 'none'
+  const cypherRows = await tryCypherCallsTrace({
+    tools,
+    repo: target.label,
+    anchor,
+    isFileAnchor: !!startPath,
+  })
+  if (cypherRows.ok && cypherRows.rows.length > 0) {
+    rows = cypherRows.rows
+    usedStrategy = 'cypher'
+  } else {
+    if (!cypherRows.ok) {
+      warnings.push(
+        `gitnexus_cypher fell back to gitnexus_impact: ${cypherRows.reason}`,
+      )
+    }
+    try {
+      const result = await withGitnexusCall(
+        'trace_flow',
+        'gitnexus_impact',
+        {
           repo: target.label,
           target: anchor,
           direction: 'downstream',
           depth: TRACE_DEPTH_CAP,
-        }),
-    )
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err)
-    warnings.push(`gitnexus_impact failed: ${message}`)
+        },
+        () =>
+          callGitnexusImpact({
+            tools,
+            repo: target.label,
+            target: anchor,
+            direction: 'downstream',
+            depth: TRACE_DEPTH_CAP,
+          }),
+      )
+      rows = result.rows
+      if (result.rows.length > 0) usedStrategy = 'impact'
+      if (result.partial) {
+        warnings.push(
+          'gitnexus_impact returned partial results: trace below is incomplete.',
+        )
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      warnings.push(`gitnexus_impact failed: ${message}`)
+    }
   }
 
   // Sort by ascending depth so context fetches focus on the hops
@@ -193,9 +237,18 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
   // is graph-only — for file content we always slice the source.
   const files: MiniRepoFile[] = []
   for (const row of fetchTargets) {
-    const chunk = await readFileChunkFromDisk({ repo: target, filePath: row.path })
+    const chunk = await readFileChunkFromDisk({
+      repo: target,
+      filePath: row.path,
+    })
     const chunks: MiniRepoChunk[] = chunk
-      ? [{ start_line: chunk.startLine, end_line: chunk.endLine, content: chunk.content }]
+      ? [
+          {
+            start_line: chunk.startLine,
+            end_line: chunk.endLine,
+            content: chunk.content,
+          },
+        ]
       : []
     files.push({
       repo_id: target.repo_id,
@@ -211,10 +264,16 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
   }
 
   const goalSuffix = goal ? ` toward goal "${goal}"` : ''
+  const strategySuffix =
+    usedStrategy === 'cypher'
+      ? ' (via CALLS-edge cypher walk)'
+      : usedStrategy === 'impact'
+        ? ' (via gitnexus_impact walk)'
+        : ''
   const summary =
     sorted.length === 0
       ? `No downstream hops found for "${anchor}" in repo ${target.label}${goalSuffix}.`
-      : `Traced ${sorted.length} downstream hop(s) from "${anchor}" in repo ${target.label}${goalSuffix}; fetched context for ${files.length} closest file(s).`
+      : `Traced ${sorted.length} downstream hop(s) from "${anchor}" in repo ${target.label}${goalSuffix}${strategySuffix}; fetched context for ${files.length} closest file(s).`
 
   const miniRepo = finalizeMiniRepo({
     wrapper: 'trace_flow',
@@ -257,5 +316,91 @@ function emptyDraft(args: {
     graph_subset: { nodes: [], edges: [] },
     cross_repo_relationships: [],
     warnings: args.warnings,
+  }
+}
+
+/**
+ * Try a Cypher-driven CALLS-only walk via `gitnexus_cypher`. Variable-
+ * length match `*1..N` with an `ALL(rel IN r WHERE rel.type = 'CALLS')`
+ * predicate gives a precise call-graph trace that skips IMPORTS noise.
+ *
+ * Returns `{ ok: true, rows }` on success (rows projected to the
+ * `GitnexusImpactRow` shape so the rest of `trace_flow` doesn't need a
+ * branch). Returns `{ ok: false, reason }` when the cypher path can't
+ * deliver a result (tool missing, query error, malformed rows). The
+ * caller falls back to `gitnexus_impact` on `ok: false`.
+ *
+ * Escapes single quotes in `anchor` by doubling them — Cypher's string
+ * literal escape. The anchor itself is LLM-supplied (path or symbol
+ * name), so defensive escaping prevents an accidentally-broken query
+ * even though we trust the LLM not to inject Cypher fragments.
+ */
+async function tryCypherCallsTrace(args: {
+  tools: ToolDict
+  repo: string
+  anchor: string
+  isFileAnchor: boolean
+}): Promise<
+  | { ok: true; rows: readonly GitnexusImpactRow[] }
+  | { ok: false; reason: string }
+> {
+  const { tools, repo, anchor, isFileAnchor } = args
+  if (!tools['gitnexus_cypher']) {
+    return { ok: false, reason: 'gitnexus_cypher not mounted' }
+  }
+  const escaped = anchor.replace(/'/g, "''")
+  // Variable-length CALLS walk. `*1..N` caps the hop count at
+  // `TRACE_DEPTH_CAP`; the `ALL(...)` predicate constrains every edge
+  // in the path to be a CALLS relation (no IMPORTS / CONTAINS / etc.).
+  // We anchor on `File.filePath` for path-shaped anchors (gitnexus
+  // stores file paths on the `filePath` property, NOT `path`) and on
+  // `name` for symbol-shaped anchors. Order by depth ascending so the
+  // closest hops surface first — the wrapper's context-fetch logic
+  // takes the top N.
+  const anchorMatch = isFileAnchor
+    ? `(start:File {filePath: '${escaped}'})`
+    : `(start {name: '${escaped}'})`
+  const query = `MATCH p = ${anchorMatch}-[r:CodeRelation*1..${TRACE_DEPTH_CAP}]->(end)
+WHERE ALL(rel IN r WHERE rel.type = 'CALLS')
+RETURN end.filePath AS path, end.name AS name, length(p) AS depth
+ORDER BY depth ASC
+LIMIT 50`
+  try {
+    const result = await withGitnexusCall(
+      'trace_flow',
+      'gitnexus_cypher',
+      { repo, query },
+      () => callGitnexusCypher({ tools, repo, query }),
+    )
+    if (result.rowCount === 0) {
+      return { ok: false, reason: 'cypher returned no rows' }
+    }
+    const rows: GitnexusImpactRow[] = []
+    for (const row of result.rows) {
+      const path = (row['path'] ?? '').trim()
+      if (!path) continue
+      const depthRaw = (row['depth'] ?? '').trim()
+      const depth = Number(depthRaw)
+      rows.push({
+        repo,
+        path,
+        direction: 'downstream',
+        depth: Number.isFinite(depth) && depth > 0 ? depth : 1,
+        confidence: 'high',
+        reason: row['name']
+          ? `CALLS path to ${row['name']} (cypher)`
+          : 'CALLS path (cypher)',
+        // Cypher walk constrains every edge to be CALLS by predicate,
+        // so we know the edge type for the synthesized row.
+        relationType: 'CALLS',
+      })
+    }
+    if (rows.length === 0) {
+      return { ok: false, reason: 'cypher rows did not project to paths' }
+    }
+    return { ok: true, rows }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    return { ok: false, reason: message }
   }
 }

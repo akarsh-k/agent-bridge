@@ -337,11 +337,21 @@ export async function appendEvent(
  * for IDE consumers; multi-turn conversations keep the freshest
  * wrapper output even when earlier turns produced larger payloads.
  *
- * Read-modify-write inside one transaction so two concurrent wrapper
- * appends in the same run can't lose updates. `BuiltAgent` cache
- * dedupes parallel calls per agent at the dispatcher level, so
- * concurrent appends are rare in practice — but `Promise.all` over
- * tools in a single LLM round can fire several at once.
+ * Read-modify-write inside one transaction. CRITICAL: the SELECT takes
+ * a `FOR UPDATE` row lock so concurrent transactions on the same run
+ * row serialise instead of racing. The LLM routinely fires multiple
+ * wrapper tool calls in parallel within a single step (Mastra's
+ * `Promise.all` over tools); each completes its wrapper, each calls
+ * `appendMinirepo` against the SAME `runs.id`. Without the row lock,
+ * both transactions read the SAME prior `minirepoJson` array, each
+ * appends its own mini-repo, and the second commit clobbers the first
+ * with a single-append delta. Result: one mini-repo silently lost,
+ * IDE sees an incomplete evidence set, user perceives the wrapper
+ * "didn't include" the file.
+ *
+ * The row lock turns concurrent appends into a queue: T2 blocks on
+ * SELECT until T1 commits, then T2 reads the post-T1 array and
+ * appends correctly.
  *
  * Failures are returned as warnings on the next read, never thrown
  * here. telemetry must not take down a wrapper's main result path.
@@ -359,6 +369,7 @@ export async function appendMinirepo(
       .from(runs)
       .where(eq(runs.id, runId))
       .limit(1)
+      .for('update')
     if (!row) return null
 
     const current = Array.isArray(row.minirepoJson)

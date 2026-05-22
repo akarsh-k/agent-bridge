@@ -165,13 +165,14 @@ export const INSPECT_CODEBASE_METADATA: InspectCodebaseMetadata = Object.freeze(
     '  • Resolved query → ' +
     '`{ ok: true, mini_repos: [...], resolved_repo?, next_actions?, warnings }`. ' +
     'Structured evidence: file paths, code chunks, graph slices, cross-repo relationships. ' +
-    'Synthesize the answer from `mini_repos`. If `next_actions[]` is present, each entry has an `args_patch` you can fire as a follow-up `inspect_codebase` call (typically to drill into a connected repo).\n\n' +
+    'Synthesize the answer from `mini_repos`. `next_actions[]` (when present) lists SUGGESTED follow-ups you may consider, modify, or ignore. Each entry has a `kind`: `cross_repo` (carries `args_patch` with `remote_url` to follow an operator-curated edge), `drill_file` (carries `args_patch.query` to fetch a path whose body was not returned), or `revise_query` (no `args_patch`; the IDE picks a narrower query when results look incomplete or low-confidence). Nothing here is required.\n\n' +
     '  • Clarification (multi-repo agent + ambiguous hint) → ' +
     '`{ ok: true, clarification: { kind, candidates, suggested_replies, ... }, warnings }`. ' +
     'No `mini_repos`; the bridge did NOT dispatch a run. Either ask the user to pick, or choose a `suggested_replies[i]` yourself and re-issue this tool with its `args_patch` merged into the call args.\n\n' +
     '  • Chit-chat (no wrapper ran) → ' +
     '`{ ok: true, prose_summary, warnings }`. The agent\'s free-form reply.\n\n' +
     'Pass `remote_url` (from `git remote get-url origin`) when available; it is the most reliable repo identifier. Set `with_topology: true` only when you need the full `agent_repos` + `repo_relationships` inventory in this single response.\n\n' +
+    'Prefer one well-scoped call over multiple parallel calls to the same agent. The bridge serializes on a single gitnexus subprocess internally, so parallelism rarely speeds anything up and adds round-trip overhead; if you need several follow-ups, issue them sequentially or use `next_actions[]` to chain.\n\n' +
     '`ok` is always `true`. Read-only. Never edits files.',
   inputKeys: Object.freeze([
     {

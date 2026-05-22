@@ -61,6 +61,13 @@ export interface KeywordHit {
   readonly score: number
   readonly snippet: string | null
   readonly reason: string
+  /** Always null on keyword hits — local ripgrep has no node-kind
+   *  awareness. Kept so the union dedupe pass with `GitnexusQueryHit`
+   *  works without a cast. */
+  readonly type: null
+  readonly processLabel: null
+  readonly processType: null
+  readonly stepIndex: null
 }
 
 export interface KeywordSearchInput {
@@ -101,13 +108,7 @@ export interface KeywordSearchInput {
 export async function keywordSearch(
   input: KeywordSearchInput,
 ): Promise<KeywordHit[]> {
-  const {
-    sourceDir,
-    repoLabel,
-    queries,
-    limit = 12,
-    timeoutMs = 8_000,
-  } = input
+  const { sourceDir, repoLabel, queries, limit = 12, timeoutMs = 8_000 } = input
 
   const validQueries = queries
     .map((q) => q.trim())
@@ -222,10 +223,7 @@ interface ParseInput {
  *     }
  *   }
  */
-function parseAndRankRgJson(
-  stdout: string,
-  ctx: ParseInput,
-): KeywordHit[] {
+function parseAndRankRgJson(stdout: string, ctx: ParseInput): KeywordHit[] {
   const lines = stdout.split('\n')
   // Per-file accumulator so we can rank by total occurrence count
   // before flattening. ripgrep emits matches in file order; we group
@@ -341,6 +339,10 @@ function parseAndRankRgJson(
       score: fileScore,
       snippet: firstHit.snippet,
       reason: `keyword: ${matchedTerms} ×${f.totalSubmatches}`,
+      type: null,
+      processLabel: null,
+      processType: null,
+      stepIndex: null,
     })
   }
   out.sort((a, b) => b.score - a.score)

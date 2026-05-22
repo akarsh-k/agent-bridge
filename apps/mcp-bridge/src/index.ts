@@ -109,7 +109,7 @@ const INSPECT_CODEBASE_INPUT_SCHEMA: Record<string, unknown> = {
     with_topology: {
       type: 'boolean',
       description:
-        'When true, the response carries the full repo topology (`agent_repos`, `repo_relationships`). Default false: the response is scoped to the resolved repo and exposes `next_actions` instead, which carry pre-baked follow-ups for connected repos. Set true when you need the broad view in one shot.',
+        'When true, the response carries the full repo topology (`agent_repos`, `repo_relationships`). Default false: the response is scoped to the resolved repo and exposes `next_actions` instead, which carry suggested follow-ups (connected repos, narrower queries when results look incomplete, files to drill into). Set true when you need the broad view in one shot.',
     },
   },
 }

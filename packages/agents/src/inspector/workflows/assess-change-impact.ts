@@ -26,7 +26,10 @@ import type { AgentBridgeDb } from '@agent-bridge/db'
 import type { AttachedRepo } from '@agent-bridge/shared'
 
 import {
+  callGitnexusApiImpact,
   callGitnexusImpact,
+  type GitnexusApiImpactConsumer,
+  type GitnexusImpactResult,
   type GitnexusImpactRow,
   type ToolDict,
 } from '../gitnexus-callers.js'
@@ -67,15 +70,7 @@ export interface AssessChangeImpactInput {
 export async function runAssessChangeImpact(
   input: AssessChangeImpactInput,
 ): Promise<MiniRepo> {
-  const {
-    tools,
-    repos,
-    db,
-    agentId,
-    anchors,
-    changeKind,
-    repoHint,
-  } = input
+  const { tools, repos, db, agentId, anchors, changeKind, repoHint } = input
 
   const handle = await emitToolCalled('assess_change_impact', {
     anchors,
@@ -87,10 +82,12 @@ export async function runAssessChangeImpact(
     .map((a) => a.trim())
     .filter((a) => a.length > 0)
   if (trimmedAnchors.length === 0) {
-    const result = finalizeMiniRepo(emptyDraft({
-      summary: 'Pass at least one file path or symbol name to assess.',
-      warnings: ['no anchors'],
-    }))
+    const result = finalizeMiniRepo(
+      emptyDraft({
+        summary: 'Pass at least one file path or symbol name to assess.',
+        warnings: ['no anchors'],
+      }),
+    )
     await emitMinirepoBuilt('assess_change_impact', result)
     await emitToolResult({
       handle,
@@ -101,7 +98,11 @@ export async function runAssessChangeImpact(
     return result
   }
 
-  const resolution = resolveRepoForWrapper({ repos, hint: repoHint, allowAll: false })
+  const resolution = resolveRepoForWrapper({
+    repos,
+    hint: repoHint,
+    allowAll: false,
+  })
   if (resolution.ok !== true) {
     const message =
       resolution.ok === 'all'
@@ -111,10 +112,12 @@ export async function runAssessChangeImpact(
       resolution.ok === 'clarify'
         ? `${message}. Pick one: ${resolution.candidates.map((c) => c.label).join(', ')}.`
         : `Could not resolve repo: ${message}`
-    const result = finalizeMiniRepo(emptyDraft({
-      summary,
-      warnings: [message],
-    }))
+    const result = finalizeMiniRepo(
+      emptyDraft({
+        summary,
+        warnings: [message],
+      }),
+    )
     await emitMinirepoBuilt('assess_change_impact', result)
     await emitToolResult({
       handle,
@@ -169,13 +172,25 @@ export async function runAssessChangeImpact(
     direction: 'upstream' | 'downstream'
     rows: readonly GitnexusImpactRow[]
   }> = []
+  // Track gitnexus's own envelope verdict per (anchor, direction) so
+  // the wrapper summary can surface "CRITICAL" / "partial" without
+  // reinventing the heuristic. First non-null `risk` wins. `partial`
+  // is OR'd across calls — any partial result taints the whole.
+  let envelopeRisk: GitnexusImpactResult['risk'] = null
+  let envelopePartial = false
+  const envelopeProcesses = new Set<string>()
   for (const anchor of trimmedAnchors) {
     for (const direction of ['upstream', 'downstream'] as const) {
       try {
-        const rows = await withGitnexusCall(
+        const result = await withGitnexusCall(
           'assess_change_impact',
           'gitnexus_impact',
-          { repo: target.label, target: anchor, direction, depth: IMPACT_DEPTH },
+          {
+            repo: target.label,
+            target: anchor,
+            direction,
+            depth: IMPACT_DEPTH,
+          },
           () =>
             callGitnexusImpact({
               tools,
@@ -185,13 +200,84 @@ export async function runAssessChangeImpact(
               depth: IMPACT_DEPTH,
             }),
         )
-        sameRepoRows.push({ anchor, direction, rows })
+        sameRepoRows.push({ anchor, direction, rows: result.rows })
+        if (!envelopeRisk && result.risk) envelopeRisk = result.risk
+        if (result.partial) envelopePartial = true
+        for (const p of result.affectedProcesses) envelopeProcesses.add(p)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         warnings.push(
           `gitnexus_impact ${direction} failed for "${anchor}": ${message}`,
         )
       }
+    }
+  }
+  if (envelopePartial) {
+    warnings.push(
+      'gitnexus_impact returned partial results: traversal failed mid-walk and the impact list below is incomplete.',
+    )
+  }
+
+  // API-shape blast radius. `gitnexus_impact` only walks the call
+  // graph; it misses consumers that READ response fields or HIT the
+  // route from a different repo without a call edge in the AST. The
+  // `gitnexus_api_impact` tool fills that gap by joining route_map +
+  // shape_check + impact data: it finds the route's consumers, what
+  // response keys they access, and whether their reads match the
+  // route's current shape. We probe each anchor as a route, then as a
+  // handler file path. Both calls are best-effort: any anchor that's
+  // not API-shaped silently returns no consumers and we move on.
+  type ApiImpactRow = { consumer: GitnexusApiImpactConsumer; anchor: string }
+  const apiConsumers: ApiImpactRow[] = []
+  const apiRouteSummaries: string[] = []
+  let apiMismatchCount = 0
+  for (const anchor of trimmedAnchors) {
+    // Heuristic: only call api_impact for anchors that COULD be an API
+    // surface. A bare symbol like `computeTotal` would never match a
+    // route and the call costs ~50 ms anyway, so we skip it. Path-
+    // shaped anchors (start with `/`) get tried as routes; file-
+    // shaped anchors (contain a path separator + a code extension)
+    // get tried as handler files.
+    const isRouteShape = anchor.startsWith('/')
+    const isFileShape =
+      !isRouteShape &&
+      /[\\/]/.test(anchor) &&
+      /\.(ts|tsx|js|jsx|py|rb|go|java|kt|rs|php|cs|mjs|cjs)$/i.test(anchor)
+    if (!isRouteShape && !isFileShape) continue
+    try {
+      const apiResult = await withGitnexusCall(
+        'assess_change_impact',
+        'gitnexus_api_impact',
+        isRouteShape
+          ? { repo: target.label, route: anchor }
+          : { repo: target.label, file: anchor },
+        () =>
+          callGitnexusApiImpact({
+            tools,
+            repo: target.label,
+            ...(isRouteShape ? { route: anchor } : { file: anchor }),
+          }),
+      )
+      for (const consumer of apiResult.consumers) {
+        apiConsumers.push({ consumer, anchor })
+        if (consumer.status === 'mismatch') apiMismatchCount += 1
+      }
+      for (const r of apiResult.routes) {
+        apiRouteSummaries.push(r.route)
+        // Critical safety: when gitnexus could only inspect one HTTP
+        // method export from a multi-method handler file, the
+        // middleware list is incomplete. Surface as a warning so the
+        // IDE's coding agent doesn't confidently claim "no auth" when
+        // POST might in fact be auth-protected.
+        if (r.middlewareDetection === 'partial') {
+          warnings.push(
+            `gitnexus_api_impact: partial middleware detection on ${r.route}. ${r.middlewareNote ?? 'Other HTTP methods may use different middleware.'}`,
+          )
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      warnings.push(`gitnexus_api_impact failed for "${anchor}": ${message}`)
     }
   }
 
@@ -257,7 +343,7 @@ export async function runAssessChangeImpact(
     if (edgeTarget.status !== 'ready') continue
     for (const anchor of trimmedAnchors) {
       try {
-        const rows = await withGitnexusCall(
+        const result = await withGitnexusCall(
           'assess_change_impact',
           'gitnexus_impact',
           {
@@ -275,7 +361,20 @@ export async function runAssessChangeImpact(
               depth: IMPACT_DEPTH,
             }),
         )
-        if (rows.length > 0) crossHits.push({ repo: edgeTarget, rows })
+        if (result.rows.length > 0) {
+          crossHits.push({ repo: edgeTarget, rows: result.rows })
+        }
+        if (result.partial) {
+          // Emit a per-target warning every time so the operator sees
+          // which cross-repo target was truncated. The earlier code
+          // gated on `!envelopePartial` which silently dropped second-
+          // and-later partial signals once any prior call (same-repo
+          // or cross-repo) had already flipped the flag.
+          envelopePartial = true
+          warnings.push(
+            `gitnexus_impact returned partial results for cross-repo "${edgeTarget.label}".`,
+          )
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err)
         warnings.push(
@@ -324,6 +423,41 @@ export async function runAssessChangeImpact(
   for (const { repo, rows } of crossHits) {
     for (const row of rows) claim('', repo, row, 'upstream', true)
   }
+  // Project api_impact consumers into the picks map using the same
+  // claim() invariant (lowest depth wins). We use depth=1 because a
+  // consumer that hits the route IS a direct dependent.
+  //
+  // Repo attribution: gitnexus's `apiImpact` operates against a single
+  // repo's graph and does NOT emit a `repo` field on consumer rows —
+  // the response shape's `consumers` array carries only `name`, `file`,
+  // and `accesses`. So an empty `consumer.repo` (the typical case) is
+  // the SAME-repo signal, not the cross-repo signal. We default to the
+  // target repo on empty and only mark cross-repo when gitnexus did
+  // emit a distinct repo name. The previous logic flipped this and
+  // tagged every consumer as cross-repo.
+  for (const { consumer, anchor } of apiConsumers) {
+    const sameRepo = !consumer.repo || consumer.repo === target.label
+    const consumerRepoId = sameRepo ? target.repo_id : `api:${consumer.repo}`
+    const consumerRepoLabel = sameRepo ? target.label : consumer.repo
+    const crossRepo = !sameRepo
+    const key = `${consumerRepoId}::${consumer.path}`
+    const existing = picks.get(key)
+    // depth 1 outranks any existing higher-depth claim
+    if (existing && existing.depth <= 1) continue
+    const mismatchSuffix =
+      consumer.status === 'mismatch' ? ' [shape mismatch]' : ''
+    const confidenceSuffix =
+      consumer.confidence === 'low' ? ' (low confidence attribution)' : ''
+    picks.set(key, {
+      repoId: consumerRepoId,
+      repoLabel: consumerRepoLabel,
+      path: consumer.path,
+      depth: 1,
+      direction: 'upstream',
+      crossRepo,
+      anchor: `${anchor}${mismatchSuffix}${confidenceSuffix}`,
+    })
+  }
 
   const files: MiniRepoFile[] = [...picks.values()]
     .sort(
@@ -360,7 +494,21 @@ export async function runAssessChangeImpact(
       : crossCount === 0
         ? `Followed ${outgoingEdges.length} repo_relationship(s) from ${target.label}; no cross-repo consumers found.`
         : `Followed ${outgoingEdges.length} repo_relationship(s); ${crossCount} cross-repo consumer(s) included.`
-  const summary = `${changeKind.toUpperCase()} of ${trimmedAnchors.length} anchor(s) in ${target.label}: ${sameRepoCount} same-repo + ${crossCount} cross-repo file(s) affected. ${crossSummary}`
+  const apiSummary =
+    apiConsumers.length === 0
+      ? apiRouteSummaries.length > 0
+        ? ` Considered ${apiRouteSummaries.length} matching API route(s); no consumers depend on them.`
+        : ''
+      : ` ${apiConsumers.length} API consumer(s) found${apiMismatchCount > 0 ? `, ${apiMismatchCount} with response-shape mismatch(es); read carefully` : ''}.`
+  const riskSuffix = envelopeRisk ? ` Gitnexus risk: ${envelopeRisk}.` : ''
+  const processSuffix =
+    envelopeProcesses.size > 0
+      ? ` Affected business flows: ${[...envelopeProcesses].slice(0, 5).join(', ')}${envelopeProcesses.size > 5 ? '…' : ''}.`
+      : ''
+  const partialSuffix = envelopePartial
+    ? ' Result is PARTIAL: gitnexus traversal failed mid-walk.'
+    : ''
+  const summary = `${changeKind.toUpperCase()} of ${trimmedAnchors.length} anchor(s) in ${target.label}: ${sameRepoCount} same-repo + ${crossCount} cross-repo file(s) affected.${riskSuffix}${processSuffix} ${crossSummary}${apiSummary}${partialSuffix}`
 
   const miniRepo = finalizeMiniRepo({
     wrapper: 'assess_change_impact',

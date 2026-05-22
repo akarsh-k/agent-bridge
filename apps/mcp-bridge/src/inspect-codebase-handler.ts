@@ -302,9 +302,13 @@ export async function executeInspectCodebase(
       `loadAllRepoRelationships failed: ${err instanceof Error ? err.message : String(err)}`,
     )
   }
-  const nextActions = focalRepo
+  const crossRepoActions = focalRepo
     ? computeNextActions(focalRepo, attached, allEdges)
     : []
+  // Suggestions from in-band mini-repo signals (partial warnings,
+  // low confidence, chunkless files). IDE may use, modify, or ignore.
+  const signalActions = computeSignalNextActions(miniRepos)
+  const nextActions = [...crossRepoActions, ...signalActions]
 
   const envelope: WireEnvelope = {
     ok: true,
@@ -330,6 +334,104 @@ export async function executeInspectCodebase(
     warnings,
   }
   return jsonEnvelope(envelope)
+}
+
+/**
+ * Suggested follow-ups synthesised from mini-repo signals. Three
+ * triggers: partial-traversal warnings (→ `revise_query`), lowest
+ * mini-repo confidence is `low` (→ `revise_query`), files matched
+ * by path with zero chunks (→ `drill_file` with pre-baked
+ * `args_patch.query`). All suggestions; the IDE picks what to do.
+ * Capped at 3 to keep the envelope focused.
+ */
+const SIGNAL_NEXT_ACTIONS_CAP = 3
+
+function computeSignalNextActions(
+  miniRepos: readonly unknown[],
+): readonly (ReviseQueryNextAction | DrillFileNextAction)[] {
+  const out: (ReviseQueryNextAction | DrillFileNextAction)[] = []
+
+  let sawPartial = false
+  let lowestConfidence: 'high' | 'medium' | 'low' | null = null
+  const rank = { high: 3, medium: 2, low: 1 } as const
+  // Dedup chunkless files across mini-repos by `repo_label::path`.
+  const chunklessByKey = new Map<
+    string,
+    { repoLabel: string | null; path: string }
+  >()
+
+  for (const mr of miniRepos) {
+    if (!mr || typeof mr !== 'object') continue
+    const m = mr as Record<string, unknown>
+
+    if (!sawPartial && Array.isArray(m['warnings'])) {
+      sawPartial = (m['warnings'] as unknown[]).some(
+        (w) =>
+          typeof w === 'string' && /partial|truncat|hit step limit/i.test(w),
+      )
+    }
+
+    const conf = m['confidence']
+    if (conf === 'high' || conf === 'medium' || conf === 'low') {
+      if (!lowestConfidence || rank[conf] < rank[lowestConfidence]) {
+        lowestConfidence = conf
+      }
+    }
+
+    const files = m['files']
+    if (Array.isArray(files)) {
+      for (const f of files) {
+        if (!f || typeof f !== 'object') continue
+        const fObj = f as Record<string, unknown>
+        const chunks = fObj['chunks']
+        if (Array.isArray(chunks) && chunks.length > 0) continue
+        const path = fObj['path']
+        if (typeof path !== 'string' || path.length === 0) continue
+        const repoLabel =
+          typeof fObj['repo_label'] === 'string'
+            ? (fObj['repo_label'] as string)
+            : null
+        const key = `${repoLabel ?? ''}::${path}`
+        if (!chunklessByKey.has(key)) {
+          chunklessByKey.set(key, { repoLabel, path })
+        }
+      }
+    }
+  }
+
+  if (sawPartial) {
+    out.push({
+      kind: 'revise_query',
+      label: 'Consider re-asking with a narrower question',
+      reason:
+        'One or more wrappers returned partial results (truncated or hit a step cap). Re-asking with a tighter scope may surface the missing detail.',
+      trigger: 'partial_results',
+    })
+  }
+  if (lowestConfidence === 'low') {
+    out.push({
+      kind: 'revise_query',
+      label: 'Consider verifying; confidence is low',
+      reason:
+        'At least one wrapper reported low confidence in its match. The IDE may want to caveat the answer or follow up with a more specific query.',
+      trigger: 'low_confidence',
+    })
+  }
+
+  for (const { repoLabel, path } of chunklessByKey.values()) {
+    if (out.length >= SIGNAL_NEXT_ACTIONS_CAP) break
+    out.push({
+      kind: 'drill_file',
+      label: `Look inside ${path}`,
+      reason: `Matched ${path} by path but the body was not returned in this call. A follow-up can fetch it.`,
+      args_patch: {
+        query: `Explain ${path}`,
+        ...(repoLabel ? { repo_hint: repoLabel } : {}),
+      },
+    })
+  }
+
+  return out.slice(0, SIGNAL_NEXT_ACTIONS_CAP)
 }
 
 // ─── Explicit bridge tool ────────────────────────────────────────────────
@@ -481,13 +583,10 @@ interface WireEnvelope {
    */
   readonly clarification?: ClarificationSlice
   /**
-   * Pre-baked follow-up actions for connected repos. Surfaced post-
-   * dispatch when at least one cross-repo edge touches the focal repo
-   * (the one the bridge resolved, or the most-evidenced repo when the
-   * call fanned out). Each entry carries an `args_patch` the IDE LLM
-   * can fire verbatim into a follow-up `inspect_codebase` call. ≤ 3
-   * entries, outgoing edges (focal as `from_repo`) before incoming.
-   * Omitted when there are no relevant edges.
+   * Suggested follow-ups (never directives). Two sources concatenated:
+   * `cross_repo` from operator-curated edges touching the focal repo
+   * (≤3, outgoing first), and `revise_query`/`drill_file` from
+   * mini-repo signals (≤3). Omitted when empty.
    */
   readonly next_actions?: readonly NextAction[]
   /**
@@ -519,13 +618,17 @@ interface ClarificationSlice {
 }
 
 /**
- * One pre-baked follow-up the IDE LLM can fire to drill into a
- * connected repo. `args_patch` is shaped to be the exact `inspect_codebase`
- * args (modulo `query`) the IDE re-issues. `meta` exposes structured
- * fields so the IDE can filter / sort programmatically; `reason` is
- * the same info in one human-readable line.
+ * Suggested follow-up the IDE LLM may consider. Three kinds:
+ *  - `cross_repo`: operator-curated edge; `args_patch` carries
+ *    `remote_url` for label-free repo resolution on the next call.
+ *  - `revise_query`: partial-traversal or low-confidence signal; no
+ *    `args_patch` (the IDE picks the new query).
+ *  - `drill_file`: chunkless path-match; `args_patch.query` pre-baked.
  */
-interface NextAction {
+type NextAction = CrossRepoNextAction | ReviseQueryNextAction | DrillFileNextAction
+
+interface CrossRepoNextAction {
+  readonly kind: 'cross_repo'
   /** Human-facing label the IDE can render as a button or chip. */
   readonly label: string
   /** One-line prose explaining the relationship. */
@@ -535,12 +638,29 @@ interface NextAction {
   /**
    * Patch the IDE LLM applies to its next `inspect_codebase` call to
    * follow this edge. Carries both `repo_hint` (label) and `remote_url`
-   * so the bridge's pre-resolver picks the connected repo by URL — no
-   * label-mangling round-trip through the IDE LLM.
+   * so the bridge's pre-resolver picks the connected repo by URL.
    */
   readonly args_patch: {
     readonly repo_hint: string
     readonly remote_url: string
+  }
+}
+
+interface ReviseQueryNextAction {
+  readonly kind: 'revise_query'
+  readonly label: string
+  readonly reason: string
+  /** Which signal triggered the suggestion. */
+  readonly trigger: 'partial_results' | 'low_confidence'
+}
+
+interface DrillFileNextAction {
+  readonly kind: 'drill_file'
+  readonly label: string
+  readonly reason: string
+  readonly args_patch: {
+    readonly query: string
+    readonly repo_hint?: string
   }
 }
 
@@ -803,7 +923,7 @@ function computeNextActions(
   focal: AttachedRepoLike,
   attached: readonly AttachedRepoLike[],
   edges: readonly MiniRepoCrossRepoRelationship[],
-): NextAction[] {
+): CrossRepoNextAction[] {
   const attachedById = new Map(attached.map((r) => [r.repo_id, r]))
 
   const outgoing: MiniRepoCrossRepoRelationship[] = []
@@ -817,7 +937,7 @@ function computeNextActions(
   }
 
   const seen = new Set<string>()
-  const out: NextAction[] = []
+  const out: CrossRepoNextAction[] = []
   for (const e of [...outgoing, ...incoming]) {
     const otherId = e.from_repo === focal.repo_id ? e.to_repo : e.from_repo
     if (seen.has(otherId)) continue
@@ -834,7 +954,7 @@ function buildNextAction(
   focal: AttachedRepoLike,
   other: AttachedRepoLike,
   edge: MiniRepoCrossRepoRelationship,
-): NextAction {
+): CrossRepoNextAction {
   // `label` mirrors the connector direction so the IDE can render it
   // verbatim ("Check frontend usage" / "What backend calls this?").
   const focalIsSource = edge.from_repo === focal.repo_id
@@ -846,6 +966,7 @@ function buildNextAction(
     ? `${focal.label} --${edge.connector}--> ${other.label}${reasonDesc}`
     : `${other.label} --${edge.connector}--> ${focal.label}${reasonDesc}`
   return {
+    kind: 'cross_repo',
     label,
     reason,
     meta: {

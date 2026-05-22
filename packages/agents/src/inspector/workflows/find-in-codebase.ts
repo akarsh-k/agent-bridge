@@ -24,6 +24,8 @@
  *   - `cross_repo_relationships` (`assess_change_impact`).
  */
 
+import { readdir } from 'node:fs/promises'
+
 import type { MastraModelConfig } from '@mastra/core/llm'
 import type {
   AttachedRepo,
@@ -42,13 +44,12 @@ import { repoSourceDir } from '@agent-bridge/shared/paths'
 import { classifyAndExpand } from '../expand.js'
 import {
   callGitnexusQuery,
+  callGitnexusRouteMap,
   type GitnexusQueryHit,
+  type GitnexusRoute,
   type ToolDict,
 } from '../gitnexus-callers.js'
-import {
-  keywordSearch,
-  type KeywordHit,
-} from '../keyword-search.js'
+import { keywordSearch, type KeywordHit } from '../keyword-search.js'
 import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
 import type { RepoResolveResult } from '../repo-resolve.js'
 import {
@@ -57,15 +58,8 @@ import {
   previewJson,
   resolveRepoForWrapper,
 } from '../run-context.js'
-import type {
-  MiniRepo,
-  MiniRepoChunk,
-  MiniRepoFile,
-} from '../types.js'
-import {
-  emitMinirepoBuilt,
-  withKeywordCall,
-} from '../wrapper-telemetry.js'
+import type { MiniRepo, MiniRepoChunk, MiniRepoFile } from '../types.js'
+import { emitMinirepoBuilt, withKeywordCall } from '../wrapper-telemetry.js'
 
 export interface FindInCodebaseInput {
   /** Live gitnexus tool dict. shared with all wrappers in one agent. */
@@ -114,10 +108,12 @@ export async function runFindInCodebase(
 
   const trimmed = query.trim()
   if (trimmed.length === 0) {
-    const result = finalizeMiniRepo(emptyDraft({
-      summary: 'Empty query — nothing to search for.',
-      warnings: ['empty query'],
-    }))
+    const result = finalizeMiniRepo(
+      emptyDraft({
+        summary: 'Empty query — nothing to search for.',
+        warnings: ['empty query'],
+      }),
+    )
     await emitToolResult({
       runId,
       durationMs: Date.now() - startedAt,
@@ -134,10 +130,12 @@ export async function runFindInCodebase(
   })
 
   if (resolution.ok === false || resolution.ok === 'clarify') {
-    const result = finalizeMiniRepo(emptyDraft({
-      summary: buildResolutionFailureSummary(resolution),
-      warnings: [resolution.message],
-    }))
+    const result = finalizeMiniRepo(
+      emptyDraft({
+        summary: buildResolutionFailureSummary(resolution),
+        warnings: [resolution.message],
+      }),
+    )
     await emitToolResult({
       runId,
       durationMs: Date.now() - startedAt,
@@ -158,8 +156,13 @@ export async function runFindInCodebase(
   let expansions: readonly string[] = [trimmed]
   let toolStatus: InspectorToolResultPayload['status'] = 'ok'
   if (modelConfig) {
+    // Compute languages once and reuse for both the prompt preview
+    // and the expand call. Detection involves an `fs.readdir` per
+    // repo's source dir; the in-memory cache makes the second call
+    // free, but we still want to avoid two awaits in a single block.
+    const languages = await deriveLanguagesHint(targets)
     const promptPreview = previewJson(
-      { query: trimmed, languages: deriveLanguagesHint(targets) },
+      { query: trimmed, languages },
       INSPECTOR_PREVIEW_BYTES_CAP,
     )
     const llmModel =
@@ -181,7 +184,7 @@ export async function runFindInCodebase(
     const expanded = await classifyAndExpand({
       query: trimmed,
       modelConfig,
-      languages: deriveLanguagesHint(targets),
+      languages,
     })
     const responsePreview = previewJson(
       expanded.responsePreview,
@@ -195,7 +198,8 @@ export async function runFindInCodebase(
       responsePreview: responsePreview.preview,
       truncated: responsePreview.truncated,
     } satisfies InspectorLlmResultPayload)
-    expansions = expanded.expansions.length > 0 ? expanded.expansions : [trimmed]
+    expansions =
+      expanded.expansions.length > 0 ? expanded.expansions : [trimmed]
     if (expanded.fallback) {
       toolStatus = 'fallback'
       warnings.push(
@@ -213,7 +217,10 @@ export async function runFindInCodebase(
   // limit keeps wire payload bounded; the merged + dedupe pass below
   // collapses overlap. Parallel within a repo is fine — the gitnexus
   // subprocess multiplexes requests internally.
-  const perCallLimit = Math.max(Math.ceil(maxFiles / Math.max(expansions.length, 1)), 8)
+  const perCallLimit = Math.max(
+    Math.ceil(maxFiles / Math.max(expansions.length, 1)),
+    8,
+  )
   type Pair = { repo: AttachedRepo; hits: readonly GitnexusQueryHit[] }
   const queryTasks: Array<Promise<Pair | null>> = []
   for (const r of targets) {
@@ -229,39 +236,87 @@ export async function runFindInCodebase(
   // `warnings` and don't block the gitnexus path. Deletable when
   // upstream lands a fix: drop these lines + the imports + the
   // keyword event kinds.
-  const keywordTasks: Array<Promise<{ repo: AttachedRepo; hits: readonly KeywordHit[] }>> =
-    targets.map(async (r) => {
-      const sourceDir = repoSourceDir({
-        id: r.repo_id,
-        remoteUrl: r.remote_url,
-        branch: r.branch,
-      })
-      const result = await withKeywordCall(
-        'find_in_codebase',
-        r.label,
-        expansions,
-        () =>
-          keywordSearch({
-            sourceDir,
-            repoLabel: r.label,
-            queries: expansions,
-            limit: perCallLimit * 2,
-          }),
-      )
-      if (!result.ok) {
-        warnings.push(
-          `keyword_search failed for repo "${r.label}": ${result.error ?? 'unknown'}`,
-        )
-        return { repo: r, hits: [] as readonly KeywordHit[] }
-      }
-      return { repo: r, hits: result.value ?? [] }
+  const keywordTasks: Array<
+    Promise<{ repo: AttachedRepo; hits: readonly KeywordHit[] }>
+  > = targets.map(async (r) => {
+    const sourceDir = repoSourceDir({
+      id: r.repo_id,
+      remoteUrl: r.remote_url,
+      branch: r.branch,
     })
+    const result = await withKeywordCall(
+      'find_in_codebase',
+      r.label,
+      expansions,
+      () =>
+        keywordSearch({
+          sourceDir,
+          repoLabel: r.label,
+          queries: expansions,
+          limit: perCallLimit * 2,
+        }),
+    )
+    if (!result.ok) {
+      warnings.push(
+        `keyword_search failed for repo "${r.label}": ${result.error ?? 'unknown'}`,
+      )
+      return { repo: r, hits: [] as readonly KeywordHit[] }
+    }
+    return { repo: r, hits: result.value ?? [] }
+  })
 
+  // Phase 1: search + keyword in parallel. These are the primary
+  // recall arms and have no dependency on each other.
   const [settled, keywordSettled] = await Promise.all([
     Promise.all(queryTasks),
     Promise.all(keywordTasks),
   ])
   const allHits = settled.filter((p): p is Pair => p !== null)
+
+  // Phase 2: Route-node enrichment. The OLD design gated `route_map`
+  // on a regex matching `/api/...` shapes in the user's query string.
+  // That missed semantically-route questions ("where is the checkout
+  // endpoint?") where the user thinks in concepts, not paths. New
+  // approach: let gitnexus tell us. If `gitnexus_query` returned any
+  // hit tagged `type === 'Route'`, we KNOW the query semantically
+  // matched an endpoint regardless of phrasing. Fire `route_map` for
+  // each unique matched route to enrich with middleware + consumers.
+  //
+  // Trade-off vs the regex gate: this serialises `route_map` after the
+  // query (no more parallel fire), adding ~50-200ms when it triggers.
+  // In return we catch the "semantic route question" case which
+  // probably outnumbers explicit-path cases in real usage. The dedupe
+  // pass handles the overlap when both query and route_map surface
+  // the same handler file.
+  // Dedup key is `(repo_id, route_name)`. Same route name in different
+  // repos (e.g. `POST /api/health` on api-service AND admin-service)
+  // must each fire its own route_map call — they're independent
+  // routes with independent middleware and consumer sets. Keying by
+  // name alone would silently drop one repo's enrichment.
+  const routeTargets = new Map<string, { name: string; repo: AttachedRepo }>()
+  for (const pair of allHits) {
+    for (const hit of pair.hits) {
+      if (hit.type !== 'Route') continue
+      // Gitnexus's Route.name carries the full route ("POST /api/users").
+      // Prefer that as the filter; fall back to path-as-name when the
+      // hit didn't carry an explicit symbol field.
+      const routeName = hit.symbol ?? hit.path
+      if (!routeName) continue
+      const key = `${pair.repo.repo_id}::${routeName}`
+      if (!routeTargets.has(key)) {
+        routeTargets.set(key, { name: routeName, repo: pair.repo })
+      }
+    }
+  }
+  if (routeTargets.size > 0) {
+    const routeTasks = [...routeTargets.values()].map(({ name, repo }) =>
+      callInstrumentedRouteMap(repo, name),
+    )
+    const routeSettled = await Promise.all(routeTasks)
+    for (const r of routeSettled) {
+      if (r) allHits.push(r)
+    }
+  }
 
   /**
    * Single gitnexus_query call wrapped in `inspector.gitnexus.*` events.
@@ -330,6 +385,136 @@ export async function runFindInCodebase(
       })
   }
 
+  /**
+   * Wrap a `gitnexus_route_map` call with the standard
+   * `inspector.gitnexus.{called,result}` telemetry pair. Synthesizes a
+   * GitnexusQueryHit per route handler so the downstream merge code
+   * doesn't need a special case. `ROUTE_MAP_SCORE` is chosen high so
+   * route handlers outrank fuzzy text matches in the score-sorted
+   * dedupe pass below: an exact route → handler binding is more
+   * reliable evidence than a BM25/semantic similarity hit.
+   */
+  function callInstrumentedRouteMap(
+    repo: AttachedRepo,
+    routePath: string,
+  ): Promise<Pair | null> {
+    const ROUTE_MAP_SCORE = 100
+    const ROUTE_MAP_CONSUMER_SCORE = 90
+    const callStart = Date.now()
+    const argsPreview = previewJson(
+      { repo: repo.label, route: routePath },
+      INSPECTOR_PREVIEW_BYTES_CAP,
+    )
+    return emitInspectorEvent('inspector.gitnexus.called', {
+      runId,
+      wrapperName: 'find_in_codebase',
+      tool: 'gitnexus_route_map',
+      argsPreview: argsPreview.preview,
+      truncated: argsPreview.truncated,
+    } satisfies InspectorGitnexusCalledPayload)
+      .then(() =>
+        callGitnexusRouteMap({
+          tools,
+          repo: repo.label,
+          route: routePath,
+        }),
+      )
+      .then(async (routes: readonly GitnexusRoute[]): Promise<Pair> => {
+        const resultPreview = previewJson(routes, INSPECTOR_PREVIEW_BYTES_CAP)
+        await emitInspectorEvent('inspector.gitnexus.result', {
+          runId,
+          wrapperName: 'find_in_codebase',
+          tool: 'gitnexus_route_map',
+          durationMs: Date.now() - callStart,
+          resultPreview: resultPreview.preview,
+          truncated: resultPreview.truncated,
+          ok: true,
+        } satisfies InspectorGitnexusResultPayload)
+        // Project routes → synthetic GitnexusQueryHits so the merge
+        // path treats them uniformly. Two kinds of hits come out of
+        // a single route:
+        //
+        //   1. The HANDLER file — top-scored (`ROUTE_MAP_SCORE`).
+        //      Reason carries the route, method, middleware chain,
+        //      and a consumer-count hint so the LLM has the protect-
+        //      ion + traffic context without a follow-up call.
+        //   2. Each CONSUMER file (frontend component/hook that
+        //      fetches the route) — scored slightly below the
+        //      handler (`ROUTE_MAP_CONSUMER_SCORE`). Reason names
+        //      the route they fetch + which response keys they read.
+        //
+        // Consumer hits are independent file rows in the mini-repo
+        // (still deduped by `(repo, path)` in the merge pass), so
+        // the LLM seeing "Where is /api/users handled?" gets both
+        // the handler AND its callers in one tool call.
+        const hits: GitnexusQueryHit[] = []
+        for (const route of routes) {
+          if (route.handlerPath) {
+            const middlewareSuffix =
+              route.middleware.length > 0
+                ? `; middleware: ${route.middleware.join(', ')}`
+                : ''
+            const consumerSuffix =
+              route.consumers.length > 0
+                ? `; ${route.consumers.length} consumer${route.consumers.length === 1 ? '' : 's'}`
+                : ''
+            hits.push({
+              repo: route.repo,
+              path: route.handlerPath,
+              line: null,
+              symbol: route.handlerSymbol,
+              score: ROUTE_MAP_SCORE,
+              snippet: null,
+              reason: `${route.method ? route.method + ' ' : ''}${route.route} handler (route_map${middlewareSuffix}${consumerSuffix})`,
+              // Synthesized rows are not Route nodes themselves —
+              // they're the handler file. Stay null so the Phase 2
+              // Route detector doesn't loop on its own output.
+              type: null,
+              processLabel: null,
+              processType: null,
+              stepIndex: null,
+            })
+          }
+          for (const consumer of route.consumers) {
+            const keysSuffix =
+              consumer.accessedKeys.length > 0
+                ? `; reads keys: ${consumer.accessedKeys.join(', ')}`
+                : ''
+            hits.push({
+              repo: route.repo,
+              path: consumer.filePath,
+              line: null,
+              symbol: consumer.name,
+              score: ROUTE_MAP_CONSUMER_SCORE,
+              snippet: null,
+              reason: `consumes ${route.route} (route_map${keysSuffix})`,
+              type: null,
+              processLabel: null,
+              processType: null,
+              stepIndex: null,
+            })
+          }
+        }
+        return { repo, hits }
+      })
+      .catch(async (err: unknown): Promise<null> => {
+        const message = err instanceof Error ? err.message : String(err)
+        warnings.push(
+          `gitnexus_route_map failed for repo "${repo.label}", route "${routePath}": ${message}`,
+        )
+        await emitInspectorEvent('inspector.gitnexus.result', {
+          runId,
+          wrapperName: 'find_in_codebase',
+          tool: 'gitnexus_route_map',
+          durationMs: Date.now() - callStart,
+          resultPreview: message.slice(0, INSPECTOR_PREVIEW_BYTES_CAP),
+          truncated: message.length > INSPECTOR_PREVIEW_BYTES_CAP,
+          ok: false,
+        } satisfies InspectorGitnexusResultPayload)
+        return null
+      })
+  }
+
   // Flatten + score-sort + dedupe by (repo, path), keep top maxFiles.
   // Same-path hits across expansions keep the highest-scoring entry.
   // Keyword hits union with gitnexus hits — same shape, dedupe pass
@@ -369,13 +554,23 @@ export async function runFindInCodebase(
       })
     }
 
+    // Tag the why-string with the process flow this hit participates
+    // in, when gitnexus surfaced one. Repos without entry points
+    // (libraries, utilities) typically have no processes and this
+    // stays a no-op. When present, gives the IDE narrative context:
+    // "this match is in the Login flow" instead of just "matched."
+    const processSuffix = hit.processLabel
+      ? hit.stepIndex
+        ? `; in ${hit.processLabel} flow (step ${hit.stepIndex})`
+        : `; in ${hit.processLabel} flow`
+      : ''
     files.push({
       repo_id: repo.repo_id,
       repo_label: repo.label,
       path: hit.path,
       language: inferLanguage(hit.path),
       chunks,
-      why: hit.reason,
+      why: `${hit.reason}${processSuffix}`,
     })
   }
 
@@ -444,22 +639,123 @@ async function emitToolResult(args: ToolResultArgs): Promise<void> {
 }
 
 /**
- * Best-effort languages-hint for the expand call. Pulls top-level
- * extension counts from the matched repos' `description` (a quick
- * proxy until a real language-detection pass on
- * `gitnexus_context` results).
- *
- * For now we just hand the repo labels — the LLM uses them as a hint
- * about repo identity which is often enough to bias terminology
- * (a JS/TS repo name biases the expansion toward JS/TS idioms; a
- * Python repo name biases it toward Python).
+ * Process-local cache of detected languages per repo source directory.
+ * Detection only reads the top-level files in the clone and matches
+ * marker files (package.json, pyproject.toml, etc.), so it's cheap to
+ * compute the first time and free on every subsequent wrapper call
+ * for the lifetime of the worker process. We don't invalidate on
+ * re-clone: source dirs are stable per (repo_id, branch), and
+ * languages don't change between clones in any practical scenario.
  */
-function deriveLanguagesHint(repos: readonly AttachedRepo[]): readonly string[] {
-  const out: string[] = []
-  for (const r of repos) {
-    if (r.description) out.push(r.description)
+const languageCache = new Map<string, readonly string[]>()
+
+/**
+ * Detect the dominant language(s) for one cloned repo by inspecting
+ * its top-level files. Uses two signals in order:
+ *
+ *   1. Build-system marker files (`package.json` → JS/TS,
+ *      `pyproject.toml` / `setup.py` / `requirements.txt` → Python,
+ *      `go.mod` → Go, etc.). One readdir, no recursion. Catches
+ *      99% of repos because the marker file is conventionally at
+ *      the root.
+ *   2. Fall-back: extension scan of the top-level files. Useful for
+ *      single-language repos without a manifest (e.g. a folder of
+ *      scripts).
+ *
+ * Returns up to 3 language names ordered by detection. Empty array
+ * on errors (clone gone, permission denied, etc.) — degrades to the
+ * pre-existing behaviour of an empty hint, never throws.
+ */
+async function detectRepoLanguages(
+  sourceDir: string,
+): Promise<readonly string[]> {
+  const cached = languageCache.get(sourceDir)
+  if (cached) return cached
+  let result: readonly string[] = []
+  try {
+    const entries = await readdir(sourceDir)
+    const top = new Set(entries)
+    const langs: string[] = []
+    if (top.has('package.json')) {
+      // package.json could be a JS-only or TS-aware repo. Both are
+      // common enough that biasing the LLM toward either alone hurts
+      // recall; emit both and let the LLM pick.
+      langs.push('typescript', 'javascript')
+    }
+    if (
+      top.has('pyproject.toml') ||
+      top.has('setup.py') ||
+      top.has('requirements.txt')
+    ) {
+      langs.push('python')
+    }
+    if (top.has('go.mod')) langs.push('go')
+    if (top.has('Cargo.toml')) langs.push('rust')
+    if (top.has('Gemfile')) langs.push('ruby')
+    if (top.has('pom.xml')) langs.push('java')
+    if (top.has('build.gradle') || top.has('build.gradle.kts')) {
+      langs.push('kotlin', 'java')
+    }
+    if (top.has('Package.swift')) langs.push('swift')
+    if (top.has('composer.json')) langs.push('php')
+    if (top.has('mix.exs')) langs.push('elixir')
+    if (top.has('Project.toml')) langs.push('julia')
+    // Fall-back: scan top-level file extensions if no marker matched.
+    if (langs.length === 0) {
+      for (const entry of entries) {
+        const lang = inferLanguage(entry)
+        // Skip generic config / docs — they don't identify the repo's
+        // primary language.
+        if (
+          lang === 'unknown' ||
+          lang === 'json' ||
+          lang === 'yaml' ||
+          lang === 'markdown'
+        ) {
+          continue
+        }
+        langs.push(lang)
+      }
+    }
+    // Dedupe + cap at 3 so the prompt stays short.
+    result = [...new Set(langs)].slice(0, 3)
+  } catch {
+    // Source dir missing / unreadable. Treat as no signal.
+    result = []
   }
-  return out
+  languageCache.set(sourceDir, result)
+  return result
+}
+
+/**
+ * Language-hint for the expand LLM call. Detects the dominant
+ * language(s) of each matched repo by inspecting build-system marker
+ * files in its cloned source directory, dedupes across repos, and
+ * returns up to 3 names.
+ *
+ * Previously this function returned the operator-authored repo
+ * descriptions — a misleading name/body mismatch. Now it actually
+ * does what the name says. Empty array when no source dirs are
+ * readable or no language signals are found; expand call degrades to
+ * a no-language-hint prompt (same as before this change).
+ */
+async function deriveLanguagesHint(
+  repos: readonly AttachedRepo[],
+): Promise<readonly string[]> {
+  const merged = new Set<string>()
+  for (const r of repos) {
+    const sourceDir = repoSourceDir({
+      id: r.repo_id,
+      remoteUrl: r.remote_url,
+      branch: r.branch,
+    })
+    for (const lang of await detectRepoLanguages(sourceDir)) {
+      merged.add(lang)
+    }
+  }
+  // Stable ordering so the prompt preview is deterministic per repo
+  // set (helps when comparing two runs).
+  return [...merged].sort()
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
@@ -489,9 +785,7 @@ function buildResolutionFailureSummary(
     return `${res.message}.${list}`.trim()
   }
   const candidates =
-    res.candidates.length > 0
-      ? `Available: ${res.candidates.join(', ')}.`
-      : ''
+    res.candidates.length > 0 ? `Available: ${res.candidates.join(', ')}.` : ''
   return `Could not resolve repo: ${res.message}. ${candidates}`.trim()
 }
 

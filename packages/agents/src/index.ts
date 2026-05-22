@@ -58,6 +58,31 @@ export {
   makeInitialMapChunkState,
 } from './run-dispatcher.js'
 export type { MapChunkState } from './run-dispatcher.js'
+// Exported for test harnesses (tests/smoke-gitnexus-callers.ts). Each
+// caller is the thin wrapper around one `gitnexus_*` MCP tool; exposing
+// them lets the smoke drive synthetic gitnexus payloads through the
+// real unwrap + parse pipeline without spinning up the gitnexus
+// subprocess.
+export {
+  callGitnexusApiImpact,
+  callGitnexusCypher,
+  callGitnexusImpact,
+  callGitnexusQuery,
+  callGitnexusRouteMap,
+} from './inspector/gitnexus-callers.js'
+export type {
+  GitnexusApiImpactConsumer,
+  GitnexusApiImpactResult,
+  GitnexusApiImpactRoute,
+  GitnexusCypherResult,
+  GitnexusCypherRow,
+  GitnexusImpactResult,
+  GitnexusImpactRow,
+  GitnexusQueryHit,
+  GitnexusQueryResponse,
+  GitnexusRoute,
+  GitnexusRouteConsumer,
+} from './inspector/gitnexus-callers.js'
 export { createRunRedactor } from './run-redactor.js'
 export type { RunRedactor } from './run-redactor.js'
 export {

@@ -22,16 +22,13 @@ import {
   callGitnexusContext,
   callGitnexusImpact,
   type GitnexusContextResult,
+  type GitnexusImpactRow,
   type ToolDict,
 } from '../gitnexus-callers.js'
 import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
 import { readFileChunkFromDisk } from '../read-source.js'
 import { resolveRepoForWrapper } from '../run-context.js'
-import type {
-  MiniRepo,
-  MiniRepoChunk,
-  MiniRepoFile,
-} from '../types.js'
+import type { MiniRepo, MiniRepoChunk, MiniRepoFile } from '../types.js'
 import {
   emitMinirepoBuilt,
   emitToolCalled,
@@ -61,10 +58,12 @@ export async function runUnderstandModule(
 
   const trimmed = anchor.trim()
   if (trimmed.length === 0) {
-    const result = finalizeMiniRepo(emptyDraft({
-      summary: 'Pass an `anchor` (file path or symbol) to explain.',
-      warnings: ['empty anchor'],
-    }))
+    const result = finalizeMiniRepo(
+      emptyDraft({
+        summary: 'Pass an `anchor` (file path or symbol) to explain.',
+        warnings: ['empty anchor'],
+      }),
+    )
     await emitMinirepoBuilt('understand_module', result)
     await emitToolResult({
       handle,
@@ -75,7 +74,11 @@ export async function runUnderstandModule(
     return result
   }
 
-  const resolution = resolveRepoForWrapper({ repos, hint: repoHint, allowAll: false })
+  const resolution = resolveRepoForWrapper({
+    repos,
+    hint: repoHint,
+    allowAll: false,
+  })
   if (resolution.ok !== true) {
     const message =
       resolution.ok === 'all'
@@ -85,10 +88,12 @@ export async function runUnderstandModule(
       resolution.ok === 'clarify'
         ? `${message}. Pick one: ${resolution.candidates.map((c) => c.label).join(', ')}.`
         : `Could not resolve repo: ${message}`
-    const result = finalizeMiniRepo(emptyDraft({
-      summary,
-      warnings: [message],
-    }))
+    const result = finalizeMiniRepo(
+      emptyDraft({
+        summary,
+        warnings: [message],
+      }),
+    )
     await emitMinirepoBuilt('understand_module', result)
     await emitToolResult({
       handle,
@@ -102,7 +107,8 @@ export async function runUnderstandModule(
 
   const warnings: string[] = []
   const files: MiniRepoFile[] = []
-  const looksLikePath = /[\\/]/.test(trimmed) || /\.[a-zA-Z0-9]{1,8}$/.test(trimmed)
+  const looksLikePath =
+    /[\\/]/.test(trimmed) || /\.[a-zA-Z0-9]{1,8}$/.test(trimmed)
 
   // Anchor file body. The most important payload. Two paths:
   //   - Path-anchored: read the file directly from disk; no gitnexus call.
@@ -123,8 +129,7 @@ export async function runUnderstandModule(
         'understand_module',
         'gitnexus_context',
         { repo: target.label, name: trimmed },
-        () =>
-          callGitnexusContext({ tools, repo: target.label, name: trimmed }),
+        () => callGitnexusContext({ tools, repo: target.label, name: trimmed }),
       )
       if (symbolContext) {
         anchorFilePath = symbolContext.symbol.filePath
@@ -163,7 +168,9 @@ export async function runUnderstandModule(
         path: anchorFilePath,
         language: chunk.language,
         chunks,
-        why: looksLikePath ? 'anchor file body' : `body of ${symbolContext?.symbol.kind ?? 'symbol'} ${trimmed}`,
+        why: looksLikePath
+          ? 'anchor file body'
+          : `body of ${symbolContext?.symbol.kind ?? 'symbol'} ${trimmed}`,
       })
       if (chunk.truncated) {
         warnings.push(`anchor body truncated to ${chunk.content.length} bytes`)
@@ -191,7 +198,13 @@ export async function runUnderstandModule(
         path: edge.filePath,
         language: chunk?.language ?? 'unknown',
         chunks: chunk
-          ? [{ start_line: chunk.startLine, end_line: chunk.endLine, content: chunk.content }]
+          ? [
+              {
+                start_line: chunk.startLine,
+                end_line: chunk.endLine,
+                content: chunk.content,
+              },
+            ]
           : [],
         why: `outgoing ${edge.relation} → ${edge.name}`,
       })
@@ -200,9 +213,9 @@ export async function runUnderstandModule(
 
   // Outgoing dependencies via gitnexus_impact — depth>=2 reach. Adds files
   // we wouldn't see from one-hop context edges alone.
-  let dependencyRows: Awaited<ReturnType<typeof callGitnexusImpact>> = []
+  let dependencyRows: readonly GitnexusImpactRow[] = []
   try {
-    dependencyRows = await withGitnexusCall(
+    const dependencyResult = await withGitnexusCall(
       'understand_module',
       'gitnexus_impact',
       {
@@ -220,6 +233,12 @@ export async function runUnderstandModule(
           depth: DEPENDENCY_DEPTH,
         }),
     )
+    dependencyRows = dependencyResult.rows
+    if (dependencyResult.partial) {
+      warnings.push(
+        'gitnexus_impact returned partial dependency rows: list below is incomplete.',
+      )
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     warnings.push(`gitnexus_impact failed: ${message}`)
@@ -301,7 +320,10 @@ interface FlatContextEdge {
 }
 
 function flattenContextEdges(
-  edgeMap: Record<string, readonly { uid: string; name: string; filePath: string }[]>,
+  edgeMap: Record<
+    string,
+    readonly { uid: string; name: string; filePath: string }[]
+  >,
 ): FlatContextEdge[] {
   const out: FlatContextEdge[] = []
   for (const [relation, edges] of Object.entries(edgeMap)) {

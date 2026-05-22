@@ -1142,10 +1142,13 @@ do zero LLM calls.
 
 Each wrapper invocation appends its `MiniRepo` to `runs.minirepo_json`
 (jsonb array) via `runsRepo.appendMinirepo`. Append is read-modify-
-write inside one transaction with an oldest-eviction policy: when the
-array would exceed 14 KiB serialized, oldest entries drop until it
-fits. Every wrapper writes unconditionally — chat-tab tool-call cards
-and the IDE bridge envelope share one source of truth.
+write inside one transaction with a `SELECT … FOR UPDATE` row lock on
+the run, so parallel wrapper calls (the LLM fans out `find_in_codebase`
++ `understand_module` in one turn) serialize their appends instead of
+clobbering each other under READ COMMITTED isolation. Oldest-eviction
+policy: when the array would exceed 14 KiB serialized, oldest entries
+drop until it fits. Every wrapper writes unconditionally — chat-tab
+tool-call cards and the IDE bridge envelope share one source of truth.
 
 Each `MiniRepo` carries `files[]`, `graph_subset.{nodes,edges}`,
 `cross_repo_relationships[]`, `summary`, `expansions[]`, `warnings[]`,
@@ -1169,8 +1172,11 @@ Three optional fields the wrappers set when they can:
   to the IDE LLM without it having to count.
 
 All three are propagated through `mini_repos[*]` in the wire envelope
-(per §10.7), distinct from the envelope-level `resolved_repo` /
-`confidence` which describe the call's overall focal repo.
+(per §10.7), distinct from the envelope-level `resolved_repo` which
+describes the call's primary focus. Confidence stays per-wrapper —
+when one mini-repo grades itself `low`, the bridge surfaces a
+`revise_query` suggestion in `next_actions` (see §10.7) rather than
+collapsing the per-wrapper signals into a single envelope-level grade.
 
 ### 10.5 Inspector run-context
 
@@ -1314,8 +1320,10 @@ what happened during the call:
         "args_patch": { "repo_hint": "frontend" } } /* … */ ]
   },                                  // no run was dispatched in this case
 
-  "next_actions": [                   // ≤ 3 pre-baked follow-ups for connected repos
-    { "label": "Ask about frontend (which calls backend)",
+  "next_actions": [                   // suggested follow-ups; IDE may use, modify, or ignore
+    // kind="cross_repo": operator-curated edge from focal repo
+    { "kind": "cross_repo",
+      "label": "Ask about frontend (which calls backend)",
       "reason": "frontend --calls--> backend: Frontend hits GET /products on the backend.",
       "meta": {
         "connector": "calls",
@@ -1323,10 +1331,22 @@ what happened during the call:
         "from_repo": { "repo_id": "…", "label": "frontend" },
         "to_repo":   { "repo_id": "…", "label": "backend" }
       },
-      "args_patch": {                 // IDE LLM fires verbatim into a follow-up call
+      "args_patch": {                 // pre-baked for a follow-up call
         "repo_hint": "frontend",
         "remote_url": "https://github.com/owner/frontend.git"
-      } } /* … */ ],
+      } },
+    // kind="revise_query": a wrapper reported partial results or low confidence.
+    // No args_patch — picking the new query is the IDE's call.
+    { "kind": "revise_query",
+      "label": "Consider re-asking with a narrower question",
+      "reason": "One or more wrappers returned partial results …",
+      "trigger": "partial_results" },
+    // kind="drill_file": a file matched by path but its body was not returned (zero chunks).
+    { "kind": "drill_file",
+      "label": "Look inside src/foo/bar.ts",
+      "reason": "Matched src/foo/bar.ts by path but the body was not returned in this call.",
+      "args_patch": { "query": "Explain src/foo/bar.ts", "repo_hint": "backend" } }
+  ],
 
   "agent_repos": [ /* AgentRepoSummary[] */ ],         // only when with_topology: true
                                                       // OR on clarification short-circuit
@@ -1360,12 +1380,24 @@ Rules:
   through the dispatcher into the inspector run context so wrappers
   consult it as a fallback when the inspector LLM doesn't supply its
   own `repo_hint`. See §10.5.
-- **`next_actions` are envelope-level**, computed post-dispatch from
-  operator-curated `repo_relationships` touching the focal repo
-  (outgoing edges first — "what does X reach?" — incoming second,
-  deduped per connected repo, capped at 3). Each `args_patch` carries
-  both `repo_hint` and `remote_url` so the bridge's pre-resolver
-  picks the connected repo by URL on the follow-up call.
+- **`next_actions` are envelope-level suggestions**, never directives.
+  The IDE LLM may use any entry, modify it, or ignore the whole list.
+  Two sources merge into one array (see `computeNextActions` +
+  `computeSignalNextActions` in `inspect-codebase-handler.ts`):
+  - **`cross_repo`** entries come from operator-curated
+    `repo_relationships` touching the focal repo (outgoing edges first
+    — "what does X reach?" — incoming second, deduped per connected
+    repo, capped at 3). Each `args_patch` carries both `repo_hint` and
+    `remote_url` so the bridge's pre-resolver picks the connected repo
+    by URL on the follow-up call.
+  - **`revise_query`** + **`drill_file`** entries are derived from
+    in-band mini-repo signals: warnings indicating partial traversal
+    or step-cap hits (→ `revise_query` with `trigger:
+    'partial_results'`), the lowest `confidence` across mini-repos
+    being `low` (→ `revise_query` with `trigger: 'low_confidence'`),
+    and files matched by path with zero chunks (→ `drill_file` with a
+    pre-baked `args_patch.query`). Capped at 3 combined to keep the
+    envelope focused.
 - **Each `MiniRepo` carries its own optional `resolved_repo`,
   `confidence`, and `groundedness`** (per §10.4) — those are the
   per-wrapper view, distinct from the envelope-level `resolved_repo`
