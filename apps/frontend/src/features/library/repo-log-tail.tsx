@@ -434,24 +434,6 @@ function LogFeed({
   loading: boolean
   empty: boolean
 }) {
-  const scrollRef = useRef<HTMLDivElement | null>(null)
-  const stickToBottomRef = useRef<boolean>(true)
-
-  // Stick-to-bottom on new rows, but only when the user is already
-  // near the bottom — otherwise leave them where they were reading.
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    if (!stickToBottomRef.current) return
-    el.scrollTop = el.scrollHeight
-  }, [rows])
-
-  const onScroll = (e: React.UIEvent<HTMLDivElement>) => {
-    const el = e.currentTarget
-    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
-    stickToBottomRef.current = distanceFromBottom < 24
-  }
-
   if (loading) {
     return (
       <div className="ab-repo-activity-skeleton" aria-hidden="true">
@@ -469,14 +451,24 @@ function LogFeed({
     )
   }
 
+  // Newest-first render order. `derive()` still walks events
+  // chronologically (so phase transitions, row-collapse counters,
+  // and progress-bar "latest reading" semantics are unchanged); we
+  // only flip the visual order here. Latest event lands at the top
+  // of the feed where the operator's eye already is — no scrolling
+  // or auto-scroll fighting to see what's happening right now, and
+  // on failure the error is the first thing they see.
+  const ordered = rows.slice().reverse()
+
   // Insert phase divider rows whenever the phase changes between
-  // consecutive rows. Renders inline so the scroll body stays one
-  // contiguous element.
+  // consecutive rows. After reversal, the divider sits above the
+  // newest row of each phase, so the feed reads as
+  // "[INDEX header] [latest index rows] [CLONE header] [clone rows]".
   const items: Array<
     { kind: 'divider'; phase: PhaseId | null; key: string } | { kind: 'row'; row: LogRow }
   > = []
   let lastPhase: PhaseId | null | undefined = undefined
-  for (const row of rows) {
+  for (const row of ordered) {
     if (lastPhase !== row.phase) {
       items.push({
         kind: 'divider',
@@ -490,8 +482,6 @@ function LogFeed({
 
   return (
     <div
-      ref={scrollRef}
-      onScroll={onScroll}
       className="ab-repo-activity-feed"
       role="log"
       aria-live="polite"
