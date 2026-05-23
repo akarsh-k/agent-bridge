@@ -41,6 +41,7 @@ import {
   CopyJsonButton,
   EventPayloadBody,
   EventPayloadViewer,
+  ViewJsonButton,
 } from './event-payload-viewer'
 
 /** Shape both `RunDetailEvent` and `WorkerJobDetailEvent` satisfy. */
@@ -863,6 +864,7 @@ function PairSubsection({
           {formatClock(ts)}
         </span>
         <span style={{ flex: 1 }} />
+        <ViewJsonButton payload={payload} />
         <CopyJsonButton payload={payload} />
       </div>
       <div style={{ padding: '10px 12px' }}>

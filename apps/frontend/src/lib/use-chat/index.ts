@@ -193,6 +193,20 @@ interface UseChatInput {
   readonly urlThreadId?: string
 }
 
+// ─── Helpers ─────────────────────────────────────────────────────────────
+
+/**
+ * Short title used as a sidebar placeholder for a brand-new thread
+ * before Mastra's LLM-generated title lands. Mirrors the backend's
+ * `derivePreviewTitle` (60 chars, ellipsis) so the placeholder doesn't
+ * visibly jump in length when the real title arrives.
+ */
+function derivePlaceholderTitle(message: string): string {
+  const trimmed = message.trim().replace(/\s+/g, ' ')
+  if (trimmed.length === 0) return 'New conversation'
+  return trimmed.length > 60 ? trimmed.slice(0, 57) + '…' : trimmed
+}
+
 // ─── Hook ────────────────────────────────────────────────────────────────
 
 export function useChat(input: UseChatInput): UseChatResult {
@@ -460,10 +474,30 @@ export function useChat(input: UseChatInput): UseChatResult {
       // exist server-side. Push (not replace) so back returns to the
       // previous conversation. We do this BEFORE the POST so the URL
       // is consistent if the user reloads mid-send.
+      //
+      // Also seed an optimistic sidebar entry so the new thread shows
+      // up immediately with a truncated-prompt placeholder. The real
+      // entry (with the LLM-generated title) replaces it when
+      // `refreshThreads()` fires after the run terminates. If the POST
+      // fails, the catch block removes the optimistic entry so the
+      // sidebar doesn't keep a ghost row.
+      const isNewThread = pendingNewThread
       if (pendingNewThread) {
         setPendingNewThread(false)
         setUrlSyncedFor(threadId)
         navigate(`/agents/${agentId}/chat/${threadId}`)
+        const now = Date.now()
+        const optimistic: ChatThreadMeta = {
+          threadId,
+          title: derivePlaceholderTitle(prompt),
+          createdAt: now,
+          updatedAt: now,
+          messageCount: 1,
+        }
+        setThreads((prev) => [
+          optimistic,
+          ...prev.filter((t) => t.threadId !== threadId),
+        ])
       }
 
       const userMessage: ChatMessage = {
@@ -531,6 +565,12 @@ export function useChat(input: UseChatInput): UseChatResult {
               : m,
           ),
         )
+        // Drop the optimistic sidebar entry — the backend never
+        // accepted the run, so no Mastra thread row will exist on the
+        // next refresh and a stray entry would be confusing.
+        if (isNewThread) {
+          setThreads((prev) => prev.filter((t) => t.threadId !== threadId))
+        }
       } finally {
         setSending(false)
       }
@@ -748,6 +788,13 @@ export function useChat(input: UseChatInput): UseChatResult {
   // "loaded" so the load-messages effect (which watches `threads`)
   // doesn't immediately re-fetch and overwrite the just-streamed
   // messages with the simpler backend replay.
+  //
+  // The follow-up refreshes catch Mastra's `generateTitle` write,
+  // which is fire-and-forget inside the agent run and frequently
+  // lands AFTER `run.finished`. Two short retries cover the common
+  // cases (sub-second titles on small models, multi-second on the
+  // big ones) without polling forever. If the title already landed
+  // on the first refresh, the follow-ups are cheap no-ops.
   const lastRunIdRef = useRef<string | null>(null)
   useEffect(() => {
     if (activeRunId) {
@@ -758,6 +805,12 @@ export function useChat(input: UseChatInput): UseChatResult {
     lastRunIdRef.current = null
     setMessagesLoadedFor(threadId)
     void refreshThreads()
+    const t1 = window.setTimeout(() => void refreshThreads(), 2500)
+    const t2 = window.setTimeout(() => void refreshThreads(), 6000)
+    return () => {
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+    }
   }, [activeRunId, refreshThreads, threadId])
 
   const newThread = useCallback(() => {

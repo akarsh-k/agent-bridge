@@ -23,7 +23,8 @@
  * `EventRow` expansion in `run-detail-sheet.tsx`.
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 const LONG_STRING_PREVIEW = 280
 const NESTED_MAX_HEIGHT = 280
@@ -72,8 +73,10 @@ export function EventPayloadViewer({ payload }: EventPayloadViewerProps) {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'flex-end',
+          gap: 10,
         }}
       >
+        <ViewJsonButton payload={payload} />
         <CopyJsonButton payload={payload} />
       </div>
       <EventPayloadBody payload={payload} />
@@ -134,6 +137,184 @@ export function CopyJsonButton({ payload }: { payload: unknown }) {
     >
       {copied ? '✓ Copied' : '⧉ Copy JSON'}
     </button>
+  )
+}
+
+/**
+ * Opens a centered full-screen modal with the entire payload pretty-
+ * printed. Lives next to Copy JSON so operators can read the whole thing
+ * inline without round-tripping through clipboard + external editor.
+ */
+export function ViewJsonButton({ payload }: { payload: unknown }) {
+  const [open, setOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const close = (): void => {
+    setOpen(false)
+    // Restore focus to the trigger so keyboard navigation continues
+    // from where the user invoked the modal.
+    triggerRef.current?.focus()
+  }
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={() => setOpen(true)}
+        className="ab-inline-action"
+        title="View full JSON"
+      >
+        ⤢ View JSON
+      </button>
+      {open && <JsonModal payload={payload} onClose={close} />}
+    </>
+  )
+}
+
+function JsonModal({
+  payload,
+  onClose,
+}: {
+  payload: unknown
+  onClose: () => void
+}) {
+  const json = useMemo(() => safeStringify(payload), [payload])
+  const [copied, setCopied] = useState(false)
+  const [wrap, setWrap] = useState(true)
+  const closeRef = useRef<HTMLButtonElement | null>(null)
+  const titleId = useId()
+
+  // Capture-phase Esc so a parent Sheet's bubble-phase Esc handler
+  // doesn't ALSO fire and close the surrounding sheet.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        e.stopPropagation()
+        onClose()
+      }
+    }
+    document.addEventListener('keydown', onKey, { capture: true })
+    return () =>
+      document.removeEventListener('keydown', onKey, { capture: true })
+  }, [onClose])
+
+  // Pull focus into the modal on open so Tab / Esc work without an
+  // initial click. Close is the safest target — pressing Enter on it
+  // matches user intent.
+  useEffect(() => {
+    closeRef.current?.focus()
+  }, [])
+
+  const onCopy = (): void => {
+    void navigator.clipboard.writeText(json).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1200)
+    })
+  }
+
+  return createPortal(
+    <>
+      <div
+        className="ab-sheet-backdrop is-open"
+        onClick={onClose}
+        style={{ zIndex: 200 }}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        style={{
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          width: 'min(1200px, calc(100vw - 48px))',
+          height: 'min(820px, calc(100vh - 48px))',
+          background: 'var(--surface)',
+          border: '1px solid var(--border-strong)',
+          borderRadius: 'var(--radius-lg)',
+          boxShadow: 'var(--shadow-3)',
+          zIndex: 201,
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          animation: 'ab-dialog-in 200ms var(--ease-out)',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '10px 14px',
+            borderBottom: '1px solid var(--border)',
+            background: 'var(--surface-hi)',
+          }}
+        >
+          <div
+            id={titleId}
+            className="ab-section-title"
+            style={{ fontSize: 13, flex: 1 }}
+          >
+            Payload JSON
+          </div>
+          <span
+            className="ab-mono"
+            style={{
+              fontSize: 11,
+              color: 'var(--text-muted)',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {json.length.toLocaleString()} chars
+          </span>
+          <button
+            type="button"
+            onClick={() => setWrap((w) => !w)}
+            className="ab-inline-action"
+            title="Toggle line wrap"
+          >
+            {wrap ? '↹ No wrap' : '↵ Wrap'}
+          </button>
+          <button
+            type="button"
+            onClick={onCopy}
+            className="ab-inline-action"
+            title="Copy raw payload JSON"
+          >
+            {copied ? '✓ Copied' : '⧉ Copy JSON'}
+          </button>
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            className="ab-inline-action"
+            title="Close (Esc)"
+            aria-label="Close"
+          >
+            ✕ Close
+          </button>
+        </div>
+        <pre
+          style={{
+            margin: 0,
+            padding: '14px 18px',
+            background: 'var(--bg-canvas)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 12.5,
+            lineHeight: 1.55,
+            color: 'var(--text)',
+            whiteSpace: wrap ? 'pre-wrap' : 'pre',
+            wordBreak: wrap ? 'break-word' : 'normal',
+            overflow: 'auto',
+            flex: 1,
+          }}
+        >
+          {json}
+        </pre>
+      </div>
+    </>,
+    document.body,
   )
 }
 

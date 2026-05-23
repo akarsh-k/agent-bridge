@@ -765,14 +765,23 @@ function buildMemory(args: {
   // since we auto-seed `semanticRecall` whenever an operator
   // flips `memoryEnabled` on, every memory-on agent without an embedder
   // would hit this.
-  const runtimeConfig = config && !vectorArm
+  const strippedConfig = config && !vectorArm
     ? stripSemanticRecall(config)
     : config
+
+  // Default `generateTitle` to true so existing memory-enabled agents
+  // (whose persisted config predates the option) get LLM-generated
+  // thread titles automatically. Operators who explicitly turned it off
+  // persist `false`, which is respected here. Mastra's own default is
+  // `false`, hence the override.
+  const runtimeConfig: AgentMemoryConfig = strippedConfig
+    ? { ...strippedConfig, generateTitle: strippedConfig.generateTitle ?? true }
+    : { generateTitle: true }
 
   const memory = new Memory({
     storage,
     ...(vectorArm ? { vector: vectorArm.vector, embedder: vectorArm.embedder } : {}),
-    ...(runtimeConfig ? { options: runtimeConfig as unknown as MemoryOptions } : {}),
+    options: runtimeConfig as unknown as MemoryOptions,
   })
 
   return {

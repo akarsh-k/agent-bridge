@@ -313,5 +313,6 @@ export function defaultMemoryConfig(): AgentMemoryConfig {
       messageRange: { before: 1, after: 1 },
       scope: 'resource',
     },
+    generateTitle: true,
   }
 }

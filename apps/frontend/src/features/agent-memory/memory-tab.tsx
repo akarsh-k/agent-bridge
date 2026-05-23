@@ -83,7 +83,7 @@ export function MemoryTab({ agentId }: { agentId: string }) {
   const [enabled, setEnabled] = useState(false)
   const [lastMode, setLastMode] = useState<LastMessagesMode>('count')
   const [lastN, setLastN] = useState(20)
-  const [generateTitle, setGenerateTitle] = useState(false)
+  const [generateTitle, setGenerateTitle] = useState(true)
 
   // working memory
   const [wmEnabled, setWmEnabled] = useState(false)
@@ -113,7 +113,10 @@ export function MemoryTab({ agentId }: { agentId: string }) {
       setLastMode('count')
       setLastN(20)
     }
-    setGenerateTitle(cfg?.generateTitle ?? false)
+    // Default to true when the key is absent. Matches the runtime
+    // fallback in `buildMemory()` so the UI checkbox reflects what the
+    // backend will actually do.
+    setGenerateTitle(cfg?.generateTitle ?? true)
     setWmEnabled(cfg?.workingMemory?.enabled ?? false)
     setWmTemplate(cfg?.workingMemory?.template ?? '')
     setWmScope(cfg?.workingMemory?.scope ?? 'thread')
@@ -160,7 +163,7 @@ export function MemoryTab({ agentId }: { agentId: string }) {
     const savedLast = cfg?.lastMessages
     const wantLast = lastMode === 'off' ? false : lastN
     if (savedLast !== wantLast) return true
-    if ((cfg?.generateTitle ?? false) !== generateTitle) return true
+    if ((cfg?.generateTitle ?? true) !== generateTitle) return true
     const savedWmEnabled = cfg?.workingMemory?.enabled ?? false
     if (savedWmEnabled !== wmEnabled) return true
     if (wmEnabled) {
@@ -196,7 +199,10 @@ export function MemoryTab({ agentId }: { agentId: string }) {
     const config: Record<string, unknown> = {}
     if (lastMode === 'off') config.lastMessages = false
     else config.lastMessages = lastN
-    if (generateTitle) config.generateTitle = true
+    // Persist an explicit boolean so a deliberate "off" survives —
+    // otherwise the runtime fallback in `buildMemory()` would flip it
+    // back to true on the next agent build.
+    config.generateTitle = generateTitle
     if (wmEnabled) {
       const wm: Record<string, unknown> = { enabled: true, scope: wmScope }
       if (wmTemplate.trim()) wm.template = wmTemplate.trim()
@@ -336,8 +342,8 @@ export function MemoryTab({ agentId }: { agentId: string }) {
               Auto-generate thread titles
             </label>
             <span className="ab-field-help">
-              Mastra summarises the thread into a short title once enough
-              messages accumulate.
+              A short LLM-generated title replaces the truncated first
+              message in the thread list. Uses the agent's own model.
             </span>
           </div>
         </div>
