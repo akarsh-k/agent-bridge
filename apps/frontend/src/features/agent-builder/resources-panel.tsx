@@ -8,7 +8,10 @@
  */
 
 import { useEffect, useState } from 'react'
-import type { InspectorSystemSkillResponse } from '@agent-bridge/shared'
+import type {
+  InspectorSystemSkillResponse,
+  SkillResponse,
+} from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
 import { Button } from '../../ui/button'
 import { Pill, type PillKind } from '../../ui/pill'
@@ -97,6 +100,27 @@ function BuiltInSubhead() {
 // Card-head row used by every Resources sub-card: title + sub on the
 // left, action button on the right. Inline style is fine here. it's
 // a layout concern that doesn't reuse outside this file.
+/**
+ * Pill next to a skill name showing whether its body is concatenated
+ * into the system prompt every turn (eager) or fetched on-demand via
+ * `read_skill` (lazy). A lazy skill needs both `alwaysInclude=false`
+ * and a non-empty description, matching the backend's `splitSkills`.
+ * Missing description with the checkbox off shows a warn pill so the
+ * operator can see the gap from the list without opening the sheet.
+ */
+function SkillLoadingBadge({ skill }: { skill: SkillResponse }) {
+  const hasDescription = skill.description.trim().length > 0
+  if (!skill.alwaysInclude && !hasDescription) {
+    return (
+      <Pill kind="warn">Needs description</Pill>
+    )
+  }
+  if (!skill.alwaysInclude) {
+    return <Pill kind="accent">On demand</Pill>
+  }
+  return <Pill kind="neutral">Always on</Pill>
+}
+
 function CardHead({
   title,
   sub,
@@ -626,7 +650,13 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                     {s.name.charAt(0).toUpperCase()}
                   </div>
                   <div className="ab-list-row-head">
-                    <div className="ab-list-row-title">{s.name}</div>
+                    <div
+                      className="ab-list-row-title"
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+                    >
+                      {s.name}
+                      <SkillLoadingBadge skill={s} />
+                    </div>
                     <div
                       className="ab-list-row-sub"
                       style={{
@@ -635,7 +665,9 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                         whiteSpace: 'nowrap',
                       }}
                     >
-                      {s.markdownBody.slice(0, 80) || 'No body yet'}
+                      {s.description.trim() ||
+                        s.markdownBody.slice(0, 80) ||
+                        'No body yet'}
                     </div>
                   </div>
                   <div className="ab-list-row-meta">

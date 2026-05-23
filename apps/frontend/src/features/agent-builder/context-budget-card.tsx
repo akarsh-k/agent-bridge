@@ -68,7 +68,12 @@ export function ContextBudgetCard({ agentId }: { agentId: string }) {
         provider: agent?.llmProviderId ?? null,
         prompt: agent?.systemPrompt ?? '',
         skills: (resources?.skills ?? []).map(
-          (s) => `${s.name}:${s.markdownBody.length}`,
+          // `alwaysInclude` + description length both move the budget
+          // (lazy bodies drop out of the prompt; the catalog bullet's
+          // size scales with description length), so they belong in
+          // the refetch key alongside the body length.
+          (s) =>
+            `${s.name}:${s.markdownBody.length}:${s.description.length}:${s.alwaysInclude ? 1 : 0}`,
         ),
         repos: (resources?.attachedRepos ?? []).map(
           (r) => `${r.repo.id}:${r.role ?? ''}:${(r.description ?? '').length}`,

@@ -101,6 +101,7 @@ import {
   INSPECTOR_SYSTEM_PROMPT_HEADING,
   loadInspectorSystemPrompt,
 } from './inspector/system-prompt.js'
+import { buildReadSkillTool } from './skills-tool.js'
 
 // ─── Public surface ──────────────────────────────────────────────────────
 
@@ -530,9 +531,17 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
     ? mountedGitnexus.meta.repoCount
     : await countReadyRepos(db, agentId)
 
+  // `read_skill` is mounted only when at least one operator skill is
+  // lazy-loadable (description authored + `alwaysInclude=false`). For
+  // agents with zero lazy skills, the tool is omitted entirely so the
+  // LLM doesn't see an option it can never usefully call.
+  const { lazy: lazySkillRows } = splitSkills(skillRows)
+  const readSkillTool = buildReadSkillTool(lazySkillRows)
+
   const mergedTools = mergeToolDicts(
     mountedInspector ? mountedInspector.tools : {},
     mountedExternal,
+    readSkillTool,
   )
 
   const agent = new Agent({
@@ -604,18 +613,55 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
 /**
+ * Split skills into eager (full body in the system prompt every turn)
+ * and lazy (catalog entry only; LLM fetches the body on demand via the
+ * `read_skill` tool). A skill goes lazy only when ALL of the following
+ * hold:
+ *   1. operator opted in (`alwaysInclude === false`)
+ *   2. description is authored — without it the LLM has no signal to
+ *      decide whether to load
+ *   3. body is non-empty — advertising an empty skill in the catalog
+ *      would burn a tool call on nothing
+ * Anything that fails one of these falls through to eager (where
+ * composeInstructions's separate empty-body filter still drops bodies
+ * that are blank).
+ *
+ * Exported so the `read_skill` tool mount agrees with the catalog
+ * `composeInstructions()` injects. If these two ever disagreed the
+ * catalog would advertise skills the tool refuses to load, or vice
+ * versa. `token-estimate.ts` keeps its OWN copy of this logic (see
+ * the comment there) — keep them in sync.
+ */
+export function splitSkills(skills: readonly SkillRow[]): {
+  eager: readonly SkillRow[]
+  lazy: readonly SkillRow[]
+} {
+  const eager: SkillRow[] = []
+  const lazy: SkillRow[] = []
+  for (const s of skills) {
+    const hasDescription = s.description.trim().length > 0
+    const hasBody = s.markdownBody.trim().length > 0
+    if (!s.alwaysInclude && hasDescription && hasBody) lazy.push(s)
+    else eager.push(s)
+  }
+  return { eager, lazy }
+}
+
+/**
  * Assemble the final `instructions` string passed to Mastra
  * (`docs/ARCHITECTURE.md §10`).
  *
- * Operator's `system_prompt` is the anchor; each operator-authored skill
- * contributes a markdown section underneath. Empty bodies are dropped.
+ * Operator's `system_prompt` is the anchor; each eager skill contributes
+ * a markdown section underneath, and lazy skills collapse into a single
+ * "Available skills" catalog so the agent knows what's loadable without
+ * paying their token cost every turn. Empty bodies are dropped.
  *
  * Repo inventory travels inside `list_repos` mini-repo responses; cross-
  * repo relationships return inside `assess_change_impact`. Size caps on
  * operator skills (≤ 4KB / 200 lines per skill, ≤ 12KB total) and the
  * ≤80-line inspector system prompt are enforced separately.
  */
-async function composeInstructions(
+export async function composeInstructions(
   basePrompt: string,
   skills: readonly SkillRow[],
   inspectorEnabled: boolean,
@@ -638,23 +684,31 @@ async function composeInstructions(
   // call, no need to read instructions for tools that don't exist.
   // Composition becomes just: base prompt + skills.
   //
-  // The escape hatch still works: a skill body containing the literal
-  // `# Inspector toolkit` heading is treated as an explicit override;
-  // the auto-attach is skipped and that skill becomes the sole
-  // inspector guide. (Only meaningful for inspector-enabled agents;
-  // the marker is harmless on disabled ones.)
+  // The escape hatch still works: an EAGER skill body containing the
+  // literal `# Inspector toolkit` heading is treated as an explicit
+  // override; the auto-attach is skipped and that skill becomes the
+  // sole inspector guide. Lazy skills are excluded from override
+  // detection — their bodies aren't in the prompt, so deferring to
+  // them would leave the agent with no inspector guidance until the
+  // first `read_skill` call.
   const parts: string[] = []
 
   const trimmedBase = basePrompt.trim()
   if (trimmedBase.length > 0) parts.push(trimmedBase)
 
-  const trimmedSkills = skills
+  const { eager, lazy } = splitSkills(skills)
+
+  const eagerTrimmed = eager
     .map((s) => ({ name: s.name, body: s.markdownBody.trim() }))
     .filter((s) => s.body.length > 0)
 
+  const lazyCatalog = lazy
+    .map((s) => ({ name: s.name, description: s.description.trim() }))
+    .filter((s) => s.description.length > 0)
+
   const operatorOverridesInspector =
     trimmedBase.includes(INSPECTOR_SYSTEM_PROMPT_HEADING) ||
-    trimmedSkills.some((s) => s.body.includes(INSPECTOR_SYSTEM_PROMPT_HEADING))
+    eagerTrimmed.some((s) => s.body.includes(INSPECTOR_SYSTEM_PROMPT_HEADING))
 
   if (inspectorEnabled && !operatorOverridesInspector) {
     // Loud throw on FS failure — the agent without this section would
@@ -664,13 +718,33 @@ async function composeInstructions(
     if (inspectorPrompt.length > 0) parts.push(inspectorPrompt)
   }
 
-  for (const skill of trimmedSkills) {
+  for (const skill of eagerTrimmed) {
     parts.push(`## ${skill.name}\n\n${skill.body}`)
+  }
+
+  if (lazyCatalog.length > 0) {
+    parts.push(formatLazySkillCatalog(lazyCatalog))
   }
 
   // Empty total is allowed. some LLMs accept an empty system message
   // and Mastra's own defaults will still drive behavior via other knobs.
   return parts.join('\n\n')
+}
+
+function formatLazySkillCatalog(
+  entries: readonly { name: string; description: string }[],
+): string {
+  const lines: string[] = [
+    '## Available skills (load on demand)',
+    '',
+    "Each entry below is a focused instruction pack you can fetch when the user's request matches. " +
+      'Call `read_skill` with the exact name to load the full body before acting on a task that matches its description.',
+    '',
+  ]
+  for (const e of entries) {
+    lines.push(`- \`${e.name}\`: ${e.description}`)
+  }
+  return lines.join('\n')
 }
 
 /**
@@ -960,10 +1034,21 @@ function buildDisconnect(
 function mergeToolDicts(
   inspector: Record<string, Tool<any, any, any, any>>,
   external: MountedExternalMcps | null,
+  readSkill: Tool<any, any, any, any> | null,
 ): Record<string, Tool<any, any, any, any>> | undefined {
   const inspectorKeys = Object.keys(inspector)
-  if (inspectorKeys.length === 0 && !external) return undefined
+  if (inspectorKeys.length === 0 && !external && !readSkill) return undefined
   const merged: Record<string, Tool<any, any, any, any>> = { ...inspector }
+  if (readSkill) {
+    if ('read_skill' in merged) {
+      throw new Error(
+        `[buildAgent] tool key collision on "read_skill" while merging the ` +
+          `built-in skill loader. Inspector wrappers do not register that ` +
+          `name; an upstream change must have introduced one.`,
+      )
+    }
+    merged['read_skill'] = readSkill
+  }
   if (external) {
     for (const [key, tool] of Object.entries(external.tools)) {
       if (key in merged) {
@@ -971,8 +1056,8 @@ function mergeToolDicts(
           `[buildAgent] tool key collision on "${key}" while merging external ` +
             `MCP tools with inspector wrappers. inspector tools use bare ` +
             `names; external MCPs use <slug>__<rawName>. A custom MCP whose ` +
-            `slug equals "find_in_codebase" / "list_repos" is the most ` +
-            `likely cause.`,
+            `slug equals "find_in_codebase" / "list_repos" / "read_skill" is ` +
+            `the most likely cause.`,
         )
       }
       merged[key] = tool

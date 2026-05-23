@@ -271,12 +271,30 @@ export async function estimateAgentTokens(
   const systemPromptText = (agentRow.systemPrompt ?? '').trim()
   const systemPromptTokens = tokenize(enc, systemPromptText)
 
-  const skills: TokenEstimateSkill[] = skillRows
+  // Mirror `splitSkills` in build-agent. Kept inline (not imported)
+  // by the same dependency-direction rule the rest of this file
+  // follows: estimator → schema, not estimator → build-agent. If you
+  // touch the lazy-classification rule here, also touch `splitSkills`.
+  const eagerSkillRows: typeof skillRows = []
+  const lazySkillRows: typeof skillRows = []
+  for (const s of skillRows) {
+    const hasDescription = s.description.trim().length > 0
+    const hasBody = s.markdownBody.trim().length > 0
+    const lazy = !s.alwaysInclude && hasDescription && hasBody
+    if (lazy) lazySkillRows.push(s)
+    else eagerSkillRows.push(s)
+  }
+  const eagerSkills: TokenEstimateSkill[] = eagerSkillRows
     .filter((s) => s.markdownBody.trim().length > 0)
     .map((s) => ({
       name: s.name,
       tokens: tokenize(enc, `## ${s.name}\n\n${s.markdownBody.trim()}`),
     }))
+  const lazySkillEntries: TokenEstimateSkill[] = lazySkillRows.map((s) => ({
+    name: s.name,
+    tokens: tokenize(enc, `- \`${s.name}\`: ${s.description.trim()}`),
+  }))
+  const skills: TokenEstimateSkill[] = [...eagerSkills, ...lazySkillEntries]
   const skillsTotal = skills.reduce((sum, s) => sum + s.tokens, 0)
 
   // Inspector toolkit's auto-appended system prompt

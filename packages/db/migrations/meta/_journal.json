@@ -99,6 +99,13 @@
       "when": 1779460581365,
       "tag": "0013_add_agents_mini_repo_token_cap",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1779526310257,
+      "tag": "0014_special_smiling_tiger",
+      "breakpoints": true
     }
   ]
 }

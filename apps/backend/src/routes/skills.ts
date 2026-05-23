@@ -37,7 +37,9 @@ function toSkillResponse(row: SkillRow): SkillResponse {
     id: row.id,
     agentId: row.agentId,
     name: row.name,
+    description: row.description,
     markdownBody: row.markdownBody,
+    alwaysInclude: row.alwaysInclude,
     position: row.position,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -161,7 +163,9 @@ export const skillsRouter = new Hono()
           .values({
             agentId,
             name: body.name,
+            description: body.description ?? '',
             markdownBody: body.markdownBody ?? '',
+            alwaysInclude: body.alwaysInclude ?? false,
             position: body.position ?? 0,
           })
           .returning()
@@ -242,7 +246,9 @@ export const skillsRouter = new Hono()
 
       const patch: Partial<typeof schema.skills.$inferInsert> = {}
       if ('name' in body) patch.name = body.name
+      if ('description' in body) patch.description = body.description
       if ('markdownBody' in body) patch.markdownBody = body.markdownBody
+      if ('alwaysInclude' in body) patch.alwaysInclude = body.alwaysInclude
       if ('position' in body) patch.position = body.position
 
       // Per-agent total cap on PATCH too. We exclude the

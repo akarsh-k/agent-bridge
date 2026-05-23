@@ -214,7 +214,23 @@ export const skills = pgTable(
       .notNull()
       .references(() => agents.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
+    /**
+     * Short summary the LLM sees in the system prompt's skill catalog,
+     * used to decide whether to fetch the full body via `read_skill`.
+     * Empty string when the operator hasn't filled it in yet; in that
+     * case `composeInstructions` treats the skill as eager (always
+     * included in full) regardless of `alwaysInclude`.
+     */
+    description: text('description').notNull().default(''),
     markdownBody: text('markdown_body').notNull().default(''),
+    /**
+     * When true, the full body is concatenated into the system prompt
+     * on every turn (current pre-lazy behaviour). When false, only the
+     * description appears in the catalog and the LLM must call
+     * `read_skill` to load the body. Existing rows are backfilled to
+     * `true` by the migration to preserve their pre-feature behaviour.
+     */
+    alwaysInclude: boolean('always_include').notNull().default(false),
     position: integer('position').notNull().default(0),
     createdAt: createdAt(),
     updatedAt: updatedAt(),

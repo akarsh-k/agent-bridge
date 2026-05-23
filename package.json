@@ -29,6 +29,7 @@
     "test:dispatcher-mapper": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-dispatcher-mapper.ts",
     "test:gitnexus-callers": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-gitnexus-callers.ts",
     "test:mini-repo-cap": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-mini-repo-cap.ts",
+    "test:skill-lazy": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-skill-lazy-loading.ts",
     "secret:generate": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\""
   },
   "keywords": [

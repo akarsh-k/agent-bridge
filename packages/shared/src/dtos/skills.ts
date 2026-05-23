@@ -40,6 +40,14 @@ export const SKILL_BODY_MAX_BYTES = 4 * 1024
 export const SKILL_BODY_MAX_LINES = 200
 export const PER_AGENT_SKILL_BUDGET_BYTES = 12 * 1024
 
+/**
+ * Short summary the LLM sees in the system prompt's skill catalog when
+ * a skill is set to lazy-load. 280 chars is enough for a useful "use
+ * this when…" pitch without bloating the catalog when an agent has
+ * many skills.
+ */
+export const SKILL_DESCRIPTION_MAX_BYTES = 280
+
 /** Loose, UI-friendly. Strict slug rules are overkill for display names. */
 const skillNameSchema = z
   .string()
@@ -61,6 +69,16 @@ const markdownBodySchema = z
     `markdownBody exceeds ${SKILL_BODY_MAX_LINES}-line limit (per-skill cap)`,
   )
 
+const descriptionSchema = z
+  .string()
+  .max(
+    SKILL_DESCRIPTION_MAX_BYTES,
+    `description exceeds ${SKILL_DESCRIPTION_MAX_BYTES}-byte limit`,
+  )
+  .refine((v) => !/[\r\n]/.test(v), {
+    message: 'description must be a single line',
+  })
+
 const positionSchema = z.number().int().nonnegative().max(1_000_000)
 
 // ─── Create ──────────────────────────────────────────────────────────────
@@ -68,7 +86,9 @@ const positionSchema = z.number().int().nonnegative().max(1_000_000)
 export const skillCreateInputSchema = z
   .object({
     name: skillNameSchema,
+    description: descriptionSchema.optional(),
     markdownBody: markdownBodySchema.optional(),
+    alwaysInclude: z.boolean().optional(),
     position: positionSchema.optional(),
   })
   .strict()
@@ -80,7 +100,9 @@ export type SkillCreateInput = z.infer<typeof skillCreateInputSchema>
 export const skillUpdateInputSchema = z
   .object({
     name: skillNameSchema.optional(),
+    description: descriptionSchema.optional(),
     markdownBody: markdownBodySchema.optional(),
+    alwaysInclude: z.boolean().optional(),
     position: positionSchema.optional(),
   })
   .strict()
@@ -96,7 +118,9 @@ export const skillResponseSchema = z.object({
   id: z.uuid(),
   agentId: z.uuid(),
   name: z.string(),
+  description: z.string(),
   markdownBody: z.string(),
+  alwaysInclude: z.boolean(),
   position: z.number().int(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),

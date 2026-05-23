@@ -7,13 +7,18 @@
  * `@mastra/*` imports are allowed in this directory only.
  */
 
-export { buildAgent } from './build-agent.js'
+export { buildAgent, composeInstructions, splitSkills } from './build-agent.js'
 export type {
   BuildAgentInput,
   BuiltAgent,
   BuiltAgentMeta,
   MemoryMountMeta,
 } from './build-agent.js'
+// Exported for smoke tests (`tests/smoke-skill-lazy-loading.ts`) that
+// drive the lazy-skill catalog + `read_skill` tool through pure-function
+// inputs without spinning up a real Mastra Agent. Production callers
+// reach this code via `buildAgent` only.
+export { buildReadSkillTool } from './skills-tool.js'
 export {
   emptyInspectorMountMeta,
   mountInspectorTools,

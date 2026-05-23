@@ -35,7 +35,11 @@ function SkillForm({
   )
 
   const [name, setName] = useState(initial?.name ?? '')
+  const [description, setDescription] = useState(initial?.description ?? '')
   const [body, setBody] = useState(initial?.markdownBody ?? '')
+  const [alwaysInclude, setAlwaysInclude] = useState(
+    initial?.alwaysInclude ?? false,
+  )
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [view, setView] = useState<'edit' | 'preview'>('edit')
@@ -43,16 +47,34 @@ function SkillForm({
   const isEdit = skillId !== null
 
   const baselineName = initial?.name ?? ''
+  const baselineDescription = initial?.description ?? ''
   const baselineBody = initial?.markdownBody ?? ''
-  const dirty = name !== baselineName || body !== baselineBody
+  const baselineAlwaysInclude = initial?.alwaysInclude ?? false
+  const dirty =
+    name !== baselineName ||
+    description !== baselineDescription ||
+    body !== baselineBody ||
+    alwaysInclude !== baselineAlwaysInclude
   const guardedClose = useDirtyClose(dirty && !busy, onClose)
+
+  // A skill goes lazy only when the operator opts in AND has authored
+  // a description. Without a description the LLM has no signal to
+  // decide whether to load the body, so the runtime falls back to
+  // eager. This banner makes the resulting behaviour explicit on the
+  // form so the operator isn't surprised.
+  const willBeLazy =
+    !alwaysInclude && description.trim().length > 0
+  const missingDescriptionForLazy =
+    !alwaysInclude && description.trim().length === 0
 
   const submit = async () => {
     setErr(null)
     if (isEdit) {
       const parsed = skillUpdateInputSchema.safeParse({
         name: name.trim(),
+        description: description.trim(),
         markdownBody: body.trim() || undefined,
+        alwaysInclude,
       })
       if (!parsed.success) {
         setErr(parsed.error.issues[0]?.message ?? 'Invalid skill')
@@ -77,7 +99,9 @@ function SkillForm({
     } else {
       const parsed = skillCreateInputSchema.safeParse({
         name: name.trim(),
+        description: description.trim() || undefined,
         markdownBody: body.trim() || undefined,
+        alwaysInclude,
       })
       if (!parsed.success) {
         setErr(parsed.error.issues[0]?.message ?? 'Invalid skill')
@@ -110,7 +134,7 @@ function SkillForm({
       subtitle={
         isEdit
           ? 'Tweak the prompt fragment used by this agent.'
-          : "A skill is a focused instruction pack — a system-prompt fragment loaded alongside this agent's own prompt."
+          : "A skill is a focused instruction pack. By default the agent loads it on demand when its description matches the user's request. Check the box below for style or persona rules that should apply on every turn."
       }
       primaryLabel={isEdit ? 'Save changes' : 'Add skill'}
       onPrimary={submit}
@@ -129,6 +153,45 @@ function SkillForm({
           placeholder="e.g. PR reviewer, migration writer"
           autoFocus
         />
+      </div>
+      <div className="ab-field">
+        <label className="ab-field-label" htmlFor="sk-description">
+          One-line description
+        </label>
+        <input
+          id="sk-description"
+          className="ab-input"
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Use when reviewing a pull request. Returns checklist + tone guide."
+          maxLength={280}
+        />
+        <span className="ab-field-help">
+          Frame it as a trigger condition so the agent has something to
+          match against. "Use when X" tends to work well. Skills with no
+          clear trigger (overall tone, persona, formatting rules) should
+          skip this and check the box below instead.
+        </span>
+      </div>
+      <div className="ab-field">
+        <label
+          className="ab-field-label"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+        >
+          <input
+            type="checkbox"
+            checked={alwaysInclude}
+            onChange={(e) => setAlwaysInclude(e.target.checked)}
+          />
+          Always include the full body in every turn
+        </label>
+        <span className="ab-field-help">
+          {willBeLazy
+            ? 'Loaded on demand: the agent will fetch this skill only when its description matches the request.'
+            : missingDescriptionForLazy
+              ? 'No description set, so the agent has nothing to match against. The full body will ride into every turn until you add one.'
+              : 'Full body ships in every system prompt. Use for short, always-relevant skills.'}
+        </span>
       </div>
       <div className="ab-field">
         <div
