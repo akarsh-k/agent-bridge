@@ -871,14 +871,30 @@ export function useChat(input: UseChatInput): UseChatResult {
   // big ones) without polling forever. If the title already landed
   // on the first refresh, the follow-ups are cheap no-ops.
   const lastRunIdRef = useRef<string | null>(null)
+  // Captured alongside `lastRunIdRef` so we know which thread the
+  // run was associated with when it terminated. switchThread /
+  // newThread / URL-driven navigation can clear `activeRunId` as a
+  // side effect of moving away — without this we'd run the
+  // "mark just-streamed thread as loaded" optimization against the
+  // DESTINATION thread, gating its load-messages effect into a
+  // no-op and leaving the user staring at an empty bubble area.
+  const lastRunThreadRef = useRef<string | null>(null)
   useEffect(() => {
     if (activeRunId) {
       lastRunIdRef.current = activeRunId
+      lastRunThreadRef.current = threadId
       return
     }
     if (!lastRunIdRef.current) return
+    const completedOnThread = lastRunThreadRef.current
     lastRunIdRef.current = null
-    setMessagesLoadedFor(threadId)
+    lastRunThreadRef.current = null
+    // The "already-loaded" tag only applies if we're still on the
+    // thread the run finished on. After a thread switch the
+    // destination needs an honest load-messages probe.
+    if (completedOnThread && completedOnThread === threadId) {
+      setMessagesLoadedFor(threadId)
+    }
     void refreshThreads()
     const t1 = window.setTimeout(() => void refreshThreads(), 2500)
     const t2 = window.setTimeout(() => void refreshThreads(), 6000)
@@ -889,8 +905,15 @@ export function useChat(input: UseChatInput): UseChatResult {
   }, [activeRunId, refreshThreads, threadId])
 
   const newThread = useCallback(() => {
-    if (activeRunId || sending) return
+    // Same policy as switchThread: only block during the brief send
+    // POST. A streaming run on the prior thread keeps going server-
+    // side; the load-messages effect re-attaches the SSE stream when
+    // the user navigates back to it.
+    if (sending) return
     if (!agentId) return
+    // Detach from the prior thread's SSE stream before minting the
+    // new id so the new thread's state starts clean.
+    setActiveRunId(null)
     // Mint the id locally so downstream state stays simple, but DO NOT
     // push the URL yet: an unused thread is not a real shareable
     // location. `send()` flips `pendingNewThread` off and writes the
@@ -910,13 +933,23 @@ export function useChat(input: UseChatInput): UseChatResult {
     if (window.location.pathname !== `/agents/${agentId}/chat`) {
       navigate(`/agents/${agentId}/chat`)
     }
-  }, [activeRunId, sending, agentId])
+  }, [sending, agentId])
 
   const switchThread = useCallback(
     async (next: string): Promise<void> => {
-      if (activeRunId || sending) return
+      // `sending` is the brief window during the send POST — blocking
+      // that prevents a half-applied optimistic UI. `activeRunId` is
+      // NOT blocked: the streaming run continues server-side and the
+      // load-messages effect re-attaches the SSE stream automatically
+      // when the user navigates back.
+      if (sending) return
       if (next === threadId) return
       if (!agentId) return
+      // Detach from the SSE stream of the thread we're leaving so the
+      // new thread's load-messages effect can probe / re-attach
+      // cleanly. The run keeps running server-side; coming back to
+      // this thread will re-pick-up the stream.
+      setActiveRunId(null)
       setThreadId(next)
       setUrlSyncedFor(next)
       // Switching to an existing conversation cancels any pending
@@ -929,7 +962,7 @@ export function useChat(input: UseChatInput): UseChatResult {
       // The load-messages effect will fire when threadId changes.
       navigate(`/agents/${agentId}/chat/${next}`)
     },
-    [activeRunId, sending, threadId, agentId],
+    [sending, threadId, agentId],
   )
 
   const deleteThread = useCallback(

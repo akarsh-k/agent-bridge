@@ -394,7 +394,7 @@ export function ChatTab({
         onSwitch={(id) => void chat.switchThread(id)}
         onDelete={(id) => void chat.deleteThread(id)}
         error={chat.threadsError}
-        disabled={chat.activeRunId !== null || chat.sending}
+        disabled={chat.sending}
       />
       <div className="ab-chat-main">
         {agent && !agent.memoryEnabled && (
@@ -522,9 +522,7 @@ export function ChatTab({
                 aria-label="New conversation"
                 title="New conversation"
                 onClick={() => chat.newThread()}
-                disabled={
-                  chat.activeRunId !== null || chat.messages.length === 0
-                }
+                disabled={chat.messages.length === 0}
               >
                 <RefreshIcon />
               </button>
