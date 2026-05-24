@@ -120,6 +120,13 @@
       "when": 1779557314651,
       "tag": "0016_careless_inhumans",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1779630189150,
+      "tag": "0017_outgoing_sentry",
+      "breakpoints": true
     }
   ]
 }

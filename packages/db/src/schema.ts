@@ -148,7 +148,7 @@ export const agents = pgTable(
     llmProviderId: uuid('llm_provider_id').references(() => llmProviders.id, {
       onDelete: 'set null',
     }),
-    memoryEnabled: boolean('memory_enabled').notNull().default(false),
+    memoryEnabled: boolean('memory_enabled').notNull().default(true),
     memoryConfig: jsonb('memory_config').$type<AgentMemoryConfig>(),
     /**
      * Opt-in to the auto-mounted Inspector toolkit (`docs/ARCHITECTURE.md`

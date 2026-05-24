@@ -1,0 +1,1 @@
+ALTER TABLE "agents" ALTER COLUMN "memory_enabled" SET DEFAULT true;

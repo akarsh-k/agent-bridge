@@ -342,7 +342,10 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
         description: description.trim() || null,
         systemPrompt,
         llmProviderId: providerId ?? null,
-        memoryEnabled: false,
+        // Default to on (backend default); operators can flip it off in
+        // the Memory tab. Off-by-default broke chat history silently for
+        // first-time users.
+        memoryEnabled: true,
         inspectorEnabled: chosen.inspectorEnabled,
       })
       toast.success(`Created ${created.name}`)

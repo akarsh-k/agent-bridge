@@ -1005,7 +1005,7 @@ export function useChat(input: UseChatInput): UseChatResult {
             lastTokenIndex: -1,
           })
         }
-        setMessagesFor(threadId, mapped)
+        setMessagesFor(threadId, (prev) => reconcileLoaded(prev, mapped))
         setMessagesLoadedFor(threadId)
         if (active) {
           // Putting an entry in `activeRunByThread` triggers the
@@ -1097,19 +1097,36 @@ export function useChat(input: UseChatInput): UseChatResult {
     const t1 = window.setTimeout(() => void refreshThreads(), 3000)
     const t2 = window.setTimeout(() => void refreshThreads(), 10000)
     const t3 = window.setTimeout(() => void refreshThreads(), 25000)
-    // If the focused thread's run is what terminated, hint to the
-    // load-messages effect that this thread is already loaded so it
-    // doesn't immediately refetch the canonical text from Mastra and
-    // clobber whatever the SSE just finished streaming in. Off-screen
-    // terminations leave `messagesLoadedFor` alone — next navigation
-    // there will refetch normally.
+    // When the focused thread's run terminates, INVALIDATE
+    // `messagesLoadedFor` so load-messages refetches the canonical
+    // text from Mastra. Protects against SSE-missed-events: if the
+    // local SSE handler dropped token events (Redis race on subscribe,
+    // network blip), the in-memory bubble would otherwise lock in a
+    // truncated version forever.
+    //
+    // Delayed by 250ms so Mastra has a window to commit the assistant
+    // message before we refetch. Mastra persistence is normally
+    // synchronous-before-publish, but under load / large memory stores
+    // the publish can land ahead of the commit; without the delay the
+    // refetch can return a list that doesn't yet contain the new
+    // assistant, briefly blanking the bubble. `reconcileLoaded`
+    // (load-messages) also guards against this by preferring `prev`
+    // when mapped is shorter, but the delay turns the rare "Mastra
+    // slow" case into a no-op instead of a brief flicker.
+    let invalidateTimer: ReturnType<typeof setTimeout> | undefined
     if (removed.includes(focused)) {
-      setMessagesLoadedFor(focused)
+      invalidateTimer = window.setTimeout(
+        () => setMessagesLoadedFor(null),
+        250,
+      )
     }
     return () => {
       window.clearTimeout(t1)
       window.clearTimeout(t2)
       window.clearTimeout(t3)
+      if (invalidateTimer !== undefined) {
+        window.clearTimeout(invalidateTimer)
+      }
     }
   }, [activeRunByThread, refreshThreads])
 
@@ -1298,6 +1315,48 @@ function lastAssistantIndex(messages: ChatMessage[], runId: string): number {
   }
   return -1
 }
+
+/**
+ * Reconcile a freshly-loaded mapped list (canonical, from Mastra)
+ * with whatever is currently in memory. Two jobs:
+ *
+ *   1. Preserve message ids when the role / position align so React
+ *      doesn't re-key the bubble and trigger a remount flicker. The
+ *      streamed placeholder uses `crypto.randomUUID()`; Mastra has its
+ *      own ids — without this step the swap would unmount/remount
+ *      every bubble on every refetch.
+ *   2. Keep an in-memory message that Mastra hasn't persisted yet.
+ *      Mastra persistence is normally synchronous-before-publish, but
+ *      under load or with large memory stores the publish can land
+ *      first. If `prev` has more messages than `mapped`, keep `prev`
+ *      verbatim — the next refetch (title-catch-up timeout or
+ *      subsequent navigation) will pick up Mastra's version once it
+ *      catches up.
+ */
+function reconcileLoaded(
+  prev: ChatMessage[],
+  mapped: ChatMessage[],
+): ChatMessage[] {
+  if (mapped.length < prev.length) return prev
+  if (mapped.length === 0) return mapped
+  // Same length — try to preserve ids position-by-position when role
+  // matches. Conservative: if any role mismatches, fall back to
+  // mapped verbatim (cheaper than over-complicating the diff).
+  if (mapped.length === prev.length) {
+    let allRolesMatch = true
+    for (let i = 0; i < mapped.length; i++) {
+      if (mapped[i]!.role !== prev[i]!.role) {
+        allRolesMatch = false
+        break
+      }
+    }
+    if (allRolesMatch) {
+      return mapped.map((m, i) => ({ ...m, id: prev[i]!.id }))
+    }
+  }
+  return mapped
+}
+
 
 function applyEvent(msg: ChatMessage, event: RunEvent): ChatMessage {
   switch (event.kind) {
