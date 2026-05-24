@@ -77,6 +77,27 @@ function resolveBaseUrl(): string {
  */
 export const apiBaseUrl: string = resolveBaseUrl()
 
+/**
+ * Build an API URL, attaching any defined query params. Use this
+ * instead of `new URL(...)` for endpoint construction — in same-origin
+ * production builds `apiBaseUrl` is `''` and `new URL('/api/...')`
+ * throws "Invalid URL" without an absolute base. The returned string
+ * works with `fetch()` (which accepts relative URLs).
+ */
+function apiUrl(
+  path: string,
+  params?: Readonly<Record<string, string | number | undefined>>,
+): string {
+  const sp = new URLSearchParams()
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== '') sp.set(k, String(v))
+    }
+  }
+  const qs = sp.toString()
+  return `${apiBaseUrl}${path}${qs ? `?${qs}` : ''}`
+}
+
 export const rpc = hc<AppType>(apiBaseUrl)
 
 /**
@@ -278,13 +299,12 @@ export async function getRepoGraph(
    *  Process / Community id whose member subgraph to extract. */
   selection?: string,
 ): Promise<RepoGraph> {
-  const url = new URL(
-    `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/graph`,
+  const url = apiUrl(
+    `/api/repos/${encodeURIComponent(repoId)}/graph`,
+    { mode, selection },
   )
-  if (mode) url.searchParams.set('mode', mode)
-  if (selection) url.searchParams.set('selection', selection)
   const res = await callApi<{ ok: true; graph: RepoGraph }>(
-    fetch(url.toString(), { method: 'GET' }),
+    fetch(url, { method: 'GET' }),
   )
   return res.graph
 }
@@ -318,14 +338,13 @@ export async function getRepoFileSlice(
   startLine: number | null,
   endLine: number | null,
 ): Promise<RepoFileSliceResponse> {
-  const url = new URL(
-    `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/file`,
-  )
-  url.searchParams.set('path', path)
-  if (startLine != null) url.searchParams.set('startLine', String(startLine))
-  if (endLine != null) url.searchParams.set('endLine', String(endLine))
+  const url = apiUrl(`/api/repos/${encodeURIComponent(repoId)}/file`, {
+    path,
+    startLine: startLine ?? undefined,
+    endLine: endLine ?? undefined,
+  })
   const res = await callApi<{ ok: true; file: RepoFileSliceResponse }>(
-    fetch(url.toString(), { method: 'GET' }),
+    fetch(url, { method: 'GET' }),
   )
   return res.file
 }
@@ -355,14 +374,14 @@ export async function getRepoGraphNeighbors(
   repoId: string,
   nodeId: string,
 ): Promise<RepoGraphNeighborsResponse> {
-  const url = new URL(
-    `${apiBaseUrl}/api/repos/${encodeURIComponent(repoId)}/graph/neighbors`,
+  const url = apiUrl(
+    `/api/repos/${encodeURIComponent(repoId)}/graph/neighbors`,
+    { nodeId },
   )
-  url.searchParams.set('nodeId', nodeId)
   const res = await callApi<{
     ok: true
     neighbors: RepoGraphNeighborsResponse
-  }>(fetch(url.toString(), { method: 'GET' }))
+  }>(fetch(url, { method: 'GET' }))
   return res.neighbors
 }
 
@@ -517,14 +536,11 @@ export async function fetchWorkerJob(
    *  `repo.embed.batch` row from a sqlalchemy-scale index. */
   eventsLimit?: number,
 ): Promise<import('@agent-bridge/shared').WorkerJobDetailResponse> {
-  const url = new URL(
-    `${apiBaseUrl}/api/worker-jobs/${encodeURIComponent(id)}`,
-  )
-  if (eventsLimit != null) {
-    url.searchParams.set('eventsLimit', String(eventsLimit))
-  }
+  const url = apiUrl(`/api/worker-jobs/${encodeURIComponent(id)}`, {
+    eventsLimit: eventsLimit ?? undefined,
+  })
   return callApi<import('@agent-bridge/shared').WorkerJobDetailResponse>(
-    fetch(url.toString()),
+    fetch(url),
   )
 }
 
