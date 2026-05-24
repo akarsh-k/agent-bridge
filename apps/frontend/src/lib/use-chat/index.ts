@@ -7,9 +7,13 @@
  *     /api/agents/:id/runs. Regenerating the thread (via `resetThread`)
  *     starts a new conversation; memory-enabled agents will stop seeing
  *     previous turns in their context.
- *   - The SSE subscription for the currently-streaming run. At most one
- *     run is active at a time — the composer is disabled until the run
- *     reaches a terminal state (`run.finished` or `run.error`).
+ *   - A per-thread map of SSE subscriptions. Multiple runs can stream
+ *     concurrently across different threads (one run per thread, but
+ *     many threads in parallel). The composer for a thread stays
+ *     disabled until THAT thread's run reaches a terminal state
+ *     (`run.finished` or `run.error`). Switching to another thread is
+ *     always allowed — the off-screen run keeps streaming into its
+ *     own slot of `messagesByThread`.
  *
  * Does NOT own:
  *   - Rendering (that's `<ChatPanel />` and friends).
@@ -19,20 +23,22 @@
  *     `runs.mastra_thread_id` columns exist.
  *
  * SSE plumbing notes:
- *   - We reuse the shared `useSSE` hook: setting `activeRunId` causes
- *     it to subscribe to `run:<runId>`. That stream only carries events
- *     for this run, so we don't need to filter by `runId` inside the
- *     reducer — the stream id itself is the filter.
- *   - Terminal events (`run.finished`, `run.error`) are NOT awaited on
- *     the HTTP side; they arrive via SSE only. The reducer flips the
- *     assistant message to its final state and clears `activeRunId` so
- *     the user can send the next turn.
+ *   - One EventSource per entry in `activeRunByThread`. The manager
+ *     reconciles the open-subscriptions Map against that state each
+ *     time it changes — adds new EventSources, closes ones whose
+ *     thread+run no longer has an entry. Each handler captures its
+ *     `threadId` + `runId` in closure so events route into the right
+ *     thread's slot of `messagesByThread`, regardless of which thread
+ *     is focused. See `docs/multi-thread-streaming.md` for the why.
+ *   - Terminal events (`run.finished`, `run.error`) come via SSE only
+ *     (not via the POST response). The reducer flips the assistant
+ *     message to its final state; a microtask then removes the entry
+ *     from `activeRunByThread`, which closes the EventSource on the
+ *     next reconcile pass.
  *   - Token dedupe is a high-water mark: on `run.token` append if
  *     `index > lastIndex`; on `run.token.batch` fill in the tail if the
- *     batch covers indices past `lastIndex`. In the common case (we
- *     subscribed before the run started) we see every `run.token`
- *     individually and ignore every batch — the batch path only ever
- *     kicks in on a reconnect, which isn't wired in this phase.
+ *     batch covers indices past `lastIndex`. The batch path matters
+ *     when the EventSource subscribes mid-run.
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -49,7 +55,12 @@ import type {
   RunToolCalledPayload,
   RunToolResultPayload,
 } from '@agent-bridge/shared'
-import { runStreamId, stripPromptEnrichments } from '@agent-bridge/shared'
+import {
+  runEventKinds,
+  runEventSchema,
+  runStreamId,
+  stripPromptEnrichments,
+} from '@agent-bridge/shared'
 import {
   ApiError,
   apiBaseUrl,
@@ -59,7 +70,6 @@ import {
   getAgentThreadMessages as rpcGetAgentThreadMessages,
   listAgentThreads as rpcListAgentThreads,
 } from '../rpc'
-import { useSSE } from '../use-sse'
 import { navigate } from '../router'
 
 // ─── Public types ────────────────────────────────────────────────────────
@@ -170,6 +180,15 @@ export interface UseChatResult {
   readonly sseConnected: boolean
   /** All past threads for the agent — newest-first. */
   readonly threads: readonly ChatThreadMeta[]
+  /** Thread ids that currently have a streaming run. Multi-SSE keeps
+   *  off-screen runs subscribed, so this set persists across
+   *  navigation — `ThreadRail` uses it (together with `unreadThreadIds`)
+   *  to decide whether the per-row dot should pulse or stay static. */
+  readonly streamingThreadIds: ReadonlySet<string>
+  /** Thread ids that have unviewed activity — a run started or
+   *  completed on the thread while the user was elsewhere. Cleared
+   *  on visit. In-memory only; resets on page reload. */
+  readonly unreadThreadIds: ReadonlySet<string>
   /** True while fetching messages on a thread switch. */
   readonly loadingMessages: boolean
   /** True while a thread fetch failed (so the UI can show a retry). */
@@ -221,6 +240,12 @@ function derivePlaceholderTitle(message: string): string {
   return trimmed.length > 60 ? trimmed.slice(0, 57) + '…' : trimmed
 }
 
+// Stable empty array — returned from the per-thread accessor when a
+// thread has no entry in `messagesByThread`. A literal `[]` would
+// be a fresh reference every render and pop dep-array equality for
+// downstream effects / memos.
+const EMPTY_MESSAGES: ChatMessage[] = []
+
 // ─── Hook ────────────────────────────────────────────────────────────────
 
 export function useChat(input: UseChatInput): UseChatResult {
@@ -247,8 +272,33 @@ export function useChat(input: UseChatInput): UseChatResult {
   const [urlSyncedFor, setUrlSyncedFor] = useState<string | undefined>(
     urlThreadId,
   )
-  const [messages, setMessages] = useState<ChatMessage[]>([])
-  const [activeRunId, setActiveRunId] = useState<string | null>(null)
+  // Per-thread state shape so off-screen threads' streaming bubbles
+  // keep accumulating tokens when the operator navigates away. See
+  // `docs/multi-thread-streaming.md` for the why; in short, a single
+  // `messages` array was wiped on every thread switch and the
+  // streaming SSE was detached, so coming back to a still-streaming
+  // run meant losing whatever the model had emitted in the gap.
+  //
+  // Consumer-facing `messages` / `activeRunId` are derived for the
+  // focused thread further down — ChatTab's API doesn't change.
+  const [messagesByThread, setMessagesByThread] = useState<
+    Record<string, ChatMessage[]>
+  >({})
+  const [activeRunByThread, setActiveRunByThread] = useState<
+    Record<string, string>
+  >({})
+  // Per-thread "unread" marker — set when a run starts on a thread
+  // the user isn't focused on (i.e., they didn't see it start), and
+  // cleared when they visit that thread. In-memory only; resets on
+  // page reload. Drives the blue dot on sidebar rows.
+  const [unreadThreadIds, setUnreadThreadIds] = useState<ReadonlySet<string>>(
+    new Set(),
+  )
+  // Diff snapshot used by the watchdog effect (declared near the
+  // bottom of the hook) to detect runs starting / terminating
+  // between renders. Hoisted up here so the render-body agent-reset
+  // path can clear it without referencing a not-yet-declared ref.
+  const prevActiveRunsRef = useRef<Record<string, string>>({})
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
   // `pendingNewThread` is true between clicking "New conversation"
@@ -280,6 +330,49 @@ export function useChat(input: UseChatInput): UseChatResult {
     null,
   )
 
+  // ── Per-thread state accessors ──────────────────────────────────
+  // These mirror the old single-state API but are scoped to a
+  // particular threadId. Callers either pass an explicit `tid` (used
+  // when the SSE handler captures the streaming run's thread in its
+  // closure) or rely on the focused-thread derivations below.
+  const messages = messagesByThread[threadId] ?? EMPTY_MESSAGES
+  const activeRunId = activeRunByThread[threadId] ?? null
+
+  const setMessagesFor = useCallback(
+    (
+      tid: string,
+      updater: ChatMessage[] | ((prev: ChatMessage[]) => ChatMessage[]),
+    ) => {
+      setMessagesByThread((prev) => {
+        const cur = prev[tid] ?? EMPTY_MESSAGES
+        const next =
+          typeof updater === 'function'
+            ? (updater as (p: ChatMessage[]) => ChatMessage[])(cur)
+            : updater
+        if (next === cur) return prev
+        return { ...prev, [tid]: next }
+      })
+    },
+    [],
+  )
+
+  const setActiveRunFor = useCallback(
+    (tid: string, runId: string | null) => {
+      setActiveRunByThread((prev) => {
+        const cur = prev[tid] ?? null
+        if (cur === runId) return prev
+        if (runId === null) {
+          if (!(tid in prev)) return prev
+          const next = { ...prev }
+          delete next[tid]
+          return next
+        }
+        return { ...prev, [tid]: runId }
+      })
+    },
+    [],
+  )
+
   // Sync state to the current agent using the canonical
   // setState-in-render "reset-on-prop-change" pattern: avoids the
   // single-frame flash you get if you reset inside an effect.
@@ -287,8 +380,17 @@ export function useChat(input: UseChatInput): UseChatResult {
     setAgentKey(agentId)
     setThreadId(urlThreadId ?? loadActiveThreadId(agentId) ?? crypto.randomUUID())
     setUrlSyncedFor(urlThreadId)
-    setMessages([])
-    setActiveRunId(null)
+    // Per-agent state — when the focused agent changes, drop ALL
+    // per-thread streaming + message caches. (Agent change implies
+    // the old runs are unreachable anyway.)
+    setMessagesByThread({})
+    setActiveRunByThread({})
+    setUnreadThreadIds(new Set())
+    // Reset the watchdog's diff snapshot too — otherwise it sees the
+    // old agent's entries as "removals" on first render after switch
+    // and fires a spurious refreshThreads + three title-catch-up
+    // timeouts for the new agent.
+    prevActiveRunsRef.current = {}
     setSending(false)
     setSendError(null)
     setThreads([])
@@ -302,17 +404,17 @@ export function useChat(input: UseChatInput): UseChatResult {
     // `:threadId` segment without unmounting us. The same setState-in-
     // render pattern keeps us aligned. We don't push the URL again
     // here — the URL already IS the new value.
+    //
+    // Note: we deliberately DO NOT clear messagesByThread or
+    // activeRunByThread for the prior thread. Off-screen threads keep
+    // their state so streaming bubbles stay continuous when the
+    // operator navigates back. The SSE manager keeps its EventSource
+    // open for any thread that still has an entry in
+    // `activeRunByThread`.
     setUrlSyncedFor(urlThreadId)
     if (urlThreadId && urlThreadId !== threadId) {
       setThreadId(urlThreadId)
-      // Same hygiene as switchThread: drop the streaming state for the
-      // previous thread so SSE re-subscribes against the new one.
-      setMessages([])
-      setActiveRunId(null)
       setSendError(null)
-      // Force the load-messages effect to re-run for the new thread
-      // (it gates on `messagesLoadedFor === threadId`).
-      setMessagesLoadedFor(null)
     }
   }
 
@@ -359,76 +461,146 @@ export function useChat(input: UseChatInput): UseChatResult {
     navigate(expected, { replace: true })
   }, [agentId, urlThreadId, threadId, pendingNewThread])
 
-  const streamId = activeRunId ? runStreamId(activeRunId) : null
-  const { connected, events, seqOffset } = useSSE(streamId, { cap: 4000 })
-
-  // Track which events we've already folded into message state via
-  // SEQUENCE (not array index). `lastSeqRef` is the highest event seq
-  // we've processed; the next render finds unprocessed events by
-  // sequence math against `seqOffset` from useSSE. Index-based tracking
-  // (the prior implementation) silently dropped events whenever the
-  // SSE buffer trimmed: the ref was pinned to a stale length and the
-  // shifted-down array contents read as already-processed. The seq
-  // pointer survives buffer trims because `seqOffset` advances in
-  // lock-step with the eviction.
+  // ── Multi-stream SSE manager ────────────────────────────────────
+  // One EventSource per (threadId, runId) entry in
+  // `activeRunByThread`. Each subscription's handler captures its
+  // own tid + rid in closure so events route to the right thread's
+  // messages, regardless of which thread is currently focused. This
+  // is what lets streaming bubbles on off-screen threads keep
+  // accumulating tokens.
   //
-  // Initial value -1 means "nothing processed yet" — the first frame
-  // is seq 0, and `events[i].seq === seqOffset + i >= 0 > -1`, so it
-  // gets picked up on first render.
-  const lastSeqRef = useRef(-1)
-
-  // Reset the processed pointer whenever the active run id changes —
-  // the SSE hook resets its buffer (and its seqOffset) on streamId
-  // change, so our tracking pointer also restarts.
+  // Connection state (just the focused thread's) is exposed as
+  // `sseConnected` for parity with the prior API.
+  type SubEntry = {
+    source: EventSource
+    threadId: string
+    runId: string
+    connected: boolean
+  }
+  const subsRef = useRef<Map<string, SubEntry>>(new Map())
+  const [focusedConnected, setFocusedConnected] = useState(false)
+  // Mirror of `threadId` readable from inside long-lived SSE handler
+  // closures. The handlers compare their captured `tid` against this
+  // to decide whether to update `focusedConnected`, so a thread
+  // switch doesn't leave them stuck on the old focused thread.
+  const focusedThreadRef = useRef(threadId)
   useEffect(() => {
-    lastSeqRef.current = -1
-  }, [activeRunId])
+    focusedThreadRef.current = threadId
+  }, [threadId])
 
+  // Clear the unread mark when the user focuses a thread. Set-based
+  // membership check first to skip the setState (and re-render) for
+  // the common "switch to a thread that wasn't unread" case.
   useEffect(() => {
-    if (!activeRunId) return
-    // Find the first event index that's past our last-processed seq.
-    // For events[i], seq = seqOffset + i, so unprocessed events live at
-    // i >= lastSeq - seqOffset + 1. Clamp to 0 for the cold-start /
-    // post-eviction case where lastSeq is below the current seqOffset
-    // (we accept the eviction loss — that's the only sane signal we
-    // can give for "you fell too far behind").
-    const startIdx = Math.max(0, lastSeqRef.current - seqOffset + 1)
-    if (startIdx >= events.length) return
-    const slice = events.slice(startIdx)
-    // Update the tracking pointer BEFORE the reducer runs so any
-    // re-entrancy from the reducer doesn't double-process.
-    lastSeqRef.current = seqOffset + events.length - 1
-
-    setMessages((prev) => {
-      let next = prev
-      for (const ev of slice) {
-        next = reduceEvent(next, ev, activeRunId)
-      }
-      return next === prev ? prev : next
+    setUnreadThreadIds((prev) => {
+      if (!prev.has(threadId)) return prev
+      const next = new Set(prev)
+      next.delete(threadId)
+      return next
     })
+  }, [threadId])
 
-    // Inspect the slice for terminal events AFTER the state update so
-    // the UI gets to render the final payload before the input unlocks.
-    for (const ev of slice) {
-      if (ev.kind === 'run.finished' || ev.kind === 'run.error') {
-        // Give React one tick to flush the reducer, then release.
-        // Using a microtask keeps this in the same event loop turn
-        // for snappy UX but after the current render commits.
-        queueMicrotask(() => setActiveRunId(null))
+  useEffect(() => {
+    const subs = subsRef.current
+    const desired = new Map<string, { threadId: string; runId: string }>()
+    for (const [tid, rid] of Object.entries(activeRunByThread)) {
+      desired.set(`${tid}::${rid}`, { threadId: tid, runId: rid })
+    }
+
+    // Open any new subscriptions.
+    for (const [key, { threadId: tid, runId: rid }] of desired) {
+      if (subs.has(key)) continue
+      const url = `${apiBaseUrl}/api/events/${encodeURIComponent(runStreamId(rid))}`
+      const source = new EventSource(url)
+      const entry: SubEntry = {
+        source,
+        threadId: tid,
+        runId: rid,
+        connected: false,
+      }
+      subs.set(key, entry)
+
+      const dispatch = (raw: string) => {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(raw)
+        } catch {
+          return
+        }
+        const result = runEventSchema.safeParse(parsed)
+        if (!result.success) return
+        const event = result.data
+        setMessagesFor(tid, (prev) => reduceEvent(prev, event, rid))
+        if (event.kind === 'run.finished' || event.kind === 'run.error') {
+          // Microtask so the reducer commit lands before the gate
+          // unlocks on the focused thread (matches old behavior).
+          queueMicrotask(() => setActiveRunFor(tid, null))
+        }
+      }
+      source.onopen = () => {
+        entry.connected = true
+        if (tid === focusedThreadRef.current) setFocusedConnected(true)
+      }
+      source.onerror = () => {
+        entry.connected = false
+        if (tid === focusedThreadRef.current) setFocusedConnected(false)
+      }
+      for (const kind of runEventKinds) {
+        source.addEventListener(kind, (ev: MessageEvent) =>
+          dispatch(ev.data as string),
+        )
+      }
+      source.addEventListener('message', (ev: MessageEvent) =>
+        dispatch(ev.data as string),
+      )
+    }
+
+    // Close any subscriptions that are no longer desired.
+    for (const [key, sub] of subs.entries()) {
+      if (!desired.has(key)) {
+        sub.source.close()
+        subs.delete(key)
+        if (sub.threadId === focusedThreadRef.current) {
+          setFocusedConnected(false)
+        }
       }
     }
-  }, [events, seqOffset, activeRunId])
+    // No cleanup-on-deps-change — we explicitly reconcile each run.
+    // Unmount-only cleanup lives in the dedicated effect below.
+  }, [activeRunByThread, setMessagesFor, setActiveRunFor])
+
+  // When the focused thread changes, surface that thread's current
+  // connection status to consumers (the SSE itself doesn't restart).
+  useEffect(() => {
+    const subs = subsRef.current
+    const focused = subs.get(
+      activeRunId ? `${threadId}::${activeRunId}` : '',
+    )
+    setFocusedConnected(focused?.connected ?? false)
+  }, [threadId, activeRunId])
+
+  // Unmount cleanup: close every open EventSource so nothing leaks
+  // when ChatTab unmounts (tab switch away from the agent).
+  useEffect(() => {
+    const subs = subsRef.current
+    return () => {
+      for (const sub of subs.values()) sub.source.close()
+      subs.clear()
+    }
+  }, [])
 
   // Stuck-run watchdog. The SSE bus has no replay, and the dispatcher
   // flips `status='completed'` BEFORE publishing `run.finished` — so a
   // run that terminates between our `findActiveForThread` query and
-  // the EventSource subscribe leaves `activeRunId` set on a drained
-  // stream. UI gates (send / switch / newThread) freeze. Same shape
+  // the EventSource subscribe leaves the per-thread `activeRunByThread`
+  // entry set on a drained stream. That keeps the composer for THAT
+  // thread disabled (send is still gated per-thread). Same shape
   // when a worker crashes and leaves `status='running'` orphaned.
   //
-  // Poll `getActiveRunForThread` while `activeRunId` is set: 2s
-  // initial catches the race, 8s recurring catches orphans. The
-  // normal SSE clear cancels both via effect cleanup.
+  // Polls `getActiveRunForThread` for the focused thread while it has
+  // an entry in `activeRunByThread`: 2s initial catches the race, 8s
+  // recurring catches orphans. Off-screen recovery: not needed — the
+  // multi-SSE handler sees the terminal event from its EventSource.
   //
   // Grace window: the route inserts the runs row with
   // `mastraThreadId=null`; the dispatcher only stamps it inside
@@ -473,8 +645,8 @@ export function useChat(input: UseChatInput): UseChatResult {
       ) {
         return
       }
-      setActiveRunId(null)
-      setMessages((prev) =>
+      setActiveRunFor(threadId, null)
+      setMessagesFor(threadId, (prev) =>
         prev.map((m) =>
           m.runId === activeRunId && m.status === 'streaming'
             ? { ...m, status: 'done' }
@@ -489,9 +661,10 @@ export function useChat(input: UseChatInput): UseChatResult {
       // assistant message. Invalidate `messagesLoadedFor` so the
       // load-messages effect re-runs and pulls the real text — without
       // this the bubble renders as just a timestamp until the operator
-      // refreshes the page. Order matters: setActiveRunId(null) first
-      // so the load-messages effect's `if (activeRunId) return` gate
-      // is open by the time it re-evaluates.
+      // refreshes the page. Order matters: setActiveRunFor(null) above
+      // removes the per-thread entry first, so the load-messages
+      // effect's `if (activeRunId) return` gate (derived from the
+      // map) is open by the time it re-evaluates.
       setMessagesLoadedFor(null)
     }
 
@@ -575,7 +748,7 @@ export function useChat(input: UseChatInput): UseChatResult {
           ? { referencedFileNames }
           : {}),
       }
-      setMessages((prev) => [...prev, userMessage])
+      setMessagesFor(threadId, (prev) => [...prev, userMessage])
 
       try {
         const res = await callApi<{
@@ -613,8 +786,8 @@ export function useChat(input: UseChatInput): UseChatResult {
           mcpLogs: [],
           lastTokenIndex: -1,
         }
-        setMessages((prev) => [...prev, assistant])
-        setActiveRunId(res.runId)
+        setMessagesFor(threadId, (prev) => [...prev, assistant])
+        setActiveRunFor(threadId, res.runId)
       } catch (err) {
         const message =
           err instanceof ApiError
@@ -625,7 +798,7 @@ export function useChat(input: UseChatInput): UseChatResult {
         setSendError(message)
         // Surface the failure on the user message so the bubble isn't
         // orphaned without an assistant reply.
-        setMessages((prev) =>
+        setMessagesFor(threadId, (prev) =>
           prev.map((m) =>
             m.id === userMessage.id
               ? { ...m, status: 'error', errorMessage: message }
@@ -732,9 +905,13 @@ export function useChat(input: UseChatInput): UseChatResult {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentId])
 
-  // Load messages for the active thread. Skipped while a run is
-  // streaming (it's already filling `messages`) and when the thread
-  // is brand-new with no backend record yet (no entry in `threads`).
+  // Load messages for the focused thread. Skipped when the focused
+  // thread already has an active SSE run (its `messagesByThread`
+  // slot is being live-filled by the SSE manager — refetching would
+  // clobber the in-progress text) and when the thread is brand-new
+  // with no backend record yet (no entry in `threads`). Off-screen
+  // threads load lazily — the next switch to one triggers this
+  // effect via the `threadId` dep.
   //
   // Tracks "last loaded for" via STATE (`messagesLoadedFor`, declared
   // with the other state at the top) not a ref — refs don't survive
@@ -768,7 +945,7 @@ export function useChat(input: UseChatInput): UseChatResult {
         // run), the thread is genuinely empty — could be a fresh id
         // we minted but never sent on. Mark loaded and exit.
         if (!meta && !active) {
-          setMessages([])
+          setMessagesFor(threadId, EMPTY_MESSAGES)
           setMessagesLoadedFor(threadId)
           return
         }
@@ -828,14 +1005,14 @@ export function useChat(input: UseChatInput): UseChatResult {
             lastTokenIndex: -1,
           })
         }
-        setMessages(mapped)
+        setMessagesFor(threadId, mapped)
         setMessagesLoadedFor(threadId)
         if (active) {
-          // Setting activeRunId triggers the existing SSE subscription
-          // path (`streamId = runStreamId(activeRunId)`), so the in-
-          // flight run's events start landing on the placeholder
-          // immediately. The seq-based processing tracks them safely.
-          setActiveRunId(active.runId)
+          // Putting an entry in `activeRunByThread` triggers the
+          // multi-SSE manager to open an EventSource for this thread's
+          // run. The handler routes events into `messagesByThread[tid]`
+          // via the reducer.
+          setActiveRunFor(threadId, active.runId)
         }
       } catch (err) {
         if (alive) {
@@ -870,50 +1047,79 @@ export function useChat(input: UseChatInput): UseChatResult {
   // cases (sub-second titles on small models, multi-second on the
   // big ones) without polling forever. If the title already landed
   // on the first refresh, the follow-ups are cheap no-ops.
-  const lastRunIdRef = useRef<string | null>(null)
-  // Captured alongside `lastRunIdRef` so we know which thread the
-  // run was associated with when it terminated. switchThread /
-  // newThread / URL-driven navigation can clear `activeRunId` as a
-  // side effect of moving away — without this we'd run the
-  // "mark just-streamed thread as loaded" optimization against the
-  // DESTINATION thread, gating its load-messages effect into a
-  // no-op and leaving the user staring at an empty bubble area.
-  const lastRunThreadRef = useRef<string | null>(null)
+  // Watchdog: fires on any thread's run termination (focused or
+  // off-screen). Triggers `refreshThreads` so Mastra's
+  // generateTitle catch-up lands in the sidebar. Tracks the
+  // previous `activeRunByThread` via ref to detect removals.
+  //
+  // `threadId` is read via `focusedThreadRef` rather than being a
+  // dep, so a thread switch within the 6s catch-up window doesn't
+  // re-run the effect and tear down the title-refresh timeouts
+  // before they fire. (Mastra's generateTitle frequently lands a
+  // few seconds AFTER `run.finished`; losing the retries means the
+  // sidebar sticks on the truncated-prompt placeholder.)
+  //
+  // Note: `prevActiveRunsRef` is declared up top (near state) so the
+  // render-body agent-reset path can clear it.
   useEffect(() => {
-    if (activeRunId) {
-      lastRunIdRef.current = activeRunId
-      lastRunThreadRef.current = threadId
-      return
+    const prev = prevActiveRunsRef.current
+    const cur = activeRunByThread
+    const added: string[] = []
+    const removed: string[] = []
+    for (const tid of Object.keys(cur)) {
+      if (!(tid in prev)) added.push(tid)
     }
-    if (!lastRunIdRef.current) return
-    const completedOnThread = lastRunThreadRef.current
-    lastRunIdRef.current = null
-    lastRunThreadRef.current = null
-    // The "already-loaded" tag only applies if we're still on the
-    // thread the run finished on. After a thread switch the
-    // destination needs an honest load-messages probe.
-    if (completedOnThread && completedOnThread === threadId) {
-      setMessagesLoadedFor(threadId)
+    for (const tid of Object.keys(prev)) {
+      if (!(tid in cur)) removed.push(tid)
     }
+    prevActiveRunsRef.current = { ...cur }
+    // Mark unread: a run starting on a non-focused thread means the
+    // user wasn't there when it began, so they have "new content"
+    // waiting. A run starting on the focused thread is something
+    // they're watching live — no unread flag needed.
+    const focused = focusedThreadRef.current
+    const newlyUnread = added.filter((tid) => tid !== focused)
+    if (newlyUnread.length > 0) {
+      setUnreadThreadIds((prev) => {
+        const next = new Set(prev)
+        for (const tid of newlyUnread) next.add(tid)
+        return next
+      })
+    }
+    if (removed.length === 0) return
     void refreshThreads()
-    const t1 = window.setTimeout(() => void refreshThreads(), 2500)
-    const t2 = window.setTimeout(() => void refreshThreads(), 6000)
+    // Catch-up retries for Mastra's generateTitle write, which is
+    // fire-and-forget inside the agent run and frequently lands
+    // AFTER `run.finished`. Range covers small models (sub-second)
+    // through to large models (10-20s). switchThread also triggers
+    // a refresh, so navigation in the sidebar is an additional
+    // event-driven catch.
+    const t1 = window.setTimeout(() => void refreshThreads(), 3000)
+    const t2 = window.setTimeout(() => void refreshThreads(), 10000)
+    const t3 = window.setTimeout(() => void refreshThreads(), 25000)
+    // If the focused thread's run is what terminated, hint to the
+    // load-messages effect that this thread is already loaded so it
+    // doesn't immediately refetch the canonical text from Mastra and
+    // clobber whatever the SSE just finished streaming in. Off-screen
+    // terminations leave `messagesLoadedFor` alone — next navigation
+    // there will refetch normally.
+    if (removed.includes(focused)) {
+      setMessagesLoadedFor(focused)
+    }
     return () => {
       window.clearTimeout(t1)
       window.clearTimeout(t2)
+      window.clearTimeout(t3)
     }
-  }, [activeRunId, refreshThreads, threadId])
+  }, [activeRunByThread, refreshThreads])
 
   const newThread = useCallback(() => {
     // Same policy as switchThread: only block during the brief send
     // POST. A streaming run on the prior thread keeps going server-
-    // side; the load-messages effect re-attaches the SSE stream when
-    // the user navigates back to it.
+    // side and stays in `activeRunByThread`; its SSE continues to
+    // accumulate tokens into that thread's slot of `messagesByThread`.
     if (sending) return
     if (!agentId) return
-    // Detach from the prior thread's SSE stream before minting the
-    // new id so the new thread's state starts clean.
-    setActiveRunId(null)
     // Mint the id locally so downstream state stays simple, but DO NOT
     // push the URL yet: an unused thread is not a real shareable
     // location. `send()` flips `pendingNewThread` off and writes the
@@ -923,7 +1129,9 @@ export function useChat(input: UseChatInput): UseChatResult {
     setThreadId(fresh)
     setUrlSyncedFor(undefined)
     setPendingNewThread(true)
-    setMessages([])
+    // Seed the fresh thread's slot to [] so the focused-thread
+    // accessor reads it as empty (not undefined → fallback array).
+    setMessagesFor(fresh, EMPTY_MESSAGES)
     setSendError(null)
     // Mark fresh as "loaded" so the load-messages effect doesn't try
     // to fetch a thread that doesn't exist on the backend yet.
@@ -933,23 +1141,25 @@ export function useChat(input: UseChatInput): UseChatResult {
     if (window.location.pathname !== `/agents/${agentId}/chat`) {
       navigate(`/agents/${agentId}/chat`)
     }
-  }, [sending, agentId])
+  }, [sending, agentId, setMessagesFor])
 
   const switchThread = useCallback(
     async (next: string): Promise<void> => {
       // `sending` is the brief window during the send POST — blocking
-      // that prevents a half-applied optimistic UI. `activeRunId` is
-      // NOT blocked: the streaming run continues server-side and the
-      // load-messages effect re-attaches the SSE stream automatically
-      // when the user navigates back.
+      // it prevents a half-applied optimistic UI. We do NOT block on
+      // streaming runs: their SSE keeps running in the background and
+      // their messages stay in `messagesByThread` so coming back to a
+      // streaming conversation shows the in-progress bubble.
       if (sending) return
       if (next === threadId) return
       if (!agentId) return
-      // Detach from the SSE stream of the thread we're leaving so the
-      // new thread's load-messages effect can probe / re-attach
-      // cleanly. The run keeps running server-side; coming back to
-      // this thread will re-pick-up the stream.
-      setActiveRunId(null)
+      // Event-driven sidebar refresh: every thread navigation is a
+      // cheap, accurate signal that the operator wants up-to-date
+      // metadata. Catches LLM-generated titles that landed AFTER the
+      // watchdog's 6s catch-up window (common with slow models). The
+      // list endpoint is fast; doing this on every switch beats
+      // sizing arbitrary timeouts.
+      void refreshThreads()
       setThreadId(next)
       setUrlSyncedFor(next)
       // Switching to an existing conversation cancels any pending
@@ -957,12 +1167,13 @@ export function useChat(input: UseChatInput): UseChatResult {
       // means the deferred URL push for the prior fresh id is no
       // longer relevant.
       setPendingNewThread(false)
-      setMessages([])
       setSendError(null)
-      // The load-messages effect will fire when threadId changes.
+      // The load-messages effect will fire when threadId changes —
+      // gated by the per-thread `activeRunByThread` entry so a
+      // streaming thread we return to doesn't get clobbered.
       navigate(`/agents/${agentId}/chat/${next}`)
     },
-    [sending, threadId, agentId],
+    [sending, threadId, agentId, refreshThreads],
   )
 
   const deleteThread = useCallback(
@@ -982,11 +1193,32 @@ export function useChat(input: UseChatInput): UseChatResult {
       }
       const remaining = threads.filter((t) => t.threadId !== target)
       setThreads(remaining)
+      // Drop the deleted thread from per-thread state. The SSE manager
+      // will reconcile and close any open EventSource for it on the
+      // next effect tick. (Server-side run is orphaned if there is
+      // one — a pre-existing limitation.)
+      setMessagesByThread((prev) => {
+        if (!(target in prev)) return prev
+        const next = { ...prev }
+        delete next[target]
+        return next
+      })
+      setActiveRunByThread((prev) => {
+        if (!(target in prev)) return prev
+        const next = { ...prev }
+        delete next[target]
+        return next
+      })
+      setUnreadThreadIds((prev) => {
+        if (!prev.has(target)) return prev
+        const next = new Set(prev)
+        next.delete(target)
+        return next
+      })
       if (target === threadId) {
         const nextActive = remaining[0]?.threadId ?? crypto.randomUUID()
         setThreadId(nextActive)
         setUrlSyncedFor(nextActive)
-        setMessages([])
         // If we fell back to a fresh new thread (no remaining), mark
         // it as loaded so the effect skips. Otherwise null so the
         // existing thread's messages get fetched.
@@ -998,6 +1230,23 @@ export function useChat(input: UseChatInput): UseChatResult {
     [agentId, threads, threadId],
   )
 
+  // Stable identity for the public set: same reference between
+  // renders when the underlying keys don't change, so consumers'
+  // memoized children don't re-render unnecessarily.
+  const streamingThreadIds = useMemo(
+    () => new Set(Object.keys(activeRunByThread)),
+    [activeRunByThread],
+  )
+
+  // Sort sidebar entries by `createdAt` DESC so an existing
+  // conversation doesn't jump to the top every time it gets a new
+  // message. New conversations (most recent `createdAt`) still
+  // appear at the top by virtue of their creation timestamp.
+  const sortedThreads = useMemo(
+    () => [...threads].sort((a, b) => b.createdAt - a.createdAt),
+    [threads],
+  )
+
   return {
     messages,
     threadId,
@@ -1005,10 +1254,12 @@ export function useChat(input: UseChatInput): UseChatResult {
     activeRunId,
     sending,
     sendError,
-    sseConnected: connected,
-    threads,
+    sseConnected: focusedConnected,
+    threads: sortedThreads,
     loadingMessages,
     threadsError,
+    streamingThreadIds,
+    unreadThreadIds,
     send,
     newThread,
     switchThread,

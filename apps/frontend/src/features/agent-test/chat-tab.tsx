@@ -390,6 +390,8 @@ export function ChatTab({
       <ThreadRail
         threads={chat.threads}
         activeThreadId={chat.threadId}
+        streamingThreadIds={chat.streamingThreadIds}
+        unreadThreadIds={chat.unreadThreadIds}
         onNew={() => chat.newThread()}
         onSwitch={(id) => void chat.switchThread(id)}
         onDelete={(id) => void chat.deleteThread(id)}
@@ -1138,6 +1140,8 @@ function stripThinkBlocks(text: string): string {
 function ThreadRail({
   threads,
   activeThreadId,
+  streamingThreadIds,
+  unreadThreadIds,
   onNew,
   onSwitch,
   onDelete,
@@ -1146,6 +1150,14 @@ function ThreadRail({
 }: {
   threads: readonly ChatThreadMeta[]
   activeThreadId: string
+  /** Threads with an open SSE subscription (whether focused or not).
+   *  Used together with `unreadThreadIds` to decide if the unread
+   *  dot should pulse (still streaming) or stay static (terminated
+   *  but unviewed). */
+  streamingThreadIds: ReadonlySet<string>
+  /** Threads with unviewed activity. Set when a run starts on a
+   *  non-focused thread, cleared when the user visits. */
+  unreadThreadIds: ReadonlySet<string>
   onNew: () => void
   onSwitch: (threadId: string) => void
   onDelete: (threadId: string) => void
@@ -1181,9 +1193,46 @@ function ThreadRail({
           onClick={() => onSwitch(t.threadId)}
           disabled={disabled && t.threadId !== activeThreadId}
         >
-          <span className="ab-thread-row-title">
-            {t.title ?? 'Untitled'}
-          </span>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              minWidth: 0,
+            }}
+          >
+            {unreadThreadIds.has(t.threadId) && (
+              <span
+                aria-label={
+                  streamingThreadIds.has(t.threadId)
+                    ? 'Streaming, unviewed'
+                    : 'Unviewed activity'
+                }
+                title={
+                  streamingThreadIds.has(t.threadId)
+                    ? 'A run is streaming here; switch in to watch.'
+                    : 'New activity since you last opened this conversation.'
+                }
+                style={{
+                  display: 'inline-block',
+                  width: 7,
+                  height: 7,
+                  flexShrink: 0,
+                  borderRadius: 999,
+                  background: '#60a5fa',
+                  animation: streamingThreadIds.has(t.threadId)
+                    ? 'ab-pulse-blue 1.6s ease-in-out infinite'
+                    : undefined,
+                }}
+              />
+            )}
+            <span
+              className="ab-thread-row-title"
+              style={{ minWidth: 0, flex: 1 }}
+            >
+              {t.title ?? 'Untitled'}
+            </span>
+          </div>
           <span className="ab-thread-row-meta">
             {t.messageCount} msg · {formatRelativeShort(t.updatedAt)}
           </span>
