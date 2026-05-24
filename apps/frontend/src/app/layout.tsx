@@ -14,6 +14,7 @@ import {
   matchBridge,
   matchHome,
   matchLibraryDetail,
+  matchLibraryFiles,
   matchLibraryMcp,
   matchLibraryProviders,
   matchLibraryRepos,
@@ -41,6 +42,7 @@ import { ProvidersPage } from './library/providers/page'
 import { ProviderDetailPage } from './library/providers/[id]/page'
 import { ReposPage } from './library/repos/page'
 import { RepoDetailPage } from './library/repos/[id]/page'
+import { FilesPage } from './library/files/page'
 import { McpPage } from './library/mcp/page'
 import { McpDetailPage } from './library/mcp/[id]/page'
 import { BridgePage } from './bridge/page'
@@ -72,6 +74,7 @@ function RouterOutlet() {
     if (ld) return { kind: 'library-detail' as const, ...ld }
     if (matchLibraryProviders(path)) return { kind: 'providers' as const }
     if (matchLibraryRepos(path)) return { kind: 'repos' as const }
+    if (matchLibraryFiles(path)) return { kind: 'files' as const }
     if (matchLibraryMcp(path)) return { kind: 'mcp' as const }
     if (matchBridge(path)) return { kind: 'bridge' as const }
     if (matchLogs(path)) return { kind: 'logs' as const }
@@ -104,6 +107,12 @@ function RouterOutlet() {
           { label: 'Workspace', to: '/' },
           { label: 'Library' },
           { label: 'Repositories' },
+        ]
+      case 'files':
+        return [
+          { label: 'Workspace', to: '/' },
+          { label: 'Library' },
+          { label: 'Files' },
         ]
       case 'mcp':
         return [
@@ -172,6 +181,7 @@ function RouterOutlet() {
       )}
       {route.kind === 'providers' && <ProvidersPage />}
       {route.kind === 'repos' && <ReposPage />}
+      {route.kind === 'files' && <FilesPage />}
       {route.kind === 'mcp' && <McpPage />}
       {route.kind === 'library-detail' && route.section === 'providers' && (
         <ProviderDetailPage id={route.id} />

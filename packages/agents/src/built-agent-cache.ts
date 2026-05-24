@@ -242,6 +242,8 @@ async function computeAgentVersion(
     mcp_tools_updated: string | null
     mcp_connections_updated: string | null
     provider_updated: string | null
+    agent_files_updated: string | null
+    files_updated: string | null
   }>(
     `
     SELECT
@@ -265,7 +267,20 @@ async function computeAgentVersion(
          INNER JOIN agent_mcp_tools amt2 ON amt2.mcp_connection_id = mc.id
          WHERE amt2.agent_id = a.id) AS mcp_connections_updated,
       (SELECT to_char(lp.updated_at, 'YYYY-MM-DD"T"HH24:MI:SS.US')
-         FROM llm_providers lp WHERE lp.id = a.llm_provider_id) AS provider_updated
+         FROM llm_providers lp WHERE lp.id = a.llm_provider_id) AS provider_updated,
+      -- agent_files attach time; created_at suffices because the join
+      -- table is INSERT/DELETE only (no updates), and a DELETE drops
+      -- the row entirely so MAX shifts and invalidates the cache.
+      (SELECT to_char(MAX(af.created_at), 'YYYY-MM-DD"T"HH24:MI:SS.US')
+         FROM agent_files af WHERE af.agent_id = a.id) AS agent_files_updated,
+      -- files.updated_at covers ingest-status transitions
+      -- (pending -> ready), description edits, and rename. Joined
+      -- through agent_files so unrelated workspace files do not
+      -- invalidate this agents cache.
+      (SELECT to_char(MAX(f.updated_at), 'YYYY-MM-DD"T"HH24:MI:SS.US')
+         FROM files f
+         INNER JOIN agent_files af2 ON af2.file_id = f.id
+         WHERE af2.agent_id = a.id) AS files_updated
     FROM agents a
     WHERE a.id = $1
     `,
@@ -294,6 +309,8 @@ async function computeAgentVersion(
     row.mcp_tools_updated ?? '',
     row.mcp_connections_updated ?? '',
     row.provider_updated ?? '',
+    row.agent_files_updated ?? '',
+    row.files_updated ?? '',
     `inspector:${INSPECTOR_SYSTEM_PROMPT_VERSION}`,
     `gitnexus:${EXPECTED_GITNEXUS_VERSION}`,
   ].join('|')

@@ -18,19 +18,25 @@ import { useChat, type ChatMessage } from '../../lib/use-chat'
 import { Markdown } from '../../ui/markdown'
 import {
   ArrowRightIcon,
+  FileIcon,
   PlusIcon,
   RefreshIcon,
   SearchIcon,
   TrashIcon,
 } from '../../ui/icons'
+import { toast } from '../../ui/toast-store'
+import { ApiError } from '../../lib/rpc'
 import type { ChatThreadMeta } from '../../lib/use-chat'
 
 interface MentionItem {
-  kind: 'repo' | 'skill' | 'tool' | 'mcp'
+  kind: 'repo' | 'skill' | 'tool' | 'mcp' | 'file'
   /** Display label. */
   label: string
   /** Token to insert in the prompt — replaces `@<query>`. */
   token: string
+  /** For file mentions: the underlying file id. Used by the send
+   *  handler to pull `referencedFileIds` out of the draft text. */
+  fileId?: string
 }
 
 const KIND_GROUP_LABEL: Record<MentionItem['kind'], string> = {
@@ -38,6 +44,7 @@ const KIND_GROUP_LABEL: Record<MentionItem['kind'], string> = {
   skill: 'Skills',
   tool: 'Tools',
   mcp: 'MCP tools',
+  file: 'Files',
 }
 
 const KIND_CHIP_GLYPH: Record<MentionItem['kind'], string> = {
@@ -45,6 +52,7 @@ const KIND_CHIP_GLYPH: Record<MentionItem['kind'], string> = {
   skill: 'S',
   tool: 'T',
   mcp: 'M',
+  file: 'F',
 }
 
 export function ChatTab({
@@ -95,6 +103,17 @@ export function ChatTab({
         token: `@mcp:${m.toolName}`,
       })
     }
+    // Knowledge files. Token carries the file id (not the name) so
+    // the send handler can extract a `referencedFileIds` array
+    // unambiguously even if two files share a display name.
+    for (const af of r.attachedFiles) {
+      out.push({
+        kind: 'file',
+        label: af.file.name,
+        token: `@file:${af.file.id}`,
+        fileId: af.file.id,
+      })
+    }
     return out
   }, [agentResources, agentId])
 
@@ -106,6 +125,7 @@ export function ChatTab({
     skill: 1,
     tool: 2,
     mcp: 3,
+    file: 4,
   }
   const filteredMentions = useMemo(() => {
     if (!mention) return [] as MentionItem[]
@@ -175,12 +195,90 @@ export function ChatTab({
     activeEl?.scrollIntoView({ block: 'nearest' })
   }, [mention])
 
+  // Chat-scope file upload. Default behavior: file is persisted to
+  // Library AND attached to this thread (`ephemeral=false`). The
+  // operator opts out via Library → delete; we deliberately don't
+  // expose an ephemeral toggle in the composer yet — it's a minor
+  // power-user feature that adds UI clutter for the 95% case.
+  const { uploadFile, refreshFile } = useWorkspace()
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const [fileUploading, setFileUploading] = useState(false)
+  const onPickFile = (): void => {
+    fileInputRef.current?.click()
+  }
+  const onFileChosen = async (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ): Promise<void> => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    await runFileUpload(file)
+  }
+  const runFileUpload = async (file: File): Promise<void> => {
+    setFileUploading(true)
+    try {
+      const result = await uploadFile({
+        file,
+        threadId: chat.threadId,
+        ephemeral: false,
+      })
+      if (result.duplicate) {
+        toast.info(
+          `"${result.file.name}" already in Library — attached to this chat.`,
+        )
+      } else {
+        toast.success(`Uploaded "${result.file.name}"`)
+      }
+      void refreshFile(result.file.id)
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError
+          ? err.message
+          : err instanceof Error
+            ? err.message
+            : 'Upload failed',
+      )
+    } finally {
+      setFileUploading(false)
+    }
+  }
+
   const send = () => {
     const text = draft.trim()
     if (!text || chat.sending || chat.activeRunId) return
+    // Extract any `@file:<uuid>` tokens from the draft so the backend
+    // can clamp `search_knowledge` to that scope. The tokens stay in
+    // the prompt text so the assistant can see what the user actually
+    // typed (the UI renders them as `@<filename>` chips); the
+    // dispatcher uses the extracted ids for the tool's scope.
+    const fileIdRegex =
+      /@file:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi
+    const referencedFileIds = Array.from(
+      new Set(
+        Array.from(text.matchAll(fileIdRegex), (m) => m[1]!.toLowerCase()),
+      ),
+    )
+    // Resolve referenced ids → display names for the filter pill.
+    // Look up across both agent + thread attachments since the user
+    // could mention either. Unknown ids degrade to "(unknown file)".
+    const attachedById = new Map<string, string>()
+    const resources = agentResources[agentId]
+    if (resources) {
+      for (const af of resources.attachedFiles) {
+        attachedById.set(af.file.id, af.file.name)
+      }
+    }
+    const referencedFileNames = referencedFileIds.map(
+      (id) => attachedById.get(id) ?? '(unknown file)',
+    )
     setDraft('')
     setMention(null)
-    void chat.send(text)
+    void chat.send(
+      text,
+      referencedFileIds.length > 0
+        ? { referencedFileIds, referencedFileNames }
+        : undefined,
+    )
   }
 
   const handleDraftChange = (value: string) => {
@@ -407,6 +505,16 @@ export function ChatTab({
               <button
                 type="button"
                 className="ab-chat-input-icon-btn"
+                aria-label="Attach file"
+                title="Attach file (.md, .txt, .pdf)"
+                onClick={onPickFile}
+                disabled={chat.activeRunId !== null || fileUploading}
+              >
+                <FileIcon />
+              </button>
+              <button
+                type="button"
+                className="ab-chat-input-icon-btn"
                 aria-label="New conversation"
                 title="New conversation"
                 onClick={() => chat.newThread()}
@@ -431,6 +539,13 @@ export function ChatTab({
                 <ArrowRightIcon strokeWidth={2.4} />
               </button>
             </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".md,.txt,.pdf,text/plain,text/markdown,application/pdf"
+              style={{ display: 'none' }}
+              onChange={(e) => void onFileChosen(e)}
+            />
           </div>
         </div>
       </div>
@@ -564,11 +679,14 @@ function MessageRow({
               {tc.status === 'error' && ' · error'}
             </div>
             <JsonBlock value={tc.input} />
-            {tc.output !== undefined && (
-              <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
-                <JsonBlock value={tc.output} />
-              </div>
-            )}
+            {tc.output !== undefined &&
+              (tc.toolName === 'search_knowledge' ? (
+                <KnowledgeCitations output={tc.output} />
+              ) : (
+                <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
+                  <JsonBlock value={tc.output} />
+                </div>
+              ))}
             {tc.error && (
               <div
                 style={{
@@ -584,15 +702,31 @@ function MessageRow({
         ))}
         {msg.text &&
           (msg.role === 'user' ? (
-            <div
-              className="ab-msg-bubble"
-              style={{ whiteSpace: 'pre-wrap' }}
-            >
-              {renderUserText(msg.text, mentionTokens)}
-              {msg.status === 'streaming' && (
-                <span style={{ opacity: 0.5 }}> ▍</span>
+            <>
+              {msg.referencedFileNames && msg.referencedFileNames.length > 0 && (
+                <div
+                  className="ab-pill"
+                  style={{
+                    display: 'inline-block',
+                    marginBottom: 6,
+                    fontSize: 11,
+                    color: 'var(--text-muted)',
+                  }}
+                  title="Files scoped via @-mention for this turn"
+                >
+                  Filtered to: {msg.referencedFileNames.join(', ')}
+                </div>
               )}
-            </div>
+              <div
+                className="ab-msg-bubble"
+                style={{ whiteSpace: 'pre-wrap' }}
+              >
+                {renderUserText(msg.text, mentionTokens)}
+                {msg.status === 'streaming' && (
+                  <span style={{ opacity: 0.5 }}> ▍</span>
+                )}
+              </div>
+            </>
           ) : (
             <AssistantBubble msg={msg} />
           ))}
@@ -602,6 +736,27 @@ function MessageRow({
           msg.toolCalls.length === 0 && (
             <div className="ab-msg-bubble">
               <ThinkingDots />
+            </div>
+          )}
+        {msg.role === 'assistant' &&
+          msg.status === 'done' &&
+          !msg.text &&
+          msg.toolCalls.length === 0 &&
+          !msg.errorMessage && (
+            // Catches the brief window between the watchdog clearing a
+            // stuck run and the message reload landing the persisted
+            // text (see use-chat's watchdog). Also catches the genuine
+            // "model returned no text" case — without this the row was
+            // just a timestamp meta line with no bubble at all.
+            <div
+              className="ab-msg-bubble"
+              style={{
+                opacity: 0.55,
+                fontStyle: 'italic',
+                color: 'var(--text-muted)',
+              }}
+            >
+              (no text response)
             </div>
           )}
         {msg.errorMessage && (
@@ -758,6 +913,137 @@ function JsonBlock({ value }: { value: unknown }) {
 }
 
 const JSON_BLOCK_PREVIEW_LINES = 12
+
+/**
+ * Visual rendering of `search_knowledge` results. Replaces the raw
+ * JSON dump with one chip per chunk: `<filename> · p.N · "snippet…"`.
+ * Hover shows the full snippet via the `title` attribute (cheap, no
+ * extra portal needed). An empty `chunks: []` surfaces the `hint`
+ * the tool returns when nothing cleared the relevance threshold.
+ */
+interface KnowledgeChunk {
+  readonly file_id?: string
+  readonly file_name?: string
+  readonly page?: number | null
+  readonly section?: string | null
+  readonly snippet?: string
+  readonly score?: number
+}
+
+function KnowledgeCitations({ output }: { output: unknown }) {
+  const parsed = parseKnowledgeOutput(output)
+  if (!parsed) {
+    // Shape didn't match — fall back to raw JSON so the operator can
+    // still inspect what came back.
+    return (
+      <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
+        <JsonBlock value={output} />
+      </div>
+    )
+  }
+  if (parsed.chunks.length === 0) {
+    return (
+      <div
+        className="ab-field-help"
+        style={{ marginTop: 6, fontStyle: 'italic' }}
+      >
+        {parsed.hint ?? 'No matching passages.'}
+      </div>
+    )
+  }
+  // When the matched chunks span ≥3 distinct files, surface a small
+  // "looking at N files" hint so the user knows the agent's
+  // consulting the right scope (vs misinterpreting a low-N retrieval
+  // as "the agent only found one source"). Doc-spec'd Phase 3 polish.
+  const distinctFiles = new Set(
+    parsed.chunks.map((c) => c.file_name ?? c.file_id ?? ''),
+  )
+  distinctFiles.delete('')
+  return (
+    <div
+      style={{
+        marginTop: 6,
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 6,
+      }}
+    >
+      {distinctFiles.size >= 3 && (
+        <div
+          className="ab-pill"
+          style={{
+            display: 'inline-block',
+            alignSelf: 'flex-start',
+            fontSize: 11,
+            color: 'var(--text-muted)',
+            marginBottom: 2,
+          }}
+          title="Number of distinct files matched in this search"
+        >
+          Looking at {distinctFiles.size} files
+        </div>
+      )}
+      {parsed.chunks.map((c, i) => {
+        const head =
+          (c.file_name ?? 'file') +
+          (c.page != null ? ` · p.${c.page}` : '') +
+          (c.section ? ` · ${c.section}` : '')
+        const snippet = (c.snippet ?? '').replace(/\s+/g, ' ').trim()
+        return (
+          <div
+            key={`${c.file_id ?? i}-${i}`}
+            className="ab-pill"
+            title={snippet}
+            style={{
+              display: 'block',
+              maxWidth: '100%',
+              lineHeight: 1.45,
+              whiteSpace: 'normal',
+              padding: '6px 10px',
+            }}
+          >
+            <div
+              style={{
+                fontSize: 11,
+                color: 'var(--text-muted)',
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
+              {head}
+            </div>
+            <div
+              style={{
+                marginTop: 2,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                display: '-webkit-box',
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: 'vertical',
+              }}
+            >
+              {snippet}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function parseKnowledgeOutput(
+  output: unknown,
+): { chunks: KnowledgeChunk[]; hint?: string } | null {
+  if (!output || typeof output !== 'object') return null
+  const obj = output as { chunks?: unknown; hint?: unknown }
+  if (!Array.isArray(obj.chunks)) return null
+  const chunks = obj.chunks.filter(
+    (c): c is KnowledgeChunk => !!c && typeof c === 'object',
+  )
+  return {
+    chunks,
+    ...(typeof obj.hint === 'string' ? { hint: obj.hint } : {}),
+  }
+}
 
 /** True when the entire trimmed string parses to a JSON object/array.
  *  Used to detect when an assistant message is a JSON-only payload

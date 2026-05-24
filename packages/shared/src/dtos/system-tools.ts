@@ -10,6 +10,15 @@ import { z } from 'zod'
 export const systemToolDefinitionSchema = z.object({
   name: z.string().min(1),
   description: z.string(),
+  /** Coarse grouping the Tools tab uses to render subheaders. Older
+   *  backends predate this field — default to `inspector` for those
+   *  rows so the UI keeps working without a coordinated rollout. */
+  group: z.enum(['inspector', 'builtin']).optional().default('inspector'),
+  /** Optional human-readable mount condition shown under the
+   *  description (e.g. "Available when an embedding provider is
+   *  configured"). Inspector wrappers share one gate so they omit
+   *  this; workspace built-ins each carry their own. */
+  mountWhen: z.string().optional(),
 })
 export type SystemToolDefinition = z.infer<typeof systemToolDefinitionSchema>
 

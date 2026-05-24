@@ -146,25 +146,93 @@ export type Callsite = z.infer<typeof callsiteSchema>
  * web-chat backend route can both prepend BEFORE persisting
  * `runs.input_prompt`. The dispatcher stays a dumb transport.
  */
+/**
+ * Sentinel comment used to fence every server-injected prompt
+ * enrichment (callsite, attached-files note, eager pre-fetch) so the
+ * frontend can strip them when rendering the user bubble. Format:
+ *
+ *     <!-- ab:enrichment kind=<name> -->
+ *     ...body...
+ *     <!-- /ab:enrichment -->
+ *
+ * Chosen because:
+ *   - HTML comments are valid markdown but render to nothing in any
+ *     viewer (including the rare case the operator pastes the prompt
+ *     somewhere else).
+ *   - LLMs treat them as markup, not content — none of the local
+ *     models we test against echo them back or "react" to them.
+ *   - Easy to regex-strip without false-positive-matching real user
+ *     text (no one types `<!-- ab:enrichment` by hand).
+ *
+ * Wrap helpers below build the fence; `stripPromptEnrichments` is the
+ * inverse used by the frontend on persisted prompts.
+ */
+const ENRICHMENT_OPEN = (kind: string): string =>
+  `<!-- ab:enrichment kind=${kind} -->`
+const ENRICHMENT_CLOSE = '<!-- /ab:enrichment -->'
+
+/** Wrap a prompt-enrichment body in fence markers. Trims so callers
+ *  don't have to think about leading/trailing whitespace, and appends
+ *  a blank line so adjacent blocks have visual separation in the
+ *  LLM's view.
+ *
+ *  Any literal closing marker found inside `body` is masked first —
+ *  otherwise an operator-uploaded file whose chunk contains the
+ *  string `<!-- /ab:enrichment -->` would prematurely terminate the
+ *  fence, and `stripPromptEnrichments` would cut at the wrong point
+ *  and leak the rest of the prompt body into the chat bubble.
+ *  Replacing the literal with a sentinel (still HTML-comment so it
+ *  stays invisible if anything renders the raw text later) keeps the
+ *  fence boundary unambiguous. */
+export function wrapPromptEnrichment(kind: string, body: string): string {
+  const safe = body
+    .trim()
+    .replace(/<!--\s*\/?ab:enrichment[^>]*-->/g, '<!-- ab:enrichment-mask -->')
+  return `${ENRICHMENT_OPEN(kind)}\n${safe}\n${ENRICHMENT_CLOSE}\n\n`
+}
+
 export function formatCallsiteBlock(callsite: Callsite | null): string {
   if (!callsite) return ''
   const clientLine = callsite.client.version
     ? `${callsite.client.name} v${callsite.client.version}`
     : callsite.client.name
-  return `_Request origin: ${clientLine} · ${callsite.agent.slug}_\n\n`
+  return wrapPromptEnrichment(
+    'callsite',
+    `_Request origin: ${clientLine} · ${callsite.agent.slug}_`,
+  )
 }
 
 /**
- * Inverse of {@link formatCallsiteBlock}. Strips the prepended
- * `_Request origin: ..._` metadata line from a persisted
- * `runs.input_prompt` so consumers can render a clean user bubble.
- * Tolerant of variations (callsite missing, different whitespace
- * trailing the block) and a no-op when the prompt doesn't start with
- * the marker.
+ * Strip every server-injected enrichment block from a persisted
+ * `runs.input_prompt` so the UI can render a clean user bubble.
+ *
+ * Strips, in order:
+ *   1. Fenced blocks `<!-- ab:enrichment ... --> ... <!-- /ab:enrichment -->`.
+ *   2. Legacy callsite line `_Request origin: ..._` at the start of
+ *      the prompt — needed because rows persisted before the fence
+ *      markers shipped don't have the wrapper. Idempotent and a
+ *      no-op when neither pattern is present.
+ *   3. Leading whitespace left behind after the strip.
+ */
+export function stripPromptEnrichments(prompt: string): string {
+  let out = prompt.replace(
+    /<!--\s*ab:enrichment[^>]*-->[\s\S]*?<!--\s*\/ab:enrichment\s*-->\s*/g,
+    '',
+  )
+  // Legacy: pre-fence callsite block at the start of the prompt.
+  out = out.replace(/^_Request origin:[^\n]*_\n+/, '')
+  return out.replace(/^\s+/, '')
+}
+
+/**
+ * @deprecated Use {@link stripPromptEnrichments} — it covers the
+ * fenced blocks shipped after the prompt-enrichment marker change in
+ * addition to the legacy callsite-only format this older helper
+ * handled. Kept as a thin alias so external callers don't break
+ * mid-rollout.
  */
 export function stripCallsiteBlock(prompt: string): string {
-  const match = prompt.match(/^_Request origin:[^\n]*_\n+/)
-  return match ? prompt.slice(match[0].length) : prompt
+  return stripPromptEnrichments(prompt)
 }
 
 export const runListRowSchema = z.object({

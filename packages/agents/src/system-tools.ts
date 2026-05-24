@@ -26,13 +26,25 @@ import {
   EXPECTED_GITNEXUS_VERSION,
 } from '@agent-bridge/shared/gitnexus'
 import {
+  BUILTIN_TOOL_DEFINITIONS,
   INSPECTOR_TOOL_DEFINITIONS,
+  type BuiltinToolDefinition,
   type InspectorToolDefinition,
 } from '@agent-bridge/shared'
 
 export interface SystemToolDefinition {
   readonly name: string
   readonly description: string
+  /** Coarse grouping the UI uses to render subheaders. `inspector`
+   *  = the six gitnexus wrappers; `builtin` = workspace-level
+   *  built-ins (search_knowledge, read_skill) that mount on their
+   *  own gates. */
+  readonly group: 'inspector' | 'builtin'
+  /** Optional human-readable mount condition. Inspector wrappers
+   *  share the same gate (any indexed repo attached) so they leave
+   *  this empty — the Tools tab's section copy already covers that.
+   *  Workspace built-ins each set their own. */
+  readonly mountWhen?: string
 }
 
 export interface GitnexusSystemToolsOk {
@@ -55,16 +67,28 @@ export type GitnexusSystemToolsResult =
  * pinned gitnexus CLI the inspector wraps under the hood.
  */
 export function loadGitnexusToolDefinitions(): Promise<GitnexusSystemToolsResult> {
-  const tools: SystemToolDefinition[] = INSPECTOR_TOOL_DEFINITIONS.map(
+  const inspector: SystemToolDefinition[] = INSPECTOR_TOOL_DEFINITIONS.map(
     (t: InspectorToolDefinition): SystemToolDefinition => ({
       name: t.name,
       description: t.description,
+      group: 'inspector',
+    }),
+  )
+  const workspace: SystemToolDefinition[] = BUILTIN_TOOL_DEFINITIONS.map(
+    (t: BuiltinToolDefinition): SystemToolDefinition => ({
+      name: t.name,
+      description: t.description,
+      group: 'builtin',
+      mountWhen: t.mountWhen,
     }),
   )
   return Promise.resolve({
     ok: true,
     cliVersion: EXPECTED_GITNEXUS_VERSION,
-    tools,
+    // Inspector wrappers first (they're the heaviest, repo-bound
+    // group), then the workspace built-ins. The UI groups by
+    // `group` and renders subheaders.
+    tools: [...inspector, ...workspace],
   })
 }
 

@@ -138,6 +138,20 @@ export interface TokenEstimateGitnexusLibrarySkills {
   readonly tokens: number
 }
 
+/**
+ * Per-file budget contribution. `catalog_tokens` is what the file
+ * costs in the system prompt every turn (the "Attached files" catalog
+ * bullet). `expected_search_tokens` is the rough cost the LLM pays
+ * when it actually calls `search_knowledge` — top-K chunk snippets
+ * × overhead. Surfacing the split lets the operator see why a file
+ * adds little to baseline but spikes on retrieval.
+ */
+export interface TokenEstimateFile {
+  readonly name: string
+  readonly catalog_tokens: number
+  readonly expected_search_tokens: number
+}
+
 export interface TokenEstimate {
   readonly model: string | null
   readonly encoding: TiktokenEncoding
@@ -165,6 +179,15 @@ export interface TokenEstimate {
     readonly repoRelationshipsHint: number
     readonly tools: ReadonlyArray<TokenEstimateTool>
     readonly toolsTotal: number
+    /**
+     * Knowledge files attached to this agent. Each entry breaks out
+     * the per-turn catalog cost from the on-demand search cost so
+     * the operator can see "this file costs N every turn + ~M on
+     * every search_knowledge call". Empty array when no files
+     * attached.
+     */
+    readonly files: ReadonlyArray<TokenEstimateFile>
+    readonly filesCatalogTotal: number
   }
   /**
    * Sum of every part above. Doesn't include per-call dynamic content
@@ -357,11 +380,52 @@ export async function estimateAgentTokens(
 
   const toolsTotal = tools.reduce((sum, t) => sum + t.tokens, 0)
 
+  // Knowledge files: per-file catalog bullet cost + expected
+  // per-search cost. Only files in `ready` ingest status surface
+  // since the catalog block in composeInstructions filters the same
+  // way. `expected_search_tokens` is an approximation — 5 chunks ×
+  // ~250 tokens of snippet + ~80 tokens of JSON envelope.
+  const attachedFileRows = await db
+    .select({
+      name: schema.files.name,
+      description: schema.files.description,
+    })
+    .from(schema.agentFiles)
+    .innerJoin(schema.files, eq(schema.agentFiles.fileId, schema.files.id))
+    .where(
+      and(
+        eq(schema.agentFiles.agentId, agentId),
+        eq(schema.files.ingestStatus, 'ready'),
+      ),
+    )
+    .orderBy(asc(schema.agentFiles.position), asc(schema.agentFiles.createdAt))
+  const files: TokenEstimateFile[] = attachedFileRows.map((f) => {
+    const desc = f.description.trim() || '(no description)'
+    const catalogLine = `- \`${f.name}\`: ${desc}`
+    return {
+      name: f.name,
+      catalog_tokens: tokenize(enc, catalogLine),
+      // 5 chunks × 250 tokens (snippet) + 80 tokens (envelope).
+      // Adjust if/when the tool's default top_k changes.
+      expected_search_tokens: 5 * 250 + 80,
+    }
+  })
+  const filesCatalogTotal = files.reduce(
+    (sum, f) => sum + f.catalog_tokens,
+    0,
+  )
+  // Add an ~80-token "Attached files" header preamble when any file
+  // is attached, so the baseline reflects what composeInstructions
+  // actually emits.
+  const filesPreambleTokens = files.length > 0 ? 80 : 0
+
   const baselineTotal =
     systemPromptTokens +
     skillsTotal +
     (systemSkill?.tokens ?? 0) +
-    toolsTotal
+    toolsTotal +
+    filesCatalogTotal +
+    filesPreambleTokens
 
   return {
     model: modelId,
@@ -377,6 +441,8 @@ export async function estimateAgentTokens(
       repoRelationshipsHint,
       tools,
       toolsTotal,
+      files,
+      filesCatalogTotal,
     },
     baselineTotal,
   }

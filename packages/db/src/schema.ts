@@ -19,6 +19,7 @@
 
 import { sql } from 'drizzle-orm'
 import {
+  type AnyPgColumn,
   bigserial,
   boolean,
   check,
@@ -32,6 +33,7 @@ import {
   timestamp,
   uniqueIndex,
   uuid,
+  vector,
 } from 'drizzle-orm/pg-core'
 import type {
   AgentMemoryConfig,
@@ -428,6 +430,181 @@ export const repoRelationships = pgTable(
       sql`${t.fromRepoId} <> ${t.toRepoId}`,
     ),
     index('repo_relationships_agent_idx').on(t.agentId),
+  ],
+)
+
+// ─── files ────────────────────────────────────────────────────────────────
+// Workspace-wide knowledge documents (PDFs, markdown, text). The operator
+// uploads via Library; agents attach via `agent_files`, chats attach via
+// `thread_files`. Documents live on disk under `<data-dir>/knowledge/<id>/`;
+// extracted text + per-chunk embeddings drive `search_knowledge` retrieval.
+//
+// See `docs/knowledge-files.md` for design.
+
+export const files = pgTable(
+  'files',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Operator-editable display name. Defaults to original filename
+     *  on upload; may be renamed in the Library UI. */
+    name: text('name').notNull(),
+    /** Original uploaded filename (with extension). Immutable. */
+    filename: text('filename').notNull(),
+    /** Format discriminator: `pdf` | `md` | `txt` | `docx` | future kinds.
+     *  Plain text for v1; PDF lands in Phase 2. */
+    kind: text('kind').notNull(),
+    /** Byte size of the original upload (not the extracted text). */
+    bytes: integer('bytes').notNull(),
+    /** Auto-generated 2-3 sentence summary used in the system-prompt
+     *  catalog. Operator-editable; empty when the utility model
+     *  wasn't available at ingest time. */
+    description: text('description').notNull().default(''),
+    /** sha256 of the original bytes — dedup key. Two uploads of the
+     *  same file dedupe to one row. */
+    contentHash: text('content_hash').notNull(),
+    /** 1-based PDF page count; null for plain text. */
+    pageCount: integer('page_count'),
+    /** Absolute path on disk to the file's directory. Resolves to
+     *  `<data-dir>/knowledge/<id>/`. Stored so a re-ingest or
+     *  delete can locate the bytes without reconstructing the path. */
+    storagePath: text('storage_path').notNull(),
+    /** Ingestion lifecycle:
+     *    'pending' | 'extracting' | 'chunking' | 'embedding' |
+     *    'describing' | 'ready' | 'error'.
+     *  UI surfaces a pill keyed on this. `chunks_done` tracks
+     *  progress within the embedding step for resumability. */
+    ingestStatus: text('ingest_status').notNull().default('pending'),
+    /** Per-chunk progress within the embedding step. Lets a partial
+     *  failure resume from the last successfully-embedded chunk
+     *  instead of re-embedding from scratch. */
+    chunksDone: integer('chunks_done').notNull().default(0),
+    /** Chunking strategy used at ingest. `'flat'` (default): one
+     *  chunk size, every chunk is a searchable leaf. `'hierarchical'`:
+     *  parent chunks (~1500 tokens, not embedded, used as expansion
+     *  targets) + child chunks (~400 tokens, embedded, point at
+     *  parents via `file_chunks.parent_id`). See `docs/knowledge-files.md`
+     *  Phase 3. Switching modes for an existing file requires a
+     *  reingest. */
+    chunkingMode: text('chunking_mode').notNull().default('flat'),
+    /** Human-readable failure message when `ingest_status = 'error'`. */
+    ingestError: text('ingest_error'),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [
+    // Workspace-wide dedup. Same byte content uploaded twice surfaces
+    // the existing row (UI flow) instead of re-ingesting.
+    uniqueIndex('files_content_hash_uq').on(t.contentHash),
+    // Library list view orders by recency.
+    index('files_created_at_idx').on(t.createdAt),
+  ],
+)
+
+// ─── file_chunks ──────────────────────────────────────────────────────────
+// One row per ingested chunk. Drives hybrid retrieval: BM25 via the
+// `tsv` generated column + GIN index, vector cosine via the `embedding`
+// column + HNSW index.
+//
+// Vector dimension is hard-coded to 1024 for v1 (matches BGE-large /
+// most modern open-source embedders). Operators whose embedding
+// provider reports a different dim need to use the "Rebuild knowledge
+// index" workspace action (Phase 3). The `embedding_model` fingerprint
+// column makes the mismatch loud rather than silent.
+
+export const fileChunks = pgTable(
+  'file_chunks',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    fileId: uuid('file_id')
+      .notNull()
+      .references(() => files.id, { onDelete: 'cascade' }),
+    /** Phase 3 hierarchical chunking: nullable self-reference; null
+     *  means "leaf chunk". Retrieval matches children, expands to
+     *  parents on return. v1 always leaves this NULL. */
+    parentId: uuid('parent_id').references((): AnyPgColumn => fileChunks.id, {
+      onDelete: 'cascade',
+    }),
+    /** Position within the file, 0-based. */
+    chunkIndex: integer('chunk_index').notNull(),
+    /** 1-based PDF page for citation purposes; null for plain text. */
+    page: integer('page'),
+    /** Markdown-style heading trail, e.g. "# Lipid panel > ## LDL". */
+    sectionPath: text('section_path'),
+    /** Chunk text — the bit the LLM eventually sees as a citation
+     *  snippet (server may further trim). */
+    text: text('text').notNull(),
+    // NOTE: `file_chunks` also has a `tsv tsvector GENERATED ALWAYS AS
+    // (to_tsvector('english', "text")) STORED` column for BM25, added by
+    // migration 0015. Drizzle doesn't model it because its DSL can't
+    // express STORED-generated columns; future `db:generate` runs may
+    // emit a `DROP COLUMN "tsv"` — strip that statement before applying.
+    /** Phase 3 "Contextual Retrieval" blurb (Anthropic). Empty in v1. */
+    contextBlurb: text('context_blurb'),
+    /** Embedding-model fingerprint: `provider_kind:model_id:dim`. The
+     *  retrieval path computes the current fingerprint from the active
+     *  embedding provider and refuses to query chunks whose stored
+     *  fingerprint differs — surfaces as "Re-index required" rather
+     *  than silently wrong results. See docs/knowledge-files.md. */
+    embeddingModel: text('embedding_model').notNull(),
+    /** 1024-dim cosine vector for v1. */
+    embedding: vector('embedding', { dimensions: 1024 }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index('file_chunks_file_idx').on(t.fileId),
+    index('file_chunks_parent_idx').on(t.parentId),
+    // `tsv` (generated tsvector), GIN index, and HNSW vector index are
+    // added by raw SQL in the migration — drizzle's column DSL doesn't
+    // cover STORED-generated tsvector columns or HNSW USING-clauses
+    // yet (as of 0.45.2). See migration `0015_*.sql`.
+  ],
+)
+
+// ─── agent_files (join) ───────────────────────────────────────────────────
+// Per-agent persistent attachment. Each row gives an agent access to a
+// file via `search_knowledge` and adds the file to the prompt catalog.
+
+export const agentFiles = pgTable(
+  'agent_files',
+  {
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    fileId: uuid('file_id')
+      .notNull()
+      .references(() => files.id, { onDelete: 'cascade' }),
+    /** Display order in the Resources panel. Client-managed. */
+    position: integer('position').notNull().default(0),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.agentId, t.fileId] })],
+)
+
+// ─── thread_files (per-chat attachment) ───────────────────────────────────
+// Per-Mastra-thread file references. Used for drag-drop uploads inside
+// a chat. `thread_id` is a free-form text (Mastra owns its schema), so
+// there's no FK — the dispatcher's `deleteAgentThread` cleanup hook is
+// responsible for removing rows when a thread is deleted, AND for
+// physically removing the file (`files` row + disk) when
+// `ephemeral = true`.
+
+export const threadFiles = pgTable(
+  'thread_files',
+  {
+    threadId: text('thread_id').notNull(),
+    fileId: uuid('file_id')
+      .notNull()
+      .references(() => files.id, { onDelete: 'cascade' }),
+    /** True = this file was dragged into the chat with "save to library"
+     *  off; the cleanup hook deletes the underlying `files` row when
+     *  the thread is deleted. False = the file lives in the Library
+     *  independently; thread deletion only drops this attachment row. */
+    ephemeral: boolean('ephemeral').notNull().default(false),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.threadId, t.fileId] }),
+    index('thread_files_thread_idx').on(t.threadId),
   ],
 )
 
@@ -844,6 +1021,18 @@ export type AgentRepoInsert = typeof agentRepos.$inferInsert
 export type RepoRelationshipRow = typeof repoRelationships.$inferSelect
 export type RepoRelationshipInsert = typeof repoRelationships.$inferInsert
 
+export type FileRow = typeof files.$inferSelect
+export type FileInsert = typeof files.$inferInsert
+
+export type FileChunkRow = typeof fileChunks.$inferSelect
+export type FileChunkInsert = typeof fileChunks.$inferInsert
+
+export type AgentFileRow = typeof agentFiles.$inferSelect
+export type AgentFileInsert = typeof agentFiles.$inferInsert
+
+export type ThreadFileRow = typeof threadFiles.$inferSelect
+export type ThreadFileInsert = typeof threadFiles.$inferInsert
+
 export type McpConnectionRow = typeof mcpConnections.$inferSelect
 export type McpConnectionInsert = typeof mcpConnections.$inferInsert
 
@@ -885,6 +1074,10 @@ export const allTables = [
   repos,
   agentRepos,
   repoRelationships,
+  files,
+  fileChunks,
+  agentFiles,
+  threadFiles,
   mcpConnections,
   mcpOauthState,
   agentMcpTools,
@@ -909,6 +1102,10 @@ export const tableNames = [
   'repos',
   'agent_repos',
   'repo_relationships',
+  'files',
+  'file_chunks',
+  'agent_files',
+  'thread_files',
   'mcp_connections',
   'mcp_oauth_state',
   'agent_mcp_tools',
@@ -935,6 +1132,7 @@ export const tablesWithUpdatedAt = [
   'repos',
   'agent_repos',
   'repo_relationships',
+  'files',
   'mcp_connections',
   'mcp_oauth_state',
   'bridge_tools',

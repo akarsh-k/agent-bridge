@@ -172,6 +172,9 @@ export function matchLibraryProviders(path: string): boolean {
 export function matchLibraryRepos(path: string): boolean {
   return path === '/library/repos'
 }
+export function matchLibraryFiles(path: string): boolean {
+  return path === '/library/files'
+}
 export function matchLibraryMcp(path: string): boolean {
   return path === '/library/mcp'
 }

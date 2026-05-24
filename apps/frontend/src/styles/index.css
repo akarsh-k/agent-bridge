@@ -14,3 +14,7 @@
 @import './react-flow.css';
 @import './primitives.css';
 @import './shell.css';
+
+/* Page-colocated styles. Loaded here (not via per-page imports) so the
+ * Vite dev server bundles them once and the cascade order is explicit. */
+@import '../app/library/files/files-page.css';

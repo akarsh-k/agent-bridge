@@ -29,6 +29,7 @@ import {
 import { navigate } from '../../lib/router'
 import { useDragReorder } from '../../lib/use-drag-reorder'
 import { AttachRepoSheet } from './attach-repo-sheet'
+import { AttachFileSheet } from './attach-file-sheet'
 import { AttachMcpSheet } from './attach-mcp-sheet'
 import { SkillSheet } from './skill-sheet'
 import { RelationshipsSection } from './relationships-section'
@@ -154,6 +155,7 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
     agentResources,
     agents,
     detachRepo,
+    detachFile,
     removeSkill,
     patchSkill,
     setAgentMcpTools,
@@ -163,6 +165,7 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
   const inspectorEnabled = agent?.inspectorEnabled ?? true
 
   const [repoSheet, setRepoSheet] = useState(false)
+  const [fileSheet, setFileSheet] = useState(false)
   const [mcpSheet, setMcpSheet] = useState(false)
   const [skillSheet, setSkillSheet] = useState(false)
   const [editingSkillId, setEditingSkillId] = useState<string | null>(null)
@@ -428,6 +431,90 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
       {/* Repo relations — promoted to its own card so it's visible at
           a glance and the action button lines up with the others. */}
       <RelationshipsSection agentId={agentId} />
+
+      {/* Files card — knowledge documents the agent can search via the
+          `search_knowledge` tool. */}
+      <div className="ab-card ab-card-pad ab-form-section">
+        <CardHead
+          title="Files"
+          sub={`${resources?.attachedFiles.length ?? 0} attached · documents the agent can search via search_knowledge`}
+          action={
+            <Button
+              variant="secondary"
+              size="sm"
+              leading={<PlusIcon strokeWidth={2.4} />}
+              onClick={() => setFileSheet(true)}
+            >
+              Attach file
+            </Button>
+          }
+        />
+        {(resources?.attachedFiles.length ?? 0) === 0 ? (
+          <EmptyState
+            glyph={<FileIcon />}
+            title="No files attached"
+            body="Attach an uploaded file to give this agent access to a knowledge document. Upload files in Library → Files."
+            action={
+              <Button
+                variant="primary"
+                leading={<PlusIcon strokeWidth={2.4} />}
+                onClick={() => setFileSheet(true)}
+              >
+                Attach a file
+              </Button>
+            }
+          />
+        ) : (
+          <div className="ab-card ab-list-card">
+            {resources?.attachedFiles.map((af) => (
+              <div className="ab-list-row" key={af.file.id}>
+                <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+                  {af.file.kind.charAt(0).toUpperCase()}
+                </div>
+                <div className="ab-list-row-head">
+                  <div className="ab-list-row-title">{af.file.name}</div>
+                  <div
+                    className="ab-list-row-sub"
+                    style={{
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    {af.file.description.trim() ||
+                      `${af.file.kind.toUpperCase()} · ${(af.file.bytes / 1024).toFixed(1)} KB`}
+                  </div>
+                </div>
+                <div className="ab-list-row-meta">
+                  <RowMenu
+                    items={[
+                      {
+                        label: 'Detach file',
+                        destructive: true,
+                        onClick: () =>
+                          void (async () => {
+                            try {
+                              await detachFile(agentId, af.file.id)
+                              toast.success('File detached')
+                            } catch (e) {
+                              toast.error(
+                                e instanceof ApiError
+                                  ? e.message
+                                  : e instanceof Error
+                                    ? e.message
+                                    : 'Detach failed',
+                              )
+                            }
+                          })(),
+                      },
+                    ]}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* MCP connections card */}
       <div className="ab-card ab-card-pad ab-form-section">
@@ -709,6 +796,11 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
         open={repoSheet}
         agentId={agentId}
         onClose={() => setRepoSheet(false)}
+      />
+      <AttachFileSheet
+        open={fileSheet}
+        agentId={agentId}
+        onClose={() => setFileSheet(false)}
       />
       <AttachMcpSheet
         open={mcpSheet}

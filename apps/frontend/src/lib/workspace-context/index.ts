@@ -20,6 +20,8 @@
 import { createContext, useContext } from 'react'
 import type {
   AgentCreateInput,
+  AgentFileAttachInput,
+  AgentFileResponse,
   AgentResponse,
   AgentUpdateInput,
   AllowlistEntry,
@@ -27,6 +29,8 @@ import type {
   AttachRepoInput,
   AttachRepoUpdateInput,
   AttachedRepoResponse,
+  FileResponse,
+  FileUpdateInput,
   LlmProviderCreateInput,
   LlmProviderResponse,
   LlmProviderUpdateInput,
@@ -49,11 +53,19 @@ import type {
 
 export type WorkspaceStatus = 'loading' | 'ready' | 'error'
 
+/** A file attached to a single agent — join row + the file row, like
+ *  `AttachedRepoResponse` pairs an agent_repos row with its repo. */
+export interface AttachedFile {
+  readonly attachment: AgentFileResponse
+  readonly file: FileResponse
+}
+
 /** Bundle of per-agent dependent data keyed off an agent id. */
 export interface AgentResources {
   skills: readonly SkillResponse[]
   tools: readonly ToolResponse[]
   attachedRepos: readonly AttachedRepoResponse[]
+  attachedFiles: readonly AttachedFile[]
   mcpAllowlist: readonly AllowlistEntryResponse[]
   repoRelationships: readonly RepoRelationshipResponse[]
 }
@@ -65,6 +77,7 @@ export interface WorkspaceContextValue {
   // Top-level entities
   agents: readonly AgentResponse[]
   repos: readonly RepoResponse[]
+  files: readonly FileResponse[]
   mcpConnections: readonly McpConnectionResponse[]
   llmProviders: readonly LlmProviderResponse[]
 
@@ -148,6 +161,40 @@ export interface WorkspaceContextValue {
   removeLlmProvider: (id: string) => Promise<void>
   patchRepo: (id: string, patch: RepoUpdateInput) => Promise<RepoResponse>
   removeRepo: (id: string) => Promise<void>
+
+  // ─── Knowledge files ────────────────────────────────────────────────
+  /** Multipart upload. Returns the newly-created (or de-duped existing)
+   *  file row + a flag for which case it was. Newly-uploaded files land
+   *  with `ingestStatus='pending'` and stream through to `'ready'` in
+   *  the background. `threadId` (optional) attaches the file to a chat
+   *  thread immediately, used by the chat composer's drag-drop path.
+   *  `ephemeral=true` marks the thread attachment as a chat-only file
+   *  that the thread-delete cleanup hook will GC. */
+  uploadFile: (
+    args: {
+      file: File
+      name?: string
+      threadId?: string
+      ephemeral?: boolean
+    },
+  ) => Promise<{ file: FileResponse; duplicate: boolean }>
+  patchFile: (id: string, patch: FileUpdateInput) => Promise<FileResponse>
+  removeFile: (id: string) => Promise<void>
+  /** Re-runs the ingest pipeline. Use when the embedding provider
+   *  changes, or to retry a previously errored ingest. Status flips
+   *  back to `'pending'`. */
+  reingestFile: (id: string) => Promise<FileResponse>
+  /** Fetch one file row by id. Used by polling code to refresh
+   *  `ingestStatus` without a full workspace refetch. */
+  refreshFile: (id: string) => Promise<FileResponse | null>
+  /** Attach a workspace file to one agent. Server validates the file
+   *  exists; client updates `agentResources[agentId].attachedFiles`. */
+  attachFile: (
+    agentId: string,
+    fileId: string,
+    input?: AgentFileAttachInput,
+  ) => Promise<AttachedFile>
+  detachFile: (agentId: string, fileId: string) => Promise<void>
   createMcpConnection: (
     input: McpConnectionCreateInput,
   ) => Promise<McpConnectionResponse>

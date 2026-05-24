@@ -37,6 +37,8 @@ import {
 } from 'react'
 import type {
   AgentCreateInput,
+  AgentFileAttachInput,
+  AgentFileResponse,
   AgentResponse,
   AgentUpdateInput,
   AllowlistEntry,
@@ -44,6 +46,8 @@ import type {
   AttachRepoInput,
   AttachRepoUpdateInput,
   AttachedRepoResponse,
+  FileResponse,
+  FileUpdateInput,
   LlmProviderCreateInput,
   LlmProviderResponse,
   LlmProviderUpdateInput,
@@ -66,14 +70,16 @@ import type {
 import {
   WorkspaceContext,
   type AgentResources,
+  type AttachedFile,
   type WorkspaceContextValue,
   type WorkspaceStatus,
 } from '../workspace-context'
-import { callApi, rpc } from '../rpc'
+import { ApiError, apiBaseUrl, callApi, rpc } from '../rpc'
 
 interface TopLevelData {
   agents: readonly AgentResponse[]
   repos: readonly RepoResponse[]
+  files: readonly FileResponse[]
   mcpConnections: readonly McpConnectionResponse[]
   llmProviders: readonly LlmProviderResponse[]
 }
@@ -81,48 +87,75 @@ interface TopLevelData {
 const EMPTY_TOP_LEVEL: TopLevelData = {
   agents: [],
   repos: [],
+  files: [],
   mcpConnections: [],
   llmProviders: [],
 }
 
 async function fetchTopLevel(): Promise<TopLevelData> {
-  const [agents, repos, mcpConnections, llmProviders] = await Promise.all([
-    callApi<{ ok: true; agents: readonly AgentResponse[] }>(
-      rpc.api.agents.$get(),
-    ).then((r) => r.agents),
-    callApi<{ ok: true; repos: readonly RepoResponse[] }>(
-      rpc.api.repos.$get(),
-    ).then((r) => r.repos),
-    callApi<{ ok: true; mcpConnections: readonly McpConnectionResponse[] }>(
-      rpc.api['mcp-connections'].$get(),
-    ).then((r) => r.mcpConnections),
-    callApi<{ ok: true; llmProviders: readonly LlmProviderResponse[] }>(
-      rpc.api['llm-providers'].$get(),
-    ).then((r) => r.llmProviders),
-  ])
-  return { agents, repos, mcpConnections, llmProviders }
+  const [agents, repos, files, mcpConnections, llmProviders] =
+    await Promise.all([
+      callApi<{ ok: true; agents: readonly AgentResponse[] }>(
+        rpc.api.agents.$get(),
+      ).then((r) => r.agents),
+      callApi<{ ok: true; repos: readonly RepoResponse[] }>(
+        rpc.api.repos.$get(),
+      ).then((r) => r.repos),
+      callApi<{ ok: true; files: readonly FileResponse[] }>(
+        rpc.api.files.$get(),
+      ).then((r) => r.files),
+      callApi<{ ok: true; mcpConnections: readonly McpConnectionResponse[] }>(
+        rpc.api['mcp-connections'].$get(),
+      ).then((r) => r.mcpConnections),
+      callApi<{ ok: true; llmProviders: readonly LlmProviderResponse[] }>(
+        rpc.api['llm-providers'].$get(),
+      ).then((r) => r.llmProviders),
+    ])
+  return { agents, repos, files, mcpConnections, llmProviders }
 }
 
 async function fetchAgentResources(agentId: string): Promise<AgentResources> {
-  const [skills, tools, attachedRepos, mcpAllowlist, repoRelationships] =
-    await Promise.all([
-      callApi<{ ok: true; skills: readonly SkillResponse[] }>(
-        rpc.api.agents[':agentId'].skills.$get({ param: { agentId } }),
-      ).then((r) => r.skills),
-      callApi<{ ok: true; tools: readonly ToolResponse[] }>(
-        rpc.api.agents[':agentId'].tools.$get({ param: { agentId } }),
-      ).then((r) => r.tools),
-      callApi<{ ok: true; attachments: readonly AttachedRepoResponse[] }>(
-        rpc.api.agents[':agentId'].repos.$get({ param: { agentId } }),
-      ).then((r) => r.attachments),
-      callApi<{ ok: true; tools: readonly AllowlistEntryResponse[] }>(
-        rpc.api.agents[':agentId']['mcp-tools'].$get({ param: { agentId } }),
-      ).then((r) => r.tools),
-      callApi<{ ok: true; relationships: readonly RepoRelationshipResponse[] }>(
-        rpc.api.agents[':agentId']['repo-relationships'].$get({ param: { agentId } }),
-      ).then((r) => r.relationships),
-    ])
-  return { skills, tools, attachedRepos, mcpAllowlist, repoRelationships }
+  const [
+    skills,
+    tools,
+    attachedRepos,
+    attachedFiles,
+    mcpAllowlist,
+    repoRelationships,
+  ] = await Promise.all([
+    callApi<{ ok: true; skills: readonly SkillResponse[] }>(
+      rpc.api.agents[':agentId'].skills.$get({ param: { agentId } }),
+    ).then((r) => r.skills),
+    callApi<{ ok: true; tools: readonly ToolResponse[] }>(
+      rpc.api.agents[':agentId'].tools.$get({ param: { agentId } }),
+    ).then((r) => r.tools),
+    callApi<{ ok: true; attachments: readonly AttachedRepoResponse[] }>(
+      rpc.api.agents[':agentId'].repos.$get({ param: { agentId } }),
+    ).then((r) => r.attachments),
+    callApi<{
+      ok: true
+      attachments: readonly {
+        attachment: AgentFileResponse
+        file: FileResponse
+      }[]
+    }>(
+      rpc.api.agents[':agentId'].files.$get({ param: { agentId } }),
+    ).then((r) => r.attachments),
+    callApi<{ ok: true; tools: readonly AllowlistEntryResponse[] }>(
+      rpc.api.agents[':agentId']['mcp-tools'].$get({ param: { agentId } }),
+    ).then((r) => r.tools),
+    callApi<{ ok: true; relationships: readonly RepoRelationshipResponse[] }>(
+      rpc.api.agents[':agentId']['repo-relationships'].$get({ param: { agentId } }),
+    ).then((r) => r.relationships),
+  ])
+  return {
+    skills,
+    tools,
+    attachedRepos,
+    attachedFiles,
+    mcpAllowlist,
+    repoRelationships,
+  }
 }
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
@@ -237,6 +270,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           skills: [],
           tools: [],
           attachedRepos: [],
+          attachedFiles: [],
           mcpAllowlist: [],
           repoRelationships: [],
         },
@@ -294,6 +328,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           skills: [],
           tools: [],
           attachedRepos: [],
+          attachedFiles: [],
           mcpAllowlist: [],
           repoRelationships: [],
         }
@@ -320,6 +355,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           skills: [],
           tools: [],
           attachedRepos: [],
+          attachedFiles: [],
           mcpAllowlist: [],
           repoRelationships: [],
         }
@@ -590,6 +626,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           skills: [],
           tools: [],
           attachedRepos: [],
+          attachedFiles: [],
           mcpAllowlist: [],
           repoRelationships: [],
         }
@@ -755,6 +792,251 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       return changed ? next : prev
     })
   }, [])
+
+  // ─── Knowledge files ───────────────────────────────────────────────────
+
+  const uploadFile = useCallback(
+    async (args: {
+      file: File
+      name?: string
+      threadId?: string
+      ephemeral?: boolean
+    }): Promise<{ file: FileResponse; duplicate: boolean }> => {
+      // Hono's typed RPC doesn't expose a multipart helper; build the
+      // FormData by hand and route through `callApi` (which handles the
+      // structured-error envelope identically to typed calls).
+      const formData = new FormData()
+      formData.append('file', args.file)
+      if (args.name) formData.append('name', args.name)
+      if (args.threadId) formData.append('threadId', args.threadId)
+      if (args.ephemeral) formData.append('ephemeral', 'true')
+      const result = await callApi<{
+        ok: true
+        file: FileResponse
+        duplicate: boolean
+      }>(
+        fetch(`${apiBaseUrl}/api/files`, {
+          method: 'POST',
+          body: formData,
+        }),
+      )
+      setTopLevel((prev) => {
+        // Dedup if the server returned an existing row.
+        const filtered = prev.files.filter((f) => f.id !== result.file.id)
+        return { ...prev, files: [result.file, ...filtered] }
+      })
+      return { file: result.file, duplicate: result.duplicate }
+    },
+    [],
+  )
+
+  const patchFile = useCallback(
+    async (id: string, patch: FileUpdateInput): Promise<FileResponse> => {
+      const { file } = await callApi<{ ok: true; file: FileResponse }>(
+        rpc.api.files[':id'].$patch({ param: { id }, json: patch }),
+      )
+      setTopLevel((prev) => ({
+        ...prev,
+        files: prev.files.map((f) => (f.id === id ? file : f)),
+      }))
+      // Mirror into per-agent attached files so the Resources panel
+      // sees the new name/description without a refetch.
+      setAgentResources((prev) => {
+        let changed = false
+        const next: Record<string, AgentResources> = {}
+        for (const [agentId, bundle] of Object.entries(prev)) {
+          const updated = bundle.attachedFiles.map((a) =>
+            a.file.id === id ? { ...a, file } : a,
+          )
+          if (
+            updated.length === bundle.attachedFiles.length &&
+            updated.every((a, i) => a === bundle.attachedFiles[i])
+          ) {
+            next[agentId] = bundle
+            continue
+          }
+          changed = true
+          next[agentId] = { ...bundle, attachedFiles: updated }
+        }
+        return changed ? next : prev
+      })
+      return file
+    },
+    [],
+  )
+
+  const removeFile = useCallback(async (id: string): Promise<void> => {
+    await callApi<{ ok: true }>(
+      rpc.api.files[':id'].$delete({ param: { id } }),
+    )
+    setTopLevel((prev) => ({
+      ...prev,
+      files: prev.files.filter((f) => f.id !== id),
+    }))
+    // Server's FK cascade drops `agent_files` rows; mirror it.
+    setAgentResources((prev) => {
+      let changed = false
+      const next: Record<string, AgentResources> = {}
+      for (const [agentId, bundle] of Object.entries(prev)) {
+        const filtered = bundle.attachedFiles.filter(
+          (a) => a.file.id !== id,
+        )
+        if (filtered.length === bundle.attachedFiles.length) {
+          next[agentId] = bundle
+          continue
+        }
+        changed = true
+        next[agentId] = { ...bundle, attachedFiles: filtered }
+      }
+      return changed ? next : prev
+    })
+  }, [])
+
+  const reingestFile = useCallback(
+    async (id: string): Promise<FileResponse> => {
+      // Optimistic flip to `pending` BEFORE the POST goes out. The
+      // FileRow on the Library page subscribes to `file:<id>` only
+      // when the row is in flight; without this flip the SSE
+      // subscription only opens AFTER the server response — which
+      // races against the ingest pipeline's first publish (Redis
+      // pub/sub doesn't buffer). Flipping locally first means the
+      // EventSource is already established when the backend
+      // publishes the first `knowledge.ingest.started` event.
+      setTopLevel((prev) => ({
+        ...prev,
+        files: prev.files.map((f) =>
+          f.id === id
+            ? {
+                ...f,
+                ingestStatus: 'pending',
+                ingestError: null,
+                chunksDone: 0,
+              }
+            : f,
+        ),
+      }))
+      try {
+        const { file } = await callApi<{ ok: true; file: FileResponse }>(
+          rpc.api.files[':id'].reingest.$post({ param: { id } }),
+        )
+        setTopLevel((prev) => ({
+          ...prev,
+          files: prev.files.map((f) => (f.id === id ? file : f)),
+        }))
+        return file
+      } catch (err) {
+        // POST failed. Don't snapshot-restore: another mutation could
+        // have landed between the optimistic flip and now (e.g., a
+        // concurrent description edit), and restoring a pre-flip snapshot
+        // would clobber it. Re-fetch the row from the server instead —
+        // that gives us the truth without overwriting anything.
+        try {
+          await refreshFile(id)
+        } catch {
+          /* swallowed — the original error below is the real story */
+        }
+        throw err
+      }
+    },
+    // refreshFile is defined just below in the same provider; declared
+    // via useCallback with [] deps so its identity is stable across
+    // renders. Listing it here just to satisfy the lint without
+    // re-creating reingestFile on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
+
+  const refreshFile = useCallback(
+    async (id: string): Promise<FileResponse | null> => {
+      try {
+        const { file } = await callApi<{
+          ok: true
+          file: FileResponse
+          chunkCount: number
+        }>(rpc.api.files[':id'].$get({ param: { id } }))
+        setTopLevel((prev) => ({
+          ...prev,
+          files: prev.files.map((f) => (f.id === id ? file : f)),
+        }))
+        return file
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'not_found') return null
+        throw err
+      }
+    },
+    [],
+  )
+
+  const attachFile = useCallback(
+    async (
+      agentId: string,
+      fileId: string,
+      input?: AgentFileAttachInput,
+    ): Promise<AttachedFile> => {
+      const result = await callApi<{
+        ok: true
+        attachment: AgentFileResponse
+        file: FileResponse
+      }>(
+        rpc.api.agents[':agentId'].files[':fileId'].$post({
+          param: { agentId, fileId },
+          json: input ?? {},
+        }),
+      )
+      const attached: AttachedFile = {
+        attachment: result.attachment,
+        file: result.file,
+      }
+      setAgentResources((prev) => {
+        const current: AgentResources = prev[agentId] ?? {
+          skills: [],
+          tools: [],
+          attachedRepos: [],
+          attachedFiles: [],
+          mcpAllowlist: [],
+          repoRelationships: [],
+        }
+        return {
+          ...prev,
+          [agentId]: {
+            ...current,
+            attachedFiles: [
+              ...current.attachedFiles.filter(
+                (a) => a.file.id !== fileId,
+              ),
+              attached,
+            ],
+          },
+        }
+      })
+      return attached
+    },
+    [],
+  )
+
+  const detachFile = useCallback(
+    async (agentId: string, fileId: string): Promise<void> => {
+      await callApi<{ ok: true }>(
+        rpc.api.agents[':agentId'].files[':fileId'].$delete({
+          param: { agentId, fileId },
+        }),
+      )
+      setAgentResources((prev) => {
+        const current = prev[agentId]
+        if (!current) return prev
+        return {
+          ...prev,
+          [agentId]: {
+            ...current,
+            attachedFiles: current.attachedFiles.filter(
+              (a) => a.file.id !== fileId,
+            ),
+          },
+        }
+      })
+    },
+    [],
+  )
 
   const createMcpConnection = useCallback(
     async (
@@ -939,6 +1221,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       error,
       agents: topLevel.agents,
       repos: topLevel.repos,
+      files: topLevel.files,
       mcpConnections: topLevel.mcpConnections,
       llmProviders: topLevel.llmProviders,
       agentResources,
@@ -966,6 +1249,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       patchLlmProviderModels,
       patchRepo,
       removeRepo,
+      uploadFile,
+      patchFile,
+      removeFile,
+      reingestFile,
+      refreshFile,
+      attachFile,
+      detachFile,
       createMcpConnection,
       patchMcpConnection,
       removeMcpConnection,
@@ -1001,6 +1291,13 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       patchLlmProviderModels,
       patchRepo,
       removeRepo,
+      uploadFile,
+      patchFile,
+      removeFile,
+      reingestFile,
+      refreshFile,
+      attachFile,
+      detachFile,
       createMcpConnection,
       patchMcpConnection,
       removeMcpConnection,

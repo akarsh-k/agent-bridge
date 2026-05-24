@@ -20,7 +20,7 @@
  * See `docs/ARCHITECTURE.md` §8.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactElement } from 'react'
 import type { SystemToolDefinition } from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
 import { Button } from '../../ui/button'
@@ -183,70 +183,126 @@ export function ToolsTab({ agentId }: { agentId: string }) {
         </div>
       )
     }
-    return (
-      <div style={{ opacity: readyRepos.length === 0 ? 0.6 : 1 }}>
-        {systemTools.tools.map((t) => {
-          const summary = firstSentence(t.description)
-          const hasMore = summary !== t.description.trim()
-          const isExpanded = expandedSystemTool === t.name
-          return (
-            <div key={t.name}>
-              <button
-                type="button"
-                className="ab-list-row"
-                onClick={hasMore ? () => toggleSystemTool(t.name) : undefined}
-                disabled={!hasMore}
-                aria-expanded={hasMore ? isExpanded : undefined}
-                style={{
-                  width: '100%',
-                  background: 'transparent',
-                  border: 'none',
-                  font: 'inherit',
-                  textAlign: 'left',
-                  cursor: hasMore ? 'pointer' : 'default',
-                }}
-              >
-                <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-                  <ToolIcon />
-                </div>
-                <div className="ab-list-row-head">
-                  <div className="ab-list-row-title ab-mono">{t.name}</div>
-                  <div className="ab-list-row-sub">{summary}</div>
-                </div>
-                <div className="ab-list-row-meta">
-                  <Pill kind="accent">Built-in</Pill>
-                  {hasMore && (
-                    <span
-                      className="ab-row-affordance"
-                      aria-hidden="true"
-                      style={{
-                        transform: isExpanded ? 'rotate(180deg)' : undefined,
-                        transition: 'transform 160ms var(--ease-out)',
-                        display: 'inline-flex',
-                      }}
-                    >
-                      <ChevronDownIcon />
-                    </span>
-                  )}
-                </div>
-              </button>
-              {isExpanded && (
-                <div
+    // Split into inspector wrappers (repo-bound group) and workspace
+    // built-ins (search_knowledge, read_skill — each mounts on its own
+    // gate). Older backends predate the `group` field; the shared
+    // schema defaults missing values to `inspector` so this stays
+    // forwards-compatible.
+    const inspectorRows = systemTools.tools.filter(
+      (t) => (t.group ?? 'inspector') === 'inspector',
+    )
+    const builtinRows = systemTools.tools.filter((t) => t.group === 'builtin')
+
+    const renderRow = (
+      t: SystemToolDefinition,
+      groupDimmed: boolean,
+    ): ReactElement => {
+      const summary = firstSentence(t.description)
+      const hasMore = summary !== t.description.trim() || Boolean(t.mountWhen)
+      const isExpanded = expandedSystemTool === t.name
+      return (
+        <div key={t.name}>
+          <button
+            type="button"
+            className="ab-list-row"
+            onClick={hasMore ? () => toggleSystemTool(t.name) : undefined}
+            disabled={!hasMore}
+            aria-expanded={hasMore ? isExpanded : undefined}
+            style={{
+              width: '100%',
+              background: 'transparent',
+              border: 'none',
+              font: 'inherit',
+              textAlign: 'left',
+              cursor: hasMore ? 'pointer' : 'default',
+              opacity: groupDimmed ? 0.6 : 1,
+            }}
+          >
+            <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+              <ToolIcon />
+            </div>
+            <div className="ab-list-row-head">
+              <div className="ab-list-row-title ab-mono">{t.name}</div>
+              <div className="ab-list-row-sub">{summary}</div>
+            </div>
+            <div className="ab-list-row-meta">
+              <Pill kind="accent">Built-in</Pill>
+              {hasMore && (
+                <span
+                  className="ab-row-affordance"
+                  aria-hidden="true"
                   style={{
-                    padding: '14px 18px 14px 62px',
-                    fontSize: 13,
-                    lineHeight: 1.55,
-                    background: 'var(--surface-hi)',
-                    borderTop: '1px solid var(--border)',
-                    whiteSpace: 'pre-wrap',
+                    transform: isExpanded ? 'rotate(180deg)' : undefined,
+                    transition: 'transform 160ms var(--ease-out)',
+                    display: 'inline-flex',
                   }}
                 >
-                  {t.description.trim()}
+                  <ChevronDownIcon />
+                </span>
+              )}
+            </div>
+          </button>
+          {isExpanded && (
+            <div
+              style={{
+                padding: '14px 18px 14px 62px',
+                fontSize: 13,
+                lineHeight: 1.55,
+                background: 'var(--surface-hi)',
+                borderTop: '1px solid var(--border)',
+                whiteSpace: 'pre-wrap',
+              }}
+            >
+              {t.description.trim()}
+              {t.mountWhen && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    fontSize: 11.5,
+                    color: 'var(--text-muted)',
+                    fontStyle: 'italic',
+                    whiteSpace: 'normal',
+                  }}
+                >
+                  {t.mountWhen}
                 </div>
               )}
             </div>
-          )
-        })}
+          )}
+        </div>
+      )
+    }
+
+    return (
+      <div>
+        {inspectorRows.length > 0 && (
+          <div style={{ opacity: readyRepos.length === 0 ? 0.6 : 1 }}>
+            {inspectorRows.map((t) => renderRow(t, false))}
+          </div>
+        )}
+        {builtinRows.length > 0 && (
+          <>
+            {inspectorRows.length > 0 && (
+              <div
+                style={{
+                  padding: '10px 18px 6px',
+                  fontSize: 10.5,
+                  fontWeight: 600,
+                  letterSpacing: '0.12em',
+                  textTransform: 'uppercase',
+                  color: 'var(--text-muted)',
+                  borderTop: '1px solid var(--border)',
+                  background: 'var(--surface)',
+                }}
+              >
+                Workspace built-ins
+              </div>
+            )}
+            <div>
+              {builtinRows.map((t) => renderRow(t, false))}
+            </div>
+          </>
+        )}
       </div>
     )
   }
@@ -351,13 +407,14 @@ export function ToolsTab({ agentId }: { agentId: string }) {
         <div className="ab-section-head">
           <div className="ab-section-title">Tools</div>
           <div className="ab-section-sub">
-            {systemToolCount} built-in · the inspector wrappers
-            (find_in_codebase, trace_flow, assess_change_impact,
-            debug_help, understand_module, list_repos) — the LLM picks
-            among these to query the attached repos. Auto-attached to
-            every agent with at least one indexed repo. For tools the
-            IDE calls into the agent, see the{' '}
-            <strong>Bridge tools</strong> tab.
+            {systemToolCount} built-in · the inspector wrappers query
+            attached repos (auto-mounted when this agent has at least
+            one indexed repo), plus workspace-level tools like{' '}
+            <code className="ab-mono">search_knowledge</code> for
+            uploaded files and <code className="ab-mono">read_skill</code>{' '}
+            for lazy-loaded skills. Expand a row for the full description
+            and mount condition. For tools the IDE calls into the agent,
+            see the <strong>Bridge tools</strong> tab.
           </div>
         </div>
 

@@ -11,6 +11,7 @@ import { ChevronRightIcon, McpIcon, PlusIcon } from '../../../ui/icons'
 import { McpCreateSheet } from '../../../features/library/mcp-create-sheet'
 import { McpAuthBadge } from '../../../features/library/mcp-auth-badge'
 import { confirmDialog } from '../../../ui/dialog-store'
+import { LibraryAttachNote } from '../../../ui/library-attach-note'
 import { toast } from '../../../ui/toast-store'
 import { ApiError } from '../../../lib/rpc'
 
@@ -66,6 +67,8 @@ export function McpPage() {
           </Button>
         }
       />
+
+      <LibraryAttachNote subject="mcp" />
 
       {mcpConnections.length === 0 ? (
         <EmptyState

@@ -51,6 +51,14 @@ export const agentRunCreateInputSchema = z
      * workspace.
      */
     resourceId: z.string().regex(RUN_ID_LIKE).optional(),
+    /**
+     * Knowledge file ids the operator explicitly @-mentioned this turn.
+     * The dispatcher forces these into `search_knowledge`'s default
+     * scope and raises the per-burst cap so multi-mention queries can
+     * fan out cleanly. Server-side filtered against agent + thread
+     * attachments — anything else is silently dropped.
+     */
+    referencedFileIds: z.array(z.uuid()).max(20).optional(),
   })
   .strict()
 

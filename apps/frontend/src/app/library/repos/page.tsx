@@ -14,6 +14,7 @@ import {
 } from '../../../ui/icons'
 import { RepoCreateSheet } from '../../../features/library/repo-create-sheet'
 import { confirmDialog } from '../../../ui/dialog-store'
+import { LibraryAttachNote } from '../../../ui/library-attach-note'
 import { toast } from '../../../ui/toast-store'
 import { ApiError } from '../../../lib/rpc'
 
@@ -74,6 +75,8 @@ export function ReposPage() {
           </Button>
         }
       />
+
+      <LibraryAttachNote subject="repo" />
 
       {repos.length === 0 ? (
         <EmptyState

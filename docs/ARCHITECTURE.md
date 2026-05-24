@@ -14,6 +14,7 @@
 - [9. Frontend architecture (`apps/frontend`)](#9-frontend-architecture-appsfrontend)
 - [10. Wrapper-tool architecture (inspector toolkit)](#10-wrapper-tool-architecture-inspector-toolkit)
 - [11. Operational subsystems](#11-operational-subsystems)
+- [12. Knowledge files subsystem](#12-knowledge-files-subsystem)
 
 ## 0. What this is and how it fits together
 
@@ -310,6 +311,15 @@ behind six deterministic wrappers (`find_in_codebase`, `trace_flow`,
 fallback (ripgrep, see §10.12), and the auto-attached system prompt.
 Full design lives in §10 below.
 
+The same package also owns the **knowledge-files subsystem**:
+the file ingest pipeline (`knowledge-ingest.ts` — extract → chunk
+→ embed → describe), the `search_knowledge` built-in tool
+(`knowledge-tool.ts` — hybrid retrieval, LLM-as-judge rerank), the
+file_chunks column-dim manager (`knowledge-dim.ts` — `withDimLock`
+serialised DDL), and the per-run AsyncLocalStorage carrying thread-
+scope + `@`-mention refs (`run-context.ts`). Full design lives in
+§12 below.
+
 ## 3. Isolation guarantees (must not regress)
 
 Every runtime write the app makes lives under **one** path, the
@@ -470,7 +480,7 @@ JSON-RPC; treating it as ephemeral was the mismatch.
 | Property              | Behaviour                                                                                                                                                                                                            |
 | --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Key                   | `agentId`. One cached `BuiltAgent` per agent.                                                                                                                                                                        |
-| Invalidation          | Content hash over `MAX(updated_at)` across `agents`, `skills`, `tools`, `agent_repos`, `repos` (referenced via attachments — repo-status changes drive gitnexus mount), `repo_relationships`, `agent_mcp_tools`, `mcp_connections` (referenced via allowlist), and the agent's `llm_provider`. Recomputed every `getOrBuild`; mismatch → tear down + rebuild. |
+| Invalidation          | Content hash over `MAX(updated_at)` across `agents`, `skills`, `tools`, `agent_repos`, `repos` (referenced via attachments — repo-status changes drive gitnexus mount), `repo_relationships`, `agent_mcp_tools`, `mcp_connections` (referenced via allowlist), the agent's `llm_provider`, plus `MAX(agent_files.created_at)` and `MAX(files.updated_at WHERE attached)` so file attach/detach + file edits (rename, description, chunkingMode flip) invalidate the cached `BuiltAgent` and re-build the attached-files catalog block. Recomputed every `getOrBuild`; mismatch → tear down + rebuild. |
 | In-flight de-dup      | Two concurrent `getOrBuild`s for the same agent share one build promise. Otherwise a chat-tool-call burst could spawn N parallel Notion subprocesses for the same agent.                                             |
 | Eviction              | LRU bounded by `MAX_ENTRIES = 8`; idle entries past `TTL_MS = 30 min` dropped on access.                                                                                                                             |
 | Process exit          | Backend's graceful shutdown (`server.ts`) and mcp-bridge's stdio-close handler both call `builtAgentCache.dispose()` so MCP subprocesses don't outlive the parent.                                                   |
@@ -535,6 +545,7 @@ Everything else. Mastra has no opinion or schema here, so we design freely:
 | `mcp_connections`, `agent_mcp_tools` | Mastra consumes MCP tools at runtime, not DB  |
 | `llm_providers` (incl. `embedding_dims`) | Mastra providers are instantiated, not stored |
 | `bridge_tools`                       | Operator-authored IDE-facing tools (§8.2)     |
+| `files`, `file_chunks` (incl. `embedding vector(N)` + `tsv` GENERATED), `agent_files`, `thread_files` | Knowledge documents + retrieval index. Mastra has no document schema (§12) |
 | `runs` (incl. `minirepo_json` jsonb) | UI-facing audit log + mini-repo envelope cache |
 | `run_events`                         | UI-facing audit log; `mastra.traces` is OTel  |
 
@@ -626,12 +637,19 @@ Fully modeled in the `public.*` schema today:
 | `tools`           | Native tools defined in code (http, shell, custom)  |
 | `mcp_connections` | Registered MCP servers (Notion, Datadog, GitNexus…) |
 | `agent_mcp_tools` | Per-agent allowlist into those MCP servers          |
+| `agent_files` + `files` (ready only) | Knowledge documents searchable via `search_knowledge` (§12) |
+| `skills` (with `always_include = false`) | Lazy skills the LLM pulls via `read_skill`         |
 
 `packages/agents` is the only place that reads these. At runtime it merges
 them with Mastra built-ins and hands the combined set to `new Agent({ tools,
 … })`. Users never see "agent tools" in the UI as a unified concept — they
-see "Tools", "MCP Connections", etc. separately, because the authoring UX
-differs per kind.
+see "Tools", "MCP Connections", "Files", "Skills" separately, because the
+authoring UX differs per kind. The Tools tab surfaces a unified read-only
+"Built-in tools" list that includes the six inspector wrappers
+**plus** workspace-level built-ins (`search_knowledge`, `read_skill`),
+each tagged with its own mount condition (`group: 'inspector'|'builtin'`,
+`mountWhen` description) so operators can see the full picture of what the
+LLM has available without spelunking the source.
 
 **Tool-name namespacing.** Two MCPs in the same agent can easily
 both expose `search` or `query`. To keep the keys of `new Agent({ tools })`
@@ -777,6 +795,7 @@ under `NAVIGATE`, `LIBRARY`, `SYSTEM` so this mental model stays visible.
 /library/providers/:id           LLM provider detail
 /library/repos                   Repositories — list
 /library/repos/:id               Repo detail (clone/index/wiki/graph)
+/library/files                   Knowledge documents — list (§12)
 /library/mcp                     MCP connections — list
 /library/mcp/:id                 MCP connection detail
 /bridge                          Cross-agent IDE bridge dashboard
@@ -1715,9 +1734,11 @@ working-memory + Jinja interaction on local templates.
 `/api`, grouped by concern. Agent-scoped routers mount under
 `/api/agents/:agentId/…` (`agents`, `skills`, `tools`, `bridge-tools`,
 `agent-runs`, `agent-threads`, `agent-config-events`,
-`agent-mcp-tools`, `agent-repos`, `agent-token-estimate`,
+`agent-mcp-tools`, `agent-repos`, `agent-files` (attach/detach
+workspace knowledge files), `agent-token-estimate`,
 `agent-working-memory`). Workspace-global resources
 mount at the API root (`llm-providers`, `mcp-connections`, `repos`,
+`files` (knowledge document CRUD + ingest controls — see §12),
 `runs`, `worker-jobs`, `bridge`). Read-only system surface lives under
 `/api/system/…` (`system-tools`, `system-skill`). SSE streaming runs
 through `/api/events`. Repo background-job mutations are a secondary
@@ -1729,9 +1750,11 @@ the redirect URL is registered with upstreams at dynamic-client-
 registration time and must outlive API versioning.
 
 Body-limit policy is path-aware: the global cap is 64 KiB, except
-`/api/agents/import` which gets 4 MiB to accommodate skill markdown
-+ `configJson` bundles. CORS, secure-headers, request logging
-(dev-only), and the unhandled-error catch live on the outer app.
+`/api/agents/import` (4 MiB for skill markdown + `configJson` bundles)
+and `POST /api/files` (50 MiB + framing for knowledge-document
+uploads — matches `MAX_FILE_BYTES`). CORS, secure-headers, request
+logging (dev-only), and the unhandled-error catch live on the
+outer app.
 
 The frontend consumes this surface through Hono's typed RPC client
 (`apps/frontend/src/lib/rpc/index.ts`). `hc<AppType>(apiBaseUrl)`
@@ -1785,3 +1808,220 @@ registry build for both inspector-enabled and blank agents; it runs
 model-free by default and, when `SMOKE_CHAT_*` is set, additionally
 round-trips `inspect_codebase` to assert the wire envelope carries
 `agent_repos` + `repo_relationships`.
+
+Two more cover the knowledge subsystem. `smoke-knowledge-tool.ts` is
+pure-function (no DB, no embedder, ≈1 s) and pins `rrfFuse`,
+`parseRerankResponse`, `resolveBaseUrl` normalization, and
+`buildSearchKnowledgeTool`'s mount gates. `smoke-knowledge-e2e.ts`
+is the heavyweight: a real PDF fixture (`tests/fixtures/pdf/`) gets
+uploaded, embedded against the workspace embedder, queried via
+`search_knowledge` (5 topical queries + a nonsense query), and the
+result asserted on shape + score ordering + citation envelope. It
+also exercises the rebuild + dim-swap paths (`ensureFileChunksDim`,
+`rebuildFileChunksAtDim`), the orphan-chunk cleanup, and the
+concurrent-DDL serialization (`withDimLock`). 60+ checks. Needs
+`SMOKE_EMBEDDING_*` + `SMOKE_CHAT_*` env pointed at real local
+endpoints (llama.cpp / Ollama / vLLM all fine).
+
+## 12. Knowledge files subsystem
+
+Operator uploads a markdown / text / PDF document. The system chunks
+it, embeds the chunks, and exposes a built-in `search_knowledge`
+tool the LLM can call to find passages by meaning + literal terms.
+Citations come back with file name, page, section, and snippet so
+the LLM grounds answers in operator-owned content instead of model
+weights.
+
+Full feature design lives in `docs/knowledge-files.md`. This section
+is the architectural map: tables, runtime path, tool surface,
+unusual patterns worth knowing about.
+
+### 12.1 Schema
+
+| Table          | Role                                                                                                                                                                                                                                                                                                                  |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `files`        | Workspace document. `id`, `name` (editable), `filename`, `kind` ('md'|'txt'|'pdf'), `bytes`, `description`, `content_hash` (sha256, dedup), `page_count`, `storage_path` (resolved to `<dataDir>/knowledge/<id>/`), `ingest_status` ('pending'→'extracting'→'chunking'→'embedding'→'describing'→'ready'\|'error'), `chunks_done` (resume offset), `ingest_error`, `chunking_mode` ('flat'\|'hierarchical', operator-toggleable per file). |
+| `file_chunks`  | The embedded passages. `id`, `file_id` (FK cascade), `parent_id` (self-ref nullable — child chunks point at parents in hierarchical mode), `chunk_index`, `page`, `section_path`, `text`, `context_blurb` (Anthropic Contextual Retrieval, env-gated), `embedding_model` (fingerprint string — see §12.4), `embedding vector(N)` where `N` is the active embedding provider's dim, plus a generated `tsv tsvector` column + GIN index for BM25. HNSW cosine index on `embedding`. |
+| `agent_files`  | Per-agent attachment. `(agent_id, file_id, position, created_at)`. The catalog block in `composeInstructions` reads this; the `search_knowledge` tool intersects requested `file_ids` with this set ∪ `thread_files` before searching.                                                                            |
+| `thread_files` | Per-chat drag-drop attachment. `(thread_id, file_id, ephemeral)`. `ephemeral=true` rows are GC'd by `deleteAgentThread` when the thread is deleted AND no other reference exists. `thread_id` is plain text — no FK to `mastra.threads` for the same reason `runs.mastra_thread_id` isn't an FK (§7.3).             |
+
+The `embedding` column dim is **runtime-managed**, not hard-coded.
+See §12.4.
+
+### 12.2 Ingest lifecycle
+
+`POST /api/files` inserts the row + bytes + fires `void
+scheduleIngest(id)`. The pipeline (`packages/agents/src/knowledge-ingest.ts:ingestKnowledgeFile`)
+runs inline in the backend process behind a FIFO semaphore
+(`INGEST_CONCURRENCY = 2`):
+
+1. **Orphan cleanup** — if `chunks_done = 0` AND `file_chunks` has rows for this file, DELETE them first. Recovers cleanly from a process crash between INSERT and `UPDATE chunks_done` that would otherwise duplicate chunks on retry.
+2. **Provider sync** — read the workspace embedding provider; refuse upfront if `embeddingDims` is unset.
+3. **`ensureFileChunksDim(db, provider.dim)`** — non-destructive ALTER of `file_chunks.embedding` column to the provider's dim when the table is empty; refuse with `FileChunksDimMismatch` when chunks exist at a different dim. See §12.4.
+4. **Extract** — md/txt is a no-op decode; PDF uses `pdf-parse` 2.x's class-based API. Page boundaries preserved. Extracted text cached at `<dataDir>/knowledge/<id>/extracted.txt` so reingest skips re-parsing.
+5. **PDF chrome strip** — drops lines appearing on ≥80% of pages (running headers/footers) and standalone page-number lines before chunking.
+6. **Chunk** — `chunkDocument({ mode })`. Flat mode produces ~800-token chunks split on markdown headings then paragraphs. Hierarchical produces ~1500-token parent buckets (no embedding) + ~400-token children (embedded with `parent_id` set). Per-file cap of `MAX_CHUNKS_PER_FILE = 1000` enforced here.
+7. **Embed + insert** — `BATCH = 16` per embedder call. Each chunk's embedding *input* is prefixed with `fileName\nsection_path\n[Preceding context]: <tail-of-prior-chunk>\n\nchunk_text` so retrieval can match on location and continuity, not just literal content. `chunks_done` advances after each batch commits.
+8. **Auto-describe** — single utility-LLM call against the oldest chat provider (deterministic by `created_at`). 2-3 sentence description stored on `files.description` and surfaced in the catalog block. Best-effort; silent skip if no chat provider.
+9. **Flip to ready**, emit `knowledge.ingest.ok`.
+
+Every status transition emits a `knowledge.ingest.*` event on the
+per-file SSE channel `file:<id>` (§12.6). The Library page subscribes
+per row so the status pill + progress bar follow the pipeline live.
+
+### 12.3 Retrieval — `search_knowledge`
+
+The built-in tool mounted on every agent whose workspace has an
+embedding provider (regardless of whether the agent has any files
+attached — chat-drop uploads via `thread_files` still make the tool
+useful).
+
+Per-call flow (`knowledge-tool.ts:execute`):
+
+1. **Per-burst cap** — closure counter, default 10 calls per 60 s window. Bumps to 15 when `referencedFileIds` is set on the run (operator `@`-mentioned files this turn → multi-file fan-out is legitimate). Cap-hit returns a soft error hint, no thrown exception.
+2. **Scope resolution** — `authorized = agent_files ∪ thread_files`. If the LLM passed `file_ids`, intersect with `authorized` (hard filter; unauthorized ids surface a distinct hint so the LLM can recover). Otherwise scope to the full authorized union.
+3. **Embed the query** once.
+4. **Two arms in parallel**:
+   - Vector: `ORDER BY embedding <=> $1::vector ASC LIMIT 20` with `WHERE embedding_model = $fingerprint AND embedding IS NOT NULL` (excludes hierarchical parents).
+   - BM25: `ORDER BY ts_rank_cd(tsv, plainto_tsquery('english', $query)) DESC LIMIT 20`, same WHERE filters.
+5. **`rrfFuse(vector, bm25)`** with `k = 60` (Cormack et al.), dedupes by chunk id, sums per-arm contributions.
+6. **Per-file diversity cap** — at most 3 chunks per file in the rerank pool. Skipped when `scope.length === 1` (single-file deep dives keep full recall).
+7. **Layer-1 candidate cap** — slice to top 8.
+8. **LLM-as-judge rerank** — single batched prompt with numbered candidates, model returns best-first order. Skipped when ≤3 candidates. Tolerant parser falls back to RRF order on garbage output. Any candidate the model omits gets appended in original RRF order so nothing is lost.
+9. **Top-K slice** (default 5, max 10).
+10. **Hierarchical parent expansion** — for any top-K chunk with `parent_id`, fetch the parent text in one batched `SELECT … WHERE id = ANY($parentIds::uuid[])` and substitute it as the snippet (2000-char cap vs 500 for flat children). Citation still points at the matching child's page + section.
+11. **Return** `{ ok: true, chunks: [{file_id, file_name, page, section, snippet, score}, ...] }`. Emit `knowledge.search.result` event with chunkCount + fileCount + rerankUsed + durationMs.
+
+`eagerPrefetchKnowledge` — same retrieval path minus the rerank,
+used by the dispatcher route for short single-`@`-mention messages
+("summarise @vendor-agreement"). Gated by `isFileAuthorizedForAgent`
+so it respects the same agent-file scope the tool does. Top-3 chunks
+land in the prompt as a fenced enrichment block (§12.5) before the
+LLM turn starts.
+
+### 12.4 Embedding dim management — `withDimLock`
+
+`file_chunks.embedding` is a `vector(N)` column where `N` is the
+active embedding provider's dim. Unlike gitnexus (which runs its
+own subprocess and manages its own storage) and Mastra
+`memory_observations_*` (which lazy-creates one index per dim), our
+column type is **statically chosen at runtime** and serialised by an
+advisory lock.
+
+`packages/agents/src/knowledge-dim.ts` exposes:
+
+- `readFileChunksDim(db)` — snapshot `(columnDim, chunkCount)`.
+- `ensureFileChunksDim(db, targetDim)` — non-destructive ALTER when empty; throws `FileChunksDimMismatch` when chunks exist at a different dim.
+- `rebuildFileChunksAtDim(db, targetDim)` — destructive: TRUNCATEs `file_chunks`, ALTERs the column, recreates the HNSW index. Called from the `llm-providers` PATCH handler (when the operator confirms a model change with `wipeSemanticVectors=true`) and from `POST /api/files/rebuild-index` (the manual escape hatch).
+
+Both wrap their work in `withDimLock(db, async (client) => …)`:
+
+```
+acquire 1 PoolClient
+BEGIN
+SELECT pg_advisory_xact_lock(DIM_SYNC_LOCK_ID)   ← serialises across processes
+re-read dim inside the lock
+do all DDL on the same `client`                  ← critical
+COMMIT (auto-releases the advisory lock)
+release client
+```
+
+**The single-client invariant is load-bearing.** An earlier draft
+acquired the lock on one pinned client but did the inner DDL via
+`db.pool.query` — under N concurrent first-ingests on an M-client
+pool with `M < N`, every waiter held one client blocked on the lock,
+the lock-holder couldn't get a second client for the inner work,
+deadlock. The fix is "all SQL on the lock-holder's client" — the
+e2e smoke exercises 5 concurrent `ensureFileChunksDim` calls to
+catch any regression.
+
+**Embedding-model fingerprint.** `file_chunks.embedding_model` is
+`${provider.kind}:${provider.defaultModel}:${dim}`, computed
+identically in `knowledge-ingest.ts`, `knowledge-tool.ts`, and the
+inline `eagerPrefetchKnowledge` provider lookup. The retrieval SQL
+filters `WHERE embedding_model = $fingerprint`, so a provider swap
+without rebuild surfaces as "no passages matched" instead of silent
+semantic drift across mixed geometries. The `llm-providers` PATCH
+handler ties this together: confirming a model change wipes Mastra
+semantic memory AND rebuilds `file_chunks` to the new dim AND
+queues reingest for every `files` row, all under one
+`wipeSemanticVectors=true` opt-in.
+
+**`resolveBaseUrl(provider.kind, provider.baseUrl)`** is the second
+boundary worth knowing: every consumer of a provider's URL goes
+through it (knowledge-tool embedder, knowledge-ingest embedder +
+chat models for describe / contextual blurbs, the auto-attached
+build-agent chat model, gitnexus mount). Strips trailing slashes
+and appends `/v1` if missing. Without it, a baseUrl stored as
+`http://127.0.0.1:8081` hits llama-server's native `/embeddings`
+endpoint (returns top-level array, 2-D embedding) instead of the
+OpenAI-compatible `/v1/embeddings` — the AI SDK then fails with
+"Invalid JSON response" and ingest dies with a cryptic shape error.
+Centralising the normalization is the only way to keep this
+consistent across the half-dozen mount sites.
+
+### 12.5 Prompt enrichments (fenced HTML comments)
+
+The dispatcher injects system-side context into the user prompt
+before persisting it to `runs.input_prompt`. Three kinds today:
+the callsite line (`_Request origin: …_`), the newly-attached
+thread-files note, and the eager-prefetch passage block.
+
+Each enrichment is wrapped in HTML-comment fences emitted by
+`wrapPromptEnrichment(kind, body)`:
+
+```
+<!-- ab:enrichment kind=prefetch -->
+_Pre-fetched top-3 passages from `vendor-agreement.pdf` …_
+[1] (p.7) §7 Payment Terms. Net 30. Late payments accrue interest at …
+<!-- /ab:enrichment -->
+```
+
+Three reasons HTML comments:
+
+- Invisible in every markdown viewer — even if the raw text leaks somewhere, the marker doesn't render.
+- LLMs treat them as markup; no local model we've tested echoes them back.
+- Easy to regex-strip without false-positive-matching real user text.
+
+`stripPromptEnrichments(prompt)` is the inverse. Called everywhere a
+persisted user prompt becomes a chat bubble: the `load-messages`
+effect's mapping for `mastra.messages` user rows AND the
+synthesized prompt path for in-flight runs (when the row exists on
+the active-run probe but not yet on Mastra's side). Also handles
+the legacy `_Request origin:_` line for rows persisted before the
+fence rollout. `wrapPromptEnrichment` masks any literal closing
+marker inside the body before fencing, so an operator-uploaded
+file whose chunk contains the string `<!-- /ab:enrichment -->`
+can't break out and leak content into the chat bubble.
+
+### 12.6 Event kinds + streams
+
+New `runEventKinds`:
+
+- `knowledge.search.called` / `.result` — emitted on the per-run + per-agent streams during a chat turn, audited to `run_events`. Logs panel groups them under a new `knowledge` filter.
+- `knowledge.prefetch.called` / `.result` — same channels, NOT audited (the `runs` row may not exist yet when prefetch fires from the route handler; the prefetched chunks are captured in `runs.input_prompt` so the durable record is there).
+- `knowledge.ingest.started` / `.progress` / `.ok` / `.fail` — emitted on the per-file stream `file:<id>` (new). `progress` carries `step` and, on the `embedding` step, `chunksDone` / `chunksTotal`. The Library page's `FileRow` subscribes per row (only when the row is in flight; cleans up on terminal state) plus an 8-second backstop poll to recover from the SSE late-subscribe race on upload.
+
+### 12.7 Dispatcher AsyncLocalStorage
+
+Two stacked ALS contexts wrap `agent.stream(...)`:
+
+- Outer: `runWithInspectorContext({ db, eventBus, redactor, runId, streamId, agentStreamId, agentId, idePreResolvedRepo })` — used by inspector wrappers AND `search_knowledge` to publish events through the shared redactor + audit pipeline.
+- Inner: `withRunContext({ threadId, threadFiles, referencedFileIds })` — knowledge-specific. `search_knowledge` reads it inside its `execute` to know the thread scope and `@`-mention overrides without Mastra-internal plumbing.
+
+`run-context.ts` returns an empty store when called outside a
+dispatched run (the pure-function smoke + direct library callers
+exercise this), so the tool runs silently with no telemetry surface
+in those contexts.
+
+### 12.8 Known limitations / deferred
+
+- **DOCX support** — `mammoth` not yet wired; FILE_KINDS = ['md', 'txt', 'pdf'].
+- **Layout-aware PDF extraction** — `pdf-parse` is text-only; tables, figures, multi-column layouts not preserved. Phase 4 (Unstructured.io / `pdfplumber` / MinerU).
+- **OCR for scanned PDFs** — extraction yields empty text on image-only PDFs; fails ingest with a clear "OCR required" message. Phase 4.
+- **Language detection** — `to_tsvector('english', text)` hardcoded; non-English BM25 quality suffers. Phase 3 adds per-language dictionaries.
+- **Embedding-drift sampler** — no nightly job to detect silent provider-side model updates that shift geometry without changing the fingerprint string.
+- **Contextual Retrieval (Anthropic)** — implemented but env-gated (`AGENT_BRIDGE_CONTEXTUAL_RETRIEVAL=true`) due to ingest cost (one LLM call per chunk).
+- **Cross-encoder reranker sidecar** — current rerank is LLM-as-judge through the workspace chat provider; a dedicated cross-encoder would be faster + cheaper.
+- **Eval harness** — no nightly retrieval-quality regression suite. The e2e smoke catches "search returned chunks" but not "the right chunk ranked first" beyond a few hand-picked queries.
+- **File versioning** — re-uploading a slightly edited file is delete + re-upload today (different sha256 → different `files` row). No history of older versions, no thread-level pin to a specific version.

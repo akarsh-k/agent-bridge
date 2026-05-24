@@ -94,6 +94,7 @@ import {
   runWithInspectorContext,
   type IdePreResolvedRepo,
 } from './inspector/run-context.js'
+import { withRunContext } from './run-context.js'
 
 // ─── Tunables ────────────────────────────────────────────────────────────
 
@@ -147,6 +148,14 @@ export interface DispatchRunInput {
    * where the IDE supplied no hint signals.
    */
   readonly idePreResolvedRepo?: IdePreResolvedRepo | null
+  /**
+   * Knowledge file ids the operator explicitly @-mentioned this turn.
+   * Forwarded into per-run async context (`run-context.ts`) so
+   * `search_knowledge` can honor them as a forced scope. Filtered
+   * against the agent's authorized scope inside the tool; ids the
+   * operator can't see get silently dropped.
+   */
+  readonly referencedFileIds?: ReadonlyArray<string>
 }
 
 /**
@@ -380,9 +389,17 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
     // AND drains it inside the same `run(...)` block — async hooks
     // propagate through `agent.stream`, the for-await loop, and any
     // tool executes Mastra dispatches under the hood.
+    //
+    // The inner `withRunContext` layer carries knowledge-tool inputs
+    // (thread-attached files + @-mention referenced ids) that
+    // `search_knowledge` needs to know AT CALL TIME, after the agent
+    // build closure is sealed. See `packages/agents/src/run-context.ts`.
     const builtAgent = built.agent
     const builtModelId = built.meta.provider.modelId
     const runBatcher = batcher
+    const threadFilesForRun = memoryIds?.mastraThreadId
+      ? await loadThreadFilesForRun(db, memoryIds.mastraThreadId)
+      : []
     await runWithInspectorContext(
       {
         db,
@@ -394,7 +411,14 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
         agentId,
         idePreResolvedRepo: input.idePreResolvedRepo ?? null,
       },
-      async () => {
+      async () =>
+        withRunContext(
+          {
+            threadId: memoryIds?.mastraThreadId ?? null,
+            threadFiles: threadFilesForRun,
+            referencedFileIds: input.referencedFileIds ?? [],
+          },
+          async () => {
         const output = await builtAgent.stream(prompt, streamOptions)
         for await (const chunk of output.fullStream as AsyncIterable<unknown>) {
       const mapped = mapChunk(chunk, runId, mapState)
@@ -512,8 +536,9 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
           },
         )
       }
-        }
-      },
+          }
+        },
+      ),
     )
 
     // Drain the final token batch BEFORE publishing run.finished so a
@@ -1466,6 +1491,37 @@ async function isNewMastraThread(
     [threadId],
   )
   return result.rowCount === 0
+}
+
+/**
+ * Read the chat-scoped knowledge files attached to this thread. Joined
+ * with `files` for name + description so the tool can surface them
+ * in citations + the LLM-as-judge prompt. Returns an empty list when
+ * no thread files exist OR the thread row is brand-new (no rows yet);
+ * either way the tool falls back to agent-only scope.
+ */
+async function loadThreadFilesForRun(
+  handle: AgentBridgeDb,
+  threadId: string,
+): Promise<
+  ReadonlyArray<{ id: string; name: string; description: string }>
+> {
+  const result = await handle.pool.query<{
+    id: string
+    name: string
+    description: string
+  }>(
+    `
+    SELECT f.id, f.name, f.description
+    FROM thread_files tf
+    JOIN files f ON f.id = tf.file_id
+    WHERE tf.thread_id = $1
+      AND f.ingest_status = 'ready'
+    ORDER BY tf.created_at ASC
+    `,
+    [threadId],
+  )
+  return result.rows
 }
 
 /**

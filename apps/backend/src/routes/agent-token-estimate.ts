@@ -39,6 +39,7 @@ export const agentTokenEstimateRouter = new Hono().get(
             ...estimate.parts,
             skills: [...estimate.parts.skills],
             tools: [...estimate.parts.tools],
+            files: [...estimate.parts.files],
           },
         },
       }

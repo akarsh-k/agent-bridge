@@ -30,6 +30,8 @@
     "test:gitnexus-callers": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-gitnexus-callers.ts",
     "test:mini-repo-cap": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-mini-repo-cap.ts",
     "test:skill-lazy": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-skill-lazy-loading.ts",
+    "test:knowledge": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-knowledge-tool.ts",
+    "test:knowledge-e2e": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-knowledge-e2e.ts",
     "secret:generate": "node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\""
   },
   "keywords": [

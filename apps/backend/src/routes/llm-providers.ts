@@ -34,6 +34,7 @@ import {
 import { schema } from '@agent-bridge/db'
 import { wipeAllSemanticVectors } from '@agent-bridge/agents'
 import { getDb } from '../db.js'
+import { rebuildFileChunksAndQueueReingest } from './files.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 import {
   refreshProviderModels,
@@ -224,19 +225,26 @@ export const llmProvidersRouter = new Hono()
       }
 
       // Vector wipe trigger: this row is the embedding provider AND
-      // its `defaultModel` is moving to a different value. Old vectors
-      // sit in the previous model's geometry and would produce garbage
-      // recall. The client must opt-in via `wipeSemanticVectors=true`.
+      // either its `defaultModel` or its reported `embeddingDims` is
+      // moving to a different value. Old vectors sit in the previous
+      // model's geometry (or worse, a different column dim) and would
+      // produce garbage recall or fail to insert. The client must
+      // opt-in via `wipeSemanticVectors=true`. The same opt-in wipes
+      // Mastra semantic memory AND rebuilds `file_chunks` to the new
+      // dim — there's only one embedding provider per workspace, so
+      // one confirmation covers every downstream vector store.
       const embeddingModelChanged =
         before.role === 'embedding' &&
-        'defaultModel' in body &&
-        (before.defaultModel ?? null) !== (body.defaultModel ?? null)
+        (('defaultModel' in body &&
+          (before.defaultModel ?? null) !== (body.defaultModel ?? null)) ||
+          ('embeddingDims' in body &&
+            (before.embeddingDims ?? null) !== (body.embeddingDims ?? null)))
 
       if (embeddingModelChanged && body.wipeSemanticVectors !== true) {
         return httpError(c, {
           code: 'validation_failed',
           message:
-            'embedding model is changing — set wipeSemanticVectors=true to confirm',
+            'embedding model or dim is changing — set wipeSemanticVectors=true to confirm (this also wipes file_chunks)',
         })
       }
 
@@ -256,6 +264,32 @@ export const llmProvidersRouter = new Hono()
 
         if (embeddingModelChanged) {
           await wipeAllSemanticVectors(handle)
+          // `file_chunks` lives in our own pgvector column, not in the
+          // gitnexus subprocess or Mastra's lazily-created indexes —
+          // rebuild it explicitly to the new dim (TRUNCATE + ALTER
+          // COLUMN + recreate HNSW) and re-queue every files row.
+          // Only meaningful when the new row reports an explicit
+          // `embeddingDims`; if it's null the operator hasn't finished
+          // configuring the provider yet, and ingest will refuse anyway
+          // once it's exercised. Wrap in try/catch so a DDL failure
+          // (e.g. the runtime DB role can't ALTER) doesn't roll back
+          // the provider edit — Mastra is already wiped at this point
+          // and the operator can retry the rebuild via the Library
+          // "Rebuild knowledge index" button once permissions are
+          // sorted. Surface the partial state in logs so it isn't lost.
+          if (row.embeddingDims != null) {
+            try {
+              await rebuildFileChunksAndQueueReingest(handle, row.embeddingDims)
+            } catch (err) {
+              console.error(
+                `[llm-providers] embedding-model change wiped Mastra ` +
+                  `semantic memory but file_chunks rebuild failed for ` +
+                  `provider ${id} (dim=${row.embeddingDims}). ` +
+                  `Operator must retry via /api/files/rebuild-index:`,
+                err,
+              )
+            }
+          }
         }
 
         return c.json({

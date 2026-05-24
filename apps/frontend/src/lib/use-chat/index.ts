@@ -49,7 +49,7 @@ import type {
   RunToolCalledPayload,
   RunToolResultPayload,
 } from '@agent-bridge/shared'
-import { runStreamId, stripCallsiteBlock } from '@agent-bridge/shared'
+import { runStreamId, stripPromptEnrichments } from '@agent-bridge/shared'
 import {
   ApiError,
   apiBaseUrl,
@@ -141,6 +141,14 @@ export interface ChatMessage {
    * for dedupe against `run.token.batch` frames on reconnect.
    */
   readonly lastTokenIndex: number
+  /**
+   * Names of knowledge files the user explicitly referenced via
+   * `@`-mention this turn. Resolved client-side at send-time. The
+   * chat UI renders a "Filtered to: X, Y" pill above the user
+   * message so the operator sees the scope was honored. Only set on
+   * user-role messages.
+   */
+  readonly referencedFileNames?: ReadonlyArray<string>
 }
 
 /** Thread metadata as surfaced to the chat UI's switcher. */
@@ -166,7 +174,13 @@ export interface UseChatResult {
   readonly loadingMessages: boolean
   /** True while a thread fetch failed (so the UI can show a retry). */
   readonly threadsError: string | null
-  send(prompt: string): Promise<void>
+  send(
+    prompt: string,
+    options?: {
+      referencedFileIds?: ReadonlyArray<string>
+      referencedFileNames?: ReadonlyArray<string>
+    },
+  ): Promise<void>
   /** Mint a new thread + switch to it; the old thread stays on the server. */
   newThread(): void
   /** Switch to an existing thread and replay its messages. */
@@ -415,6 +429,23 @@ export function useChat(input: UseChatInput): UseChatResult {
   // Poll `getActiveRunForThread` while `activeRunId` is set: 2s
   // initial catches the race, 8s recurring catches orphans. The
   // normal SSE clear cancels both via effect cleanup.
+  //
+  // Grace window: the route inserts the runs row with
+  // `mastraThreadId=null`; the dispatcher only stamps it inside
+  // `setMastraThread` AFTER `buildAgent` resolves memory config.
+  // `findActiveForThread` filters by exact `mastraThreadId` match,
+  // so during the dispatcher's startup window it returns null even
+  // though the run is alive. Without a grace window the 2s probe
+  // false-positives every fresh send, prematurely flipping the
+  // streaming placeholder to `done` and showing "(no text response)"
+  // before the LLM has emitted a single token. 15s is generous
+  // enough for the slowest local agent build to settle.
+  const RECOVERY_GRACE_MS = 15_000
+  const activeRunStartedAtRef = useRef<number>(0)
+  useEffect(() => {
+    if (activeRunId) activeRunStartedAtRef.current = Date.now()
+  }, [activeRunId])
+
   useEffect(() => {
     if (!agentId) return
     if (!activeRunId) return
@@ -432,6 +463,16 @@ export function useChat(input: UseChatInput): UseChatResult {
       if (cancelled) return
       // Watched run is no longer active — clear the gates so the UI unfreezes.
       if (active && active.runId === activeRunId) return
+      // Dispatcher-startup grace: a null result this early in the run's
+      // life almost certainly means the dispatcher hasn't stamped
+      // `mastraThreadId` yet, not that the run actually finished. Let
+      // the next interval tick re-check after the dispatcher catches up.
+      if (
+        !active &&
+        Date.now() - activeRunStartedAtRef.current < RECOVERY_GRACE_MS
+      ) {
+        return
+      }
       setActiveRunId(null)
       setMessages((prev) =>
         prev.map((m) =>
@@ -440,6 +481,18 @@ export function useChat(input: UseChatInput): UseChatResult {
             : m,
         ),
       )
+      // SSE-race recovery: when the watchdog fires it almost always
+      // means the EventSource missed the run's `run.token` / `.batch`
+      // events (Redis pub/sub doesn't buffer, and the dispatcher can
+      // race the client's subscribe on fast runs). The bubble's
+      // accumulated `text` is empty, but Mastra has the persisted
+      // assistant message. Invalidate `messagesLoadedFor` so the
+      // load-messages effect re-runs and pulls the real text — without
+      // this the bubble renders as just a timestamp until the operator
+      // refreshes the page. Order matters: setActiveRunId(null) first
+      // so the load-messages effect's `if (activeRunId) return` gate
+      // is open by the time it re-evaluates.
+      setMessagesLoadedFor(null)
     }
 
     const initial = window.setTimeout(recover, 2_000)
@@ -457,7 +510,13 @@ export function useChat(input: UseChatInput): UseChatResult {
   )
 
   const send = useCallback(
-    async (rawPrompt: string) => {
+    async (
+      rawPrompt: string,
+      options?: {
+        referencedFileIds?: ReadonlyArray<string>
+        referencedFileNames?: ReadonlyArray<string>
+      },
+    ) => {
       const prompt = rawPrompt.trim()
       if (!prompt) return
       if (!agentId) {
@@ -465,6 +524,8 @@ export function useChat(input: UseChatInput): UseChatResult {
         return
       }
       if (activeRunId || sending) return
+      const referencedFileIds = options?.referencedFileIds ?? []
+      const referencedFileNames = options?.referencedFileNames ?? []
 
       setSending(true)
       setSendError(null)
@@ -510,6 +571,9 @@ export function useChat(input: UseChatInput): UseChatResult {
         steps: [],
         mcpLogs: [],
         lastTokenIndex: -1,
+        ...(referencedFileNames.length > 0
+          ? { referencedFileNames }
+          : {}),
       }
       setMessages((prev) => [...prev, userMessage])
 
@@ -528,6 +592,9 @@ export function useChat(input: UseChatInput): UseChatResult {
                 prompt,
                 threadId,
                 resourceId,
+                ...(referencedFileIds.length > 0
+                  ? { referencedFileIds }
+                  : {}),
               }),
             },
           ),
@@ -709,7 +776,15 @@ export function useChat(input: UseChatInput): UseChatResult {
           id: m.id,
           role: m.role === 'user' ? 'user' : 'assistant',
           createdAt: Date.parse(m.createdAt),
-          text: m.text,
+          // Strip server-injected enrichments from user messages so a
+          // refreshed thread doesn't surface the callsite line + the
+          // pre-fetch passages + the attached-files note as part of
+          // the user's bubble. Mastra persists the FULL prompt the LLM
+          // saw (enrichments included); we only want the operator's
+          // own text in the bubble. Assistant messages skip this — they
+          // never carry enrichments.
+          text:
+            m.role === 'user' ? stripPromptEnrichments(m.text) : m.text,
           status: 'done',
           toolCalls: [],
           steps: [],
@@ -723,7 +798,7 @@ export function useChat(input: UseChatInput): UseChatResult {
           // bubble from `runs.input_prompt`. Strip the callsite block
           // the dispatcher may have prepended so the bubble reads
           // cleanly.
-          const cleanPrompt = stripCallsiteBlock(active.inputPrompt)
+          const cleanPrompt = stripPromptEnrichments(active.inputPrompt)
           const hasUserMsgForThisRun = mapped.some(
             (m) => m.role === 'user' && m.text.trim() === cleanPrompt.trim(),
           )

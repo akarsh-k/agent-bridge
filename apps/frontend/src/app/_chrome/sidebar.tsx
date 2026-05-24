@@ -10,6 +10,7 @@ import { useWorkspace } from '../../lib/workspace-context'
 import {
   AgentsIcon,
   BridgeIcon,
+  FileIcon,
   HomeIcon,
   LogsIcon,
   McpIcon,
@@ -35,7 +36,7 @@ interface NavSpec {
 
 export function Sidebar() {
   const path = usePathname()
-  const { agents, llmProviders, repos, mcpConnections } = useWorkspace()
+  const { agents, llmProviders, repos, files, mcpConnections } = useWorkspace()
   const { theme, setTheme } = useTheme()
 
   const navigate: NavSpec[] = [
@@ -65,6 +66,13 @@ export function Sidebar() {
       Icon: ReposIcon,
       matchPrefix: '/library/repos',
       count: repos.length,
+    },
+    {
+      to: '/library/files',
+      label: 'Files',
+      Icon: FileIcon,
+      matchPrefix: '/library/files',
+      count: files.length,
     },
     {
       to: '/library/mcp',

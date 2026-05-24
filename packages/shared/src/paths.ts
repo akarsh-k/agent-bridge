@@ -32,6 +32,14 @@ export interface DataDirs {
   readonly gitnexusHomeDir: string
   readonly blobsDir: string
   readonly reposDir: string
+  /**
+   * Workspace-wide knowledge files (PDFs, markdown, text) uploaded
+   * via Library. Sibling to `repos/`. Each file gets its own
+   * `<knowledgeDir>/<file_id>/` subtree holding the original bytes,
+   * extracted text, and per-pipeline metadata. See
+   * `docs/knowledge-files.md`.
+   */
+  readonly knowledgeDir: string
   readonly secretKeyPath: string
 }
 
@@ -45,9 +53,17 @@ export function ensureDataDirs(): DataDirs {
   const gitnexusHomeDir = path.join(dataDir, 'gitnexus-home')
   const blobsDir = path.join(dataDir, 'blobs')
   const reposDir = path.join(dataDir, 'repos')
+  const knowledgeDir = path.join(dataDir, 'knowledge')
   const secretKeyPath = path.join(dataDir, 'secret.key')
 
-  for (const dir of [dataDir, workspaceDir, gitnexusHomeDir, blobsDir, reposDir]) {
+  for (const dir of [
+    dataDir,
+    workspaceDir,
+    gitnexusHomeDir,
+    blobsDir,
+    reposDir,
+    knowledgeDir,
+  ]) {
     fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   }
 
@@ -63,6 +79,7 @@ export function ensureDataDirs(): DataDirs {
     gitnexusHomeDir,
     blobsDir,
     reposDir,
+    knowledgeDir,
     secretKeyPath,
   }
 }
@@ -168,6 +185,52 @@ function parseOwnerRepo(remoteUrl: string): { owner: string; repo: string } {
   const owner = segments.length >= 2 ? (segments[segments.length - 2] ?? '') : ''
   const repo = segments[segments.length - 1] ?? ''
   return { owner, repo }
+}
+
+// ─── Per-knowledge-file layout ───────────────────────────────────────────
+//
+// `<dataDir>/knowledge/<file_id>/` holds everything tied to a single
+// uploaded knowledge document. The `file_id` is the bare UUID — no slug —
+// because filenames are user-supplied and may not slugify well, and the
+// Library UI is the only "human" surface that needs a glanceable name
+// (it reads `files.name` from the DB, not the dir).
+//
+// Subdirs / files (created on demand by the ingest worker, not
+// `ensureDataDirs`):
+//   - `original.<ext>` — the immutable upload bytes. Kept for re-
+//                        extraction and the operator's "download" affordance.
+//   - `extracted.txt`  — the post-extraction plain text. Regenerated when
+//                        the chunker/extractor changes (Phase 3 actions
+//                        invalidate this).
+//   - `meta.json`      — per-file pipeline state outside the DB (e.g. PDF
+//                        header/footer detection cache, OCR notes).
+//
+// Routing through these helpers means a future move from
+// `<dataDir>/knowledge/...` to a different layout only touches this file.
+
+/** Absolute path to `<dataDir>/knowledge/<file_id>/` (never auto-created). */
+export function knowledgeFileDir(fileId: string): string {
+  const { knowledgeDir } = ensureDataDirs()
+  return path.join(knowledgeDir, fileId)
+}
+
+/**
+ * Absolute path to the original uploaded bytes for a file. Caller passes
+ * the original extension (e.g. `md`, `txt`, `pdf`) without the leading dot.
+ */
+export function knowledgeOriginalPath(fileId: string, ext: string): string {
+  const safeExt = ext.replace(/[^A-Za-z0-9]/g, '').slice(0, 16)
+  return path.join(knowledgeFileDir(fileId), `original.${safeExt}`)
+}
+
+/** Absolute path to the extracted plain text. */
+export function knowledgeExtractedPath(fileId: string): string {
+  return path.join(knowledgeFileDir(fileId), 'extracted.txt')
+}
+
+/** Absolute path to the per-file pipeline metadata JSON. */
+export function knowledgeMetaPath(fileId: string): string {
+  return path.join(knowledgeFileDir(fileId), 'meta.json')
 }
 
 /**

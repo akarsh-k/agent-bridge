@@ -16,14 +16,18 @@ codebase over MCP before they edit.
 
 It runs locally, indexes the repos you attach, understands the edges
 between them, and exposes agents that your IDE can call before making
-code changes. The coding agent still writes the patch. Agent Bridge
-supplies grounded, structured evidence so the patch is based on the real
-shape of your codebase instead of a shallow grep loop.
+code changes. You can also upload knowledge documents — contracts,
+specs, manuals, anything in markdown / text / PDF — and the agent can
+search them by meaning AND literal terms, with citations back to the
+file + page + section. The coding agent still writes the patch.
+Agent Bridge supplies grounded, structured evidence so the patch is
+based on the real shape of your codebase and the operator-owned
+documents around it, instead of a shallow grep loop.
 
 Its primary use case is acting as a local research sidecar for IDE
 coding agents, but you can also create blank agents, attach skills,
-attach MCP tools, configure memory and model providers, and expose
-those agents through the same MCP bridge.
+attach MCP tools, attach knowledge files, configure memory and model
+providers, and expose those agents through the same MCP bridge.
 
 > **License:** Source-available under
 > [PolyForm Noncommercial 1.0.0](LICENSE). Free for personal, research,
@@ -85,9 +89,10 @@ Repo-inspector agents are designed to help Cursor, Claude Code, Codex,
 and other IDE agents research your codebase before making changes.
 
 These agents can attach repos, use GitNexus-backed graph and embedding
-context, follow operator-defined repo relationships, and expose code-inspection
-tools through the MCP bridge. For each repo-inspector agent, the bridge
-exposes:
+context, follow operator-defined repo relationships, attach knowledge
+files (PDFs, markdown, plain text) that the agent can search via
+hybrid retrieval, and expose code-inspection tools through the MCP
+bridge. For each repo-inspector agent, the bridge exposes:
 
 - `<slug>__inspect_codebase` — structured codebase evidence for
   debugging, tracing, impact analysis, and module understanding.
@@ -103,10 +108,10 @@ coding loop, while Agent Bridge handles deeper codebase research.
 
 You can also create blank agents that are not tied to codebase
 inspection. A blank agent can have its own system prompt, skills, model
-provider, memory settings, external MCP connections, and custom bridge
-tools. Attach tools from services like Notion, Atlassian, Datadog,
-internal MCP servers, or your own local tools, then expose that agent
-through the same MCP bridge.
+provider, memory settings, external MCP connections, custom bridge
+tools, and attached knowledge files. Attach tools from services like
+Notion, Atlassian, Datadog, internal MCP servers, or your own local
+tools, then expose that agent through the same MCP bridge.
 
 In this mode, Agent Bridge becomes a local agent workbench. You define
 the agent's behavior, attach the tools it should use, and make it
@@ -158,6 +163,8 @@ From your IDE coding agent, ask things like:
   package.*
 - *Ask my custom Notion-connected agent what product requirements are
   related to this feature.*
+- *Ask the contracts agent what the late-payment penalty is in the
+  vendor agreement — and cite the page.*
 
 ## What Agent Bridge is not
 
@@ -184,7 +191,8 @@ Agent Bridge agent  ─── Mastra agent runtime
                     ├── deterministic inspector wrappers
                     ├── GitNexus graph + embeddings
                     ├── operator-defined repo relationships
-                    ├── attached skills
+                    ├── attached knowledge files (hybrid retrieval)
+                    ├── attached skills (always-include + lazy via read_skill)
                     ├── memory configuration
                     └── optional external MCPs
 ```
@@ -209,12 +217,17 @@ pnpm start          # preflight → pnpm install → pnpm build → docker compo
 
 Open http://127.0.0.1:3001. Then:
 
-1. Add a model provider.
-2. Add or clone a repo.
-3. Wait for clone and indexing to finish.
+1. Add a model provider. If you want knowledge-file search, add an
+   `embedding`-role provider too (one per workspace).
+2. Add or clone a repo, and/or upload knowledge files from
+   **Library → Files** (markdown, plain text, or PDF — chunked +
+   embedded locally, citations on retrieval).
+3. Wait for clone / indexing / ingest to finish — live status pills
+   on each row.
 4. Create an agent (Repo-inspector for the sidecar use case, or Blank
    for a custom agent).
-5. Attach repos, skills, and MCP tools as needed.
+5. Attach repos, skills, knowledge files, and MCP tools as needed
+   from the agent's **Resources** tab.
 6. Open Settings and copy the MCP bridge config into your IDE.
 7. Restart your IDE and call the exposed Agent Bridge tools.
 

@@ -102,6 +102,7 @@ import {
   loadInspectorSystemPrompt,
 } from './inspector/system-prompt.js'
 import { buildReadSkillTool } from './skills-tool.js'
+import { buildSearchKnowledgeTool } from './knowledge-tool.js'
 
 // ─── Public surface ──────────────────────────────────────────────────────
 
@@ -357,10 +358,31 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
   // preserved on rows that pre-date the column.
   const inspectorEnabled = agentRow.inspectorEnabled
 
+  // Attached knowledge files. Only those in `ready` ingest status are
+  // surfaced to the LLM — half-ingested files would show up in the
+  // catalog but `search_knowledge` couldn't return anything for them
+  // (no chunks yet). Ordered by attach position, then attach time.
+  const attachedFileRows = await db.db
+    .select({
+      id: schema.files.id,
+      name: schema.files.name,
+      description: schema.files.description,
+    })
+    .from(schema.agentFiles)
+    .innerJoin(schema.files, eq(schema.agentFiles.fileId, schema.files.id))
+    .where(
+      and(
+        eq(schema.agentFiles.agentId, agentId),
+        eq(schema.files.ingestStatus, 'ready'),
+      ),
+    )
+    .orderBy(asc(schema.agentFiles.position), asc(schema.agentFiles.createdAt))
+
   const instructions = await composeInstructions(
     agentRow.systemPrompt,
     skillRows,
     inspectorEnabled,
+    attachedFileRows,
   )
 
   // The provider owns the model identity. If it's missing we fail
@@ -538,10 +560,27 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
   const { lazy: lazySkillRows } = splitSkills(skillRows)
   const readSkillTool = buildReadSkillTool(lazySkillRows)
 
+  // `search_knowledge` is mounted only when the agent has at least
+  // one `ready` attached file. The set is captured at build time;
+  // the `builtAgentCache` invalidates on any `agent_files` /
+  // `files` row change, so the tool's view stays in sync with the
+  // catalog block in the prompt.
+  const searchKnowledgeTool = buildSearchKnowledgeTool({
+    db,
+    attachedFiles: attachedFileRows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      description: row.description,
+    })),
+    embeddingProvider: embeddingProviderRow ?? null,
+    chatModel: modelConfig,
+  })
+
   const mergedTools = mergeToolDicts(
     mountedInspector ? mountedInspector.tools : {},
     mountedExternal,
     readSkillTool,
+    searchKnowledgeTool,
   )
 
   const agent = new Agent({
@@ -665,6 +704,7 @@ export async function composeInstructions(
   basePrompt: string,
   skills: readonly SkillRow[],
   inspectorEnabled: boolean,
+  attachedFiles: readonly { id: string; name: string; description: string }[] = [],
 ): Promise<string> {
   // Composition order matters. The LLM weights system-prompt content by
   // recency: the closer to the user message, the louder it speaks. We
@@ -726,6 +766,10 @@ export async function composeInstructions(
     parts.push(formatLazySkillCatalog(lazyCatalog))
   }
 
+  if (attachedFiles.length > 0) {
+    parts.push(formatAttachedFilesCatalog(attachedFiles))
+  }
+
   // Empty total is allowed. some LLMs accept an empty system message
   // and Mastra's own defaults will still drive behavior via other knobs.
   return parts.join('\n\n')
@@ -748,6 +792,34 @@ function formatLazySkillCatalog(
 }
 
 /**
+ * "Attached files" catalog. Same shape as the lazy-skill catalog
+ * but pointing at `search_knowledge` instead of `read_skill`. Tells
+ * the LLM which documents are available and what's roughly in them,
+ * so it can decide when calling the search tool is worthwhile.
+ *
+ * Only emitted when at least one file is `ingest_status='ready'` —
+ * half-ingested files would show up here but the tool couldn't return
+ * anything for them.
+ */
+function formatAttachedFilesCatalog(
+  entries: readonly { id: string; name: string; description: string }[],
+): string {
+  const lines: string[] = [
+    '## Attached files (search via `search_knowledge`)',
+    '',
+    "Each entry below is a knowledge document this agent can read. " +
+      'Call `search_knowledge` with a plain-English query to find passages. ' +
+      'The tool returns chunks with file, page, section, and a snippet you can cite.',
+    '',
+  ]
+  for (const e of entries) {
+    const desc = e.description.trim() || '(no description)'
+    lines.push(`- \`${e.name}\`: ${desc}`)
+  }
+  return lines.join('\n')
+}
+
+/**
  * Normalize the provider's stored base URL into the `/v1`-rooted URL that
  * `@ai-sdk/openai-compatible` expects (it concatenates `${baseURL}/chat/completions`).
  *
@@ -761,7 +833,7 @@ function formatLazySkillCatalog(
  *     either form (`http://localhost:11434` or `http://localhost:11434/v1`)
  *     without us doubling up.
  */
-function resolveBaseUrl(
+export function resolveBaseUrl(
   kind: LlmProviderKind,
   storedBaseUrl: string | null,
 ): string {
@@ -1035,9 +1107,17 @@ function mergeToolDicts(
   inspector: Record<string, Tool<any, any, any, any>>,
   external: MountedExternalMcps | null,
   readSkill: Tool<any, any, any, any> | null,
+  searchKnowledge: Tool<any, any, any, any> | null,
 ): Record<string, Tool<any, any, any, any>> | undefined {
   const inspectorKeys = Object.keys(inspector)
-  if (inspectorKeys.length === 0 && !external && !readSkill) return undefined
+  if (
+    inspectorKeys.length === 0 &&
+    !external &&
+    !readSkill &&
+    !searchKnowledge
+  ) {
+    return undefined
+  }
   const merged: Record<string, Tool<any, any, any, any>> = { ...inspector }
   if (readSkill) {
     if ('read_skill' in merged) {
@@ -1049,6 +1129,16 @@ function mergeToolDicts(
     }
     merged['read_skill'] = readSkill
   }
+  if (searchKnowledge) {
+    if ('search_knowledge' in merged) {
+      throw new Error(
+        `[buildAgent] tool key collision on "search_knowledge" while merging ` +
+          `the built-in knowledge retriever. Inspector wrappers do not register ` +
+          `that name; an upstream change must have introduced one.`,
+      )
+    }
+    merged['search_knowledge'] = searchKnowledge
+  }
   if (external) {
     for (const [key, tool] of Object.entries(external.tools)) {
       if (key in merged) {
@@ -1056,8 +1146,8 @@ function mergeToolDicts(
           `[buildAgent] tool key collision on "${key}" while merging external ` +
             `MCP tools with inspector wrappers. inspector tools use bare ` +
             `names; external MCPs use <slug>__<rawName>. A custom MCP whose ` +
-            `slug equals "find_in_codebase" / "list_repos" / "read_skill" is ` +
-            `the most likely cause.`,
+            `slug equals "find_in_codebase" / "list_repos" / "read_skill" / ` +
+            `"search_knowledge" is the most likely cause.`,
         )
       }
       merged[key] = tool

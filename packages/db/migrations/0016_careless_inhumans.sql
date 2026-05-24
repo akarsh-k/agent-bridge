@@ -1,0 +1,1 @@
+ALTER TABLE "files" ADD COLUMN "chunking_mode" text DEFAULT 'flat' NOT NULL;

@@ -20,6 +20,7 @@ import { agentMcpToolsRouter } from './routes/agent-mcp-tools.js'
 import { agentReposRouter } from './routes/agent-repos.js'
 import { agentRunsRouter } from './routes/agent-runs.js'
 import { agentThreadsRouter } from './routes/agent-threads.js'
+import { agentFilesRouter } from './routes/agent-files.js'
 import { agentsRouter } from './routes/agents.js'
 import { systemSkillRouter } from './routes/system-skill.js'
 import { systemToolsRouter } from './routes/system-tools.js'
@@ -35,6 +36,7 @@ import { repoRelationshipsRouter } from './routes/repo-relationships.js'
 import { repoGraphRouter } from './routes/repo-graph.js'
 import { repoJobsRouter } from './routes/repo-jobs.js'
 import { repoWikiStaticRouter } from './routes/repo-wiki-static.js'
+import { filesRouter } from './routes/files.js'
 import { reposRouter } from './routes/repos.js'
 import { runsRouter } from './routes/runs.js'
 import { skillsRouter } from './routes/skills.js'
@@ -60,12 +62,16 @@ const requestLogger: MiddlewareHandler = env.isProd
 
 // Default body-limit for the API group. The `/agents/import` endpoint
 // legitimately accepts larger bundles (skill markdown + configJson can
-// reach hundreds of KB across many rows), so we route the larger cap
-// through that one path and keep the conservative 64 KiB cap for
-// everything else. The cap is set defensively so per-field Zod errors
-// surface before the global 413 ever fires.
+// reach hundreds of KB across many rows), and `/api/files` uploads
+// multipart bytes up to MAX_FILE_BYTES (50 MiB). Each gets its own
+// dispatched cap; everything else stays at the conservative 64 KiB
+// default. The cap is set defensively so per-field Zod errors surface
+// before the global 413 ever fires.
 const SMALL_BODY_LIMIT = 64 * 1024
 const IMPORT_BODY_LIMIT = 4 * 1024 * 1024
+// 50 MiB upload cap + ~256 KiB of multipart framing + form fields.
+// `MAX_FILE_BYTES` is the per-file ceiling; this is the transport one.
+const UPLOAD_BODY_LIMIT = 50 * 1024 * 1024 + 256 * 1024
 const onBodyLimitError: Parameters<typeof bodyLimit>[0]['onError'] = (c) =>
   httpError(c, {
     code: 'validation_failed',
@@ -78,6 +84,10 @@ const smallBodyLimit = bodyLimit({
 })
 const importBodyLimit = bodyLimit({
   maxSize: IMPORT_BODY_LIMIT,
+  onError: onBodyLimitError,
+})
+const uploadBodyLimit = bodyLimit({
+  maxSize: UPLOAD_BODY_LIMIT,
   onError: onBodyLimitError,
 })
 
@@ -93,6 +103,15 @@ const api = new Hono()
     ) {
       return importBodyLimit(c, next)
     }
+    // File uploads are multipart and can be up to MAX_FILE_BYTES.
+    // Match POST /api/files exactly (not the GET / PATCH / DELETE
+    // siblings) so the small limit still guards the metadata routes.
+    if (
+      c.req.method === 'POST' &&
+      (c.req.path === '/api/files' || c.req.path.endsWith('/api/files'))
+    ) {
+      return uploadBodyLimit(c, next)
+    }
     return smallBodyLimit(c, next)
   })
   .route('/health', healthRouter)
@@ -101,6 +120,7 @@ const api = new Hono()
   .route('/agents/:agentId/repo-relationships', repoRelationshipsRouter)
   .route('/agents/:agentId/mcp-tools', agentMcpToolsRouter)
   .route('/agents/:agentId/skills', skillsRouter)
+  .route('/agents/:agentId/files', agentFilesRouter)
   .route('/agents/:agentId/tools', toolsRouter)
   .route('/agents/:agentId/bridge-tools', bridgeToolsRouter)
   .route('/agents/:agentId/runs', agentRunsRouter)
@@ -113,6 +133,7 @@ const api = new Hono()
   .route('/system/version', systemVersionRouter)
   .route('/llm-providers', llmProvidersRouter)
   .route('/mcp-connections', mcpConnectionsRouter)
+  .route('/files', filesRouter)
   .route('/repos', reposRouter)
   .route('/repos', repoJobsRouter)
   .route('/repos', repoGraphRouter)

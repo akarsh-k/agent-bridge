@@ -28,6 +28,7 @@ export type EventGroup =
   | 'tool' // run.tool.called / run.tool.result
   | 'mcp' // run.mcp.log
   | 'inspector' // inspector.* wrapper telemetry
+  | 'knowledge' // knowledge.search.* / .prefetch.* / .ingest.*
   | 'worker' // repo.clone / index / embed / wiki / worker.*
   | 'config' // agent.config.changed
   | 'other'
@@ -420,6 +421,138 @@ export function summarizeEvent(
         tone: 'warn',
         group: 'inspector',
         isError: false,
+      }
+    }
+
+    // ─── knowledge.* (search + prefetch + ingest) ───────────────────
+    case 'knowledge.search.called': {
+      const query = str(p['query'])
+      const scope = num(p['scopeFileCount'])
+      const topK = num(p['topK'])
+      const parts: string[] = []
+      if (query) parts.push(`"${truncate(query, 80)}"`)
+      if (scope !== null)
+        parts.push(`${scope} file${scope === 1 ? '' : 's'}`)
+      if (topK !== null) parts.push(`top ${topK}`)
+      return {
+        title: 'Search knowledge',
+        summary: parts.length > 0 ? parts.join(' · ') : null,
+        tone: 'neutral',
+        group: 'knowledge',
+        isError: false,
+      }
+    }
+    case 'knowledge.search.result': {
+      const dur = num(p['durationMs'])
+      const chunks = num(p['chunkCount'])
+      const files = num(p['fileCount'])
+      const capped = p['capped'] === true
+      const rerank = p['rerankUsed'] === true
+      const hint = str(p['hint'])
+      const parts: string[] = []
+      if (chunks !== null)
+        parts.push(`${chunks} chunk${chunks === 1 ? '' : 's'}`)
+      if (files !== null && files > 0)
+        parts.push(`across ${files} file${files === 1 ? '' : 's'}`)
+      if (rerank) parts.push('reranked')
+      if (capped) parts.push('cap hit')
+      if (dur !== null) parts.push(formatDurationMs(dur))
+      if (hint && (chunks === 0 || capped)) parts.push(truncate(hint, 80))
+      return {
+        title: 'Search knowledge',
+        summary: parts.length > 0 ? parts.join(' · ') : null,
+        tone: capped ? 'warn' : chunks === 0 ? 'warn' : 'success',
+        group: 'knowledge',
+        isError: false,
+      }
+    }
+    case 'knowledge.prefetch.called': {
+      const query = str(p['query'])
+      const topK = num(p['topK'])
+      const parts: string[] = []
+      if (query) parts.push(`"${truncate(query, 80)}"`)
+      if (topK !== null) parts.push(`top ${topK}`)
+      return {
+        title: 'Pre-fetch knowledge',
+        summary: parts.length > 0 ? parts.join(' · ') : null,
+        tone: 'neutral',
+        group: 'knowledge',
+        isError: false,
+      }
+    }
+    case 'knowledge.prefetch.result': {
+      const dur = num(p['durationMs'])
+      const chunks = num(p['chunkCount'])
+      const parts: string[] = []
+      if (chunks !== null)
+        parts.push(`${chunks} chunk${chunks === 1 ? '' : 's'}`)
+      if (dur !== null) parts.push(formatDurationMs(dur))
+      return {
+        title: 'Pre-fetch knowledge',
+        summary: parts.length > 0 ? parts.join(' · ') : null,
+        tone: 'success',
+        group: 'knowledge',
+        isError: false,
+      }
+    }
+    case 'knowledge.ingest.started': {
+      const name = str(p['fileName']) ?? str(p['fileId']) ?? 'file'
+      const kindStr = str(p['kind'])
+      const bytes = num(p['bytes'])
+      const parts: string[] = []
+      if (kindStr) parts.push(kindStr.toUpperCase())
+      if (bytes !== null) parts.push(`${(bytes / 1024).toFixed(1)} KB`)
+      return {
+        title: `Ingest: ${truncate(name, 60)}`,
+        summary: parts.length > 0 ? parts.join(' · ') : null,
+        tone: 'neutral',
+        group: 'knowledge',
+        isError: false,
+      }
+    }
+    case 'knowledge.ingest.progress': {
+      const step = str(p['step']) ?? 'progress'
+      const done = num(p['chunksDone'])
+      const total = num(p['chunksTotal'])
+      const summary =
+        done !== null && total !== null ? `${done} / ${total} chunks` : null
+      return {
+        title: `Ingest: ${step}`,
+        summary,
+        tone: 'neutral',
+        group: 'knowledge',
+        isError: false,
+      }
+    }
+    case 'knowledge.ingest.ok': {
+      const dur = num(p['durationMs'])
+      const chunks = num(p['chunkCount'])
+      const pages = num(p['pageCount'])
+      const parts: string[] = []
+      if (chunks !== null)
+        parts.push(`${chunks} chunk${chunks === 1 ? '' : 's'}`)
+      if (pages !== null) parts.push(`${pages} page${pages === 1 ? '' : 's'}`)
+      if (dur !== null) parts.push(formatDurationMs(dur))
+      return {
+        title: 'Ingest done',
+        summary: parts.length > 0 ? parts.join(' · ') : null,
+        tone: 'success',
+        group: 'knowledge',
+        isError: false,
+      }
+    }
+    case 'knowledge.ingest.fail': {
+      const msg = str(p['message'])
+      const dur = num(p['durationMs'])
+      const parts: string[] = []
+      if (msg) parts.push(truncate(msg, 140))
+      if (dur !== null) parts.push(formatDurationMs(dur))
+      return {
+        title: 'Ingest failed',
+        summary: parts.length > 0 ? parts.join(' · ') : null,
+        tone: 'danger',
+        group: 'knowledge',
+        isError: true,
       }
     }
 

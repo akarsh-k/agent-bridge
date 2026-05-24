@@ -7,7 +7,12 @@
  * `@mastra/*` imports are allowed in this directory only.
  */
 
-export { buildAgent, composeInstructions, splitSkills } from './build-agent.js'
+export {
+  buildAgent,
+  composeInstructions,
+  resolveBaseUrl,
+  splitSkills,
+} from './build-agent.js'
 export type {
   BuildAgentInput,
   BuiltAgent,
@@ -19,6 +24,41 @@ export type {
 // inputs without spinning up a real Mastra Agent. Production callers
 // reach this code via `buildAgent` only.
 export { buildReadSkillTool } from './skills-tool.js'
+// Knowledge files pipeline + retrieval. Backend's POST /api/files
+// fires `ingestKnowledgeFile` background; `buildAgent` mounts the
+// search tool when an agent has files attached.
+export { ingestKnowledgeFile } from './knowledge-ingest.js'
+export type { IngestKnowledgeFileInput } from './knowledge-ingest.js'
+export {
+  ensureFileChunksDim,
+  FileChunksDimMismatch,
+  readFileChunksDim,
+  rebuildFileChunksAtDim,
+} from './knowledge-dim.js'
+export type {
+  DimSyncResult,
+  FileChunksDimSnapshot,
+} from './knowledge-dim.js'
+// Hybrid-retrieval pure-function helpers exposed for smoke tests
+// (`tests/smoke-knowledge-tool.ts`). Production callers should reach
+// the retrieval path through `buildSearchKnowledgeTool` only.
+export {
+  buildSearchKnowledgeTool,
+  eagerPrefetchKnowledge,
+  parseRerankResponse,
+  rrfFuse,
+} from './knowledge-tool.js'
+export type {
+  AttachedKnowledgeFile,
+  BuildSearchKnowledgeToolInput,
+  ChunkHit,
+  FusedChunk,
+} from './knowledge-tool.js'
+// Per-run async-context primitive — exported for smoke tests that
+// need to drive the search tool with thread-scoped or reference-
+// scoped state. Production callers reach this via `dispatchRun`.
+export { withRunContext, getRunContext } from './run-context.js'
+export type { RunContextStore } from './run-context.js'
 export {
   emptyInspectorMountMeta,
   mountInspectorTools,

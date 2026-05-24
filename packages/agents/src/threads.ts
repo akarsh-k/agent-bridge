@@ -340,11 +340,75 @@ function extractTextFromContent(content: MastraMessageContentV2): string {
  * Remove a thread + all of its messages from Mastra storage. Cascade
  * is handled by Mastra's `deleteThread` (which removes the
  * `mastra.messages` rows for the thread under the same transaction).
+ *
+ * We then run our OWN cleanup of `thread_files`:
+ *   - Drop every `thread_files` row for this thread (Mastra doesn't
+ *     know about our table, so the cascade stops at its boundary).
+ *   - For rows that were marked `ephemeral=true` (chat-drag-drop
+ *     uploads with "save to library" off), also remove the underlying
+ *     `files` row + on-disk bytes when no other thread or agent still
+ *     references that file. Without this the bytes leak silently
+ *     onto disk and the row stays orphaned in `files`.
  */
 export async function deleteAgentThread(
   db: AgentBridgeDb,
   threadId: string,
 ): Promise<void> {
   const memory = await getMemoryDomain(db)
+
+  // Snapshot the thread's file references BEFORE Mastra's delete
+  // touches anything (it doesn't touch ours, but the ordering is
+  // intentional: read first, mutate second).
+  const refs = await db.pool.query<{
+    file_id: string
+    ephemeral: boolean
+    storage_path: string
+  }>(
+    `
+    SELECT tf.file_id, tf.ephemeral, f.storage_path
+    FROM thread_files tf
+    JOIN files f ON f.id = tf.file_id
+    WHERE tf.thread_id = $1
+    `,
+    [threadId],
+  )
+
   await memory.deleteThread({ threadId })
+
+  // Drop our thread_files rows. With Mastra's thread gone, the
+  // `thread_id` foreign-key target no longer exists (well — we have
+  // no FK; it's an opaque text), so this is a manual cleanup.
+  await db.pool.query(`DELETE FROM thread_files WHERE thread_id = $1`, [
+    threadId,
+  ])
+
+  // For ephemeral attachments, garbage-collect the file row + bytes
+  // when no other thread / agent still uses it.
+  for (const ref of refs.rows) {
+    if (!ref.ephemeral) continue
+    const otherRefs = await db.pool.query<{ n: string }>(
+      `
+      SELECT (
+        (SELECT count(*) FROM thread_files WHERE file_id = $1)
+        +
+        (SELECT count(*) FROM agent_files  WHERE file_id = $1)
+      )::text AS n
+      `,
+      [ref.file_id],
+    )
+    const stillReferenced = Number(otherRefs.rows[0]?.n ?? '0') > 0
+    if (stillReferenced) continue
+    // No remaining references. Drop the row (cascades file_chunks)
+    // and remove the disk subtree.
+    await db.pool.query(`DELETE FROM files WHERE id = $1`, [ref.file_id])
+    try {
+      const { rm } = await import('node:fs/promises')
+      await rm(ref.storage_path, { recursive: true, force: true })
+    } catch (err) {
+      console.warn(
+        `[threads] ephemeral file cleanup: failed to rm ${ref.storage_path}:`,
+        err,
+      )
+    }
+  }
 }

@@ -29,6 +29,12 @@ const toolEntry = z.object({
   source: z.enum(['gitnexus', 'mcp', 'custom']),
 })
 
+const fileEntry = z.object({
+  name: z.string(),
+  catalog_tokens: z.number().int().nonnegative(),
+  expected_search_tokens: z.number().int().nonnegative(),
+})
+
 export const tokenEstimateSchema = z.object({
   model: z.string().nullable(),
   encoding: z.string(),
@@ -50,6 +56,8 @@ export const tokenEstimateSchema = z.object({
     repoRelationshipsHint: z.number().int().nonnegative(),
     tools: z.array(toolEntry),
     toolsTotal: z.number().int().nonnegative(),
+    files: z.array(fileEntry),
+    filesCatalogTotal: z.number().int().nonnegative(),
   }),
   baselineTotal: z.number().int().nonnegative(),
 })

@@ -180,6 +180,29 @@ export const runEventKinds = [
   'inspector.keyword.result',
   'inspector.minirepo.built',
   'inspector.fallback',
+  /**
+   * Knowledge-files telemetry. Mirrors the inspector.* pattern: every
+   * `search_knowledge` invocation and every eager pre-fetch emits a
+   * `called/result` pair, every file ingest emits
+   * `started → progress* → ok|fail`. Both routes through the same
+   * `RunRedactor`/`run_events` audit path when fired during a run
+   * (search + prefetch); ingest events publish on a per-file stream
+   * `file:<id>` since they run outside any agent run.
+   *
+   * Payload shapes: `KnowledgeSearch*`, `KnowledgePrefetch*`,
+   * `KnowledgeIngest*` (defined further down). The Logs panel's
+   * default-case rendering picks them up automatically (title=kind,
+   * `.ok`/`.fail` map to success/danger tones); explicit per-kind
+   * labels can be added later for nicer summaries.
+   */
+  'knowledge.search.called',
+  'knowledge.search.result',
+  'knowledge.prefetch.called',
+  'knowledge.prefetch.result',
+  'knowledge.ingest.started',
+  'knowledge.ingest.progress',
+  'knowledge.ingest.ok',
+  'knowledge.ingest.fail',
   'ping',
 ] as const
 
@@ -407,6 +430,14 @@ export interface RepoDeleteFailPayload {
 /** Build the SSE `streamId` for per-repo clone + index + wiki + delete progress. */
 export function repoStreamId(repoId: string): string {
   return `repo:${repoId}`
+}
+
+/** Build the SSE `streamId` for per-file ingest progress (knowledge files).
+ *  The Library files page subscribes to this stream to render live
+ *  extracting → chunking → embedding → describing → ready transitions
+ *  in place of (or alongside) the existing 2s status poll. */
+export function fileStreamId(fileId: string): string {
+  return `file:${fileId}`
 }
 
 // ─── `run.*` payload shapes ──────────────────────────────────────────────
@@ -766,6 +797,10 @@ export const agentConfigResources = [
   'repo',
   'repo_relationship',
   'mcp_allowlist',
+  // Knowledge files attached to / detached from an agent. Workspace-
+  // level file events (upload, delete) aren't tracked here — that
+  // table is per-agent keyed.
+  'file',
   // Not a config resource in the literal sense, but it ships through
   // the same persistence + SSE pipeline so the unified Activity log
   // can show "new thread started" entries alongside config edits.
@@ -1024,4 +1059,104 @@ export interface InspectorFallbackPayload {
   readonly wrapperName: InspectorWrapperName
   /** Why we fell back: LLM error, parse error, empty output, etc. */
   readonly reason: string
+}
+
+// ─── `knowledge.*` payload shapes ────────────────────────────────────────
+//
+// Knowledge-files telemetry. `search` + `prefetch` happen during a
+// chat run and audit through `run_events` like the inspector events;
+// `ingest` runs outside any run and publishes on `file:<id>`.
+
+/** Per-knowledge-event preview cap so we don't shove a 10KB query or
+ *  a chunky snippet onto every SSE frame. Same spirit as
+ *  `INSPECTOR_PREVIEW_BYTES_CAP`. */
+export const KNOWLEDGE_PREVIEW_BYTES_CAP = 2_000
+
+export interface KnowledgeSearchCalledPayload {
+  readonly runId: string
+  /** Truncated to `KNOWLEDGE_PREVIEW_BYTES_CAP`. */
+  readonly query: string
+  readonly queryTruncated: boolean
+  /** Effective search scope: count of file_ids the query will hit
+   *  (after intersection with the agent's authorized set). */
+  readonly scopeFileCount: number
+  /** Optional explicit `file_ids` from the LLM args. Omitted when
+   *  the LLM didn't narrow the scope. */
+  readonly explicitFileIds?: readonly string[]
+  readonly topK: number
+}
+
+export interface KnowledgeSearchResultPayload {
+  readonly runId: string
+  readonly durationMs: number
+  /** Number of chunks returned to the LLM (post-rerank, post-top_k). */
+  readonly chunkCount: number
+  /** Distinct files represented in the returned chunks. Lets the Logs
+   *  UI render "search hit N files" without re-loading the chunk list. */
+  readonly fileCount: number
+  /** Whether the LLM-as-judge rerank pass actually ran (skipped when
+   *  layer-1 produced ≤3 candidates). */
+  readonly rerankUsed: boolean
+  /** Whether the per-burst cap or fingerprint filter forced an
+   *  empty/error response. */
+  readonly capped: boolean
+  /** Empty-result or cap-hit hint surfaced to the LLM; truncated. */
+  readonly hint?: string
+}
+
+export interface KnowledgePrefetchCalledPayload {
+  readonly runId: string
+  readonly fileId: string
+  /** Truncated to `KNOWLEDGE_PREVIEW_BYTES_CAP`. The same user prompt
+   *  that triggered the run; included so the operator can correlate
+   *  the pre-fetch decision to the message it ran for. */
+  readonly query: string
+  readonly queryTruncated: boolean
+  readonly topK: number
+}
+
+export interface KnowledgePrefetchResultPayload {
+  readonly runId: string
+  readonly fileId: string
+  readonly durationMs: number
+  readonly chunkCount: number
+}
+
+/** Steps the ingest pipeline emits as `knowledge.ingest.progress`
+ *  events. Matches the `files.ingest_status` text values plus the
+ *  embed sub-step counter. */
+export type KnowledgeIngestStep =
+  | 'extracting'
+  | 'chunking'
+  | 'embedding'
+  | 'describing'
+
+export interface KnowledgeIngestStartedPayload {
+  readonly fileId: string
+  readonly fileName: string
+  readonly bytes: number
+  readonly kind: string
+}
+
+export interface KnowledgeIngestProgressPayload {
+  readonly fileId: string
+  readonly step: KnowledgeIngestStep
+  /** Populated on the `embedding` step — chunks finished so far +
+   *  total expected. Omitted on the other steps. */
+  readonly chunksDone?: number
+  readonly chunksTotal?: number
+}
+
+export interface KnowledgeIngestOkPayload {
+  readonly fileId: string
+  readonly durationMs: number
+  readonly chunkCount: number
+  readonly pageCount: number | null
+}
+
+export interface KnowledgeIngestFailPayload {
+  readonly fileId: string
+  readonly durationMs: number
+  /** Message that was stamped on `files.ingest_error`. Truncated. */
+  readonly message: string
 }

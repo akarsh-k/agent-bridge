@@ -1,0 +1,335 @@
+/**
+ * Knowledge tool retrieval smoke. Drives the pure-function pieces of
+ * `search_knowledge` over synthetic inputs and asserts:
+ *
+ *   1. `rrfFuse` returns chunks in best-first order, k=60 constant
+ *      applied to both arms.
+ *   2. A chunk appearing in both vector + BM25 lists scores higher
+ *      than chunks appearing in only one (the whole point of RRF).
+ *   3. Empty inputs → empty output (no NaN, no crash).
+ *   4. `parseRerankResponse` tolerates prose-wrapped digit lists, both
+ *      comma- and whitespace-separated, and rejects out-of-range
+ *      numbers silently.
+ *   5. `buildSearchKnowledgeTool` returns null when no attached files
+ *      OR no embedding provider, and a Tool with id `search_knowledge`
+ *      when both are present.
+ *
+ * Pure-function smoke — no DB, no LLM, no embedder. The end-to-end
+ * SQL + embedding path needs a real test workspace + real provider
+ * and is verified manually in dev. Run in <1s.
+ *
+ *   pnpm -w run test:knowledge
+ */
+
+/* eslint-disable no-console */
+
+import {
+  buildSearchKnowledgeTool,
+  parseRerankResponse,
+  resolveBaseUrl,
+  rrfFuse,
+  type ChunkHit,
+} from '@agent-bridge/agents'
+import type { LlmProviderRow } from '@agent-bridge/db/schema'
+
+let passed = 0
+let failed = 0
+const failures: string[] = []
+
+function check(name: string, ok: boolean, diag = ''): void {
+  if (ok) {
+    passed += 1
+    console.log(`✓ ${name}${diag ? ` — ${diag}` : ''}`)
+  } else {
+    failed += 1
+    failures.push(`${name}${diag ? ` — ${diag}` : ''}`)
+    console.log(`✗ ${name}${diag ? ` — ${diag}` : ''}`)
+  }
+}
+
+console.log('━'.repeat(60))
+console.log(' Knowledge tool smoke')
+console.log('━'.repeat(60))
+
+// ── rrfFuse ────────────────────────────────────────────────────────────
+
+function mkHit(id: string, overrides: Partial<ChunkHit> = {}): ChunkHit {
+  return {
+    id,
+    fileId: 'file-a',
+    parentId: null,
+    chunkIndex: 0,
+    page: null,
+    sectionPath: null,
+    text: `text for ${id}`,
+    rawScore: 0,
+    ...overrides,
+  }
+}
+
+// Two ranked lists with one shared chunk. The shared chunk should
+// win the fused ranking because it accumulates rank from both arms.
+const vectorList: ChunkHit[] = [
+  mkHit('shared'),   // vector rank 1
+  mkHit('only-vec'), // vector rank 2
+  mkHit('only-vec-2'), // rank 3
+]
+const bm25List: ChunkHit[] = [
+  mkHit('only-bm25'), // bm25 rank 1
+  mkHit('shared'),    // bm25 rank 2 — same chunk as vector rank 1
+  mkHit('only-bm25-2'),
+]
+
+const fused = rrfFuse(vectorList, bm25List)
+check(
+  'rrfFuse produces a non-empty output',
+  fused.length > 0,
+  `${fused.length} chunks`,
+)
+check(
+  'rrfFuse dedupes chunks across both lists',
+  new Set(fused.map((c) => c.id)).size === fused.length,
+  `unique ids`,
+)
+check(
+  'shared chunk ranks first (appears in both lists)',
+  fused[0]?.id === 'shared',
+  `top=${fused[0]?.id}`,
+)
+const sharedScore = fused.find((c) => c.id === 'shared')?.score ?? 0
+const onlyVecScore = fused.find((c) => c.id === 'only-vec')?.score ?? 0
+const onlyBm25Score = fused.find((c) => c.id === 'only-bm25')?.score ?? 0
+const expectedSharedScore = 1 / (60 + 1) + 1 / (60 + 2)
+const expectedOnlyVecScore = 1 / (60 + 2)
+const expectedOnlyBm25Score = 1 / (60 + 1)
+check(
+  'shared chunk score = sum of both ranks (RRF k=60)',
+  Math.abs(sharedScore - expectedSharedScore) < 1e-9,
+  `got ${sharedScore.toFixed(6)}, expected ${expectedSharedScore.toFixed(6)}`,
+)
+check(
+  'only-vector chunk score = single 1/(60+rank)',
+  Math.abs(onlyVecScore - expectedOnlyVecScore) < 1e-9,
+  `got ${onlyVecScore.toFixed(6)}`,
+)
+check(
+  'only-bm25 chunk score = single 1/(60+rank)',
+  Math.abs(onlyBm25Score - expectedOnlyBm25Score) < 1e-9,
+  `got ${onlyBm25Score.toFixed(6)}`,
+)
+check(
+  'fused output is sorted descending by score',
+  fused.every((c, i) => i === 0 || (fused[i - 1]?.score ?? 0) >= c.score),
+  'monotone non-increasing',
+)
+check(
+  'rrfFuse on empty inputs returns empty array',
+  rrfFuse([], []).length === 0,
+  'no NaN, no crash',
+)
+check(
+  'rrfFuse on one-sided input keeps the rank order',
+  (() => {
+    const out = rrfFuse(vectorList, [])
+    return (
+      out.length === vectorList.length &&
+      out[0]?.id === 'shared' &&
+      out[1]?.id === 'only-vec'
+    )
+  })(),
+  'vector-only fusion preserves order',
+)
+
+// ── parseRerankResponse ────────────────────────────────────────────────
+
+check(
+  'parseRerankResponse handles comma-separated digits',
+  JSON.stringify(parseRerankResponse('3,1,4,2', 4)) === JSON.stringify([2, 0, 3, 1]),
+)
+check(
+  'parseRerankResponse handles whitespace-separated digits',
+  JSON.stringify(parseRerankResponse('3 1 4 2', 4)) === JSON.stringify([2, 0, 3, 1]),
+)
+check(
+  'parseRerankResponse tolerates surrounding prose',
+  JSON.stringify(parseRerankResponse('Sure, here you go: 2, 1, 3.', 3)) ===
+    JSON.stringify([1, 0, 2]),
+)
+check(
+  'parseRerankResponse drops out-of-range numbers silently',
+  JSON.stringify(parseRerankResponse('2, 99, 1', 3)) ===
+    JSON.stringify([1, 0]),
+)
+check(
+  'parseRerankResponse returns null on empty input',
+  parseRerankResponse('', 3) === null,
+)
+check(
+  'parseRerankResponse returns null on no-digit input',
+  parseRerankResponse('nothing useful here', 3) === null,
+)
+
+// ── buildSearchKnowledgeTool ───────────────────────────────────────────
+
+const fakeDb = {} as never  // never used when the factory short-circuits.
+
+const noFiles = buildSearchKnowledgeTool({
+  db: fakeDb,
+  attachedFiles: [],
+  embeddingProvider: mkProvider(),
+  chatModel: null,
+})
+check(
+  'buildSearchKnowledgeTool mounts even with empty attachedFiles',
+  noFiles !== null && noFiles.id === 'search_knowledge',
+  noFiles
+    ? `id=${noFiles.id}`
+    : 'null — but should mount so thread-scoped uploads still searchable',
+)
+check(
+  'tool description for empty attachedFiles flags the drag-drop path',
+  typeof noFiles?.description === 'string' &&
+    noFiles.description.includes('drop files'),
+  'mentions chat-drop intent',
+)
+
+const noProvider = buildSearchKnowledgeTool({
+  db: fakeDb,
+  attachedFiles: [{ id: 'f1', name: 'a.md', description: '' }],
+  embeddingProvider: null,
+  chatModel: null,
+})
+check(
+  'buildSearchKnowledgeTool returns null with no embedding provider',
+  noProvider === null,
+)
+
+const noDefaultModel = buildSearchKnowledgeTool({
+  db: fakeDb,
+  attachedFiles: [{ id: 'f1', name: 'a.md', description: '' }],
+  embeddingProvider: mkProvider({ defaultModel: null }),
+  chatModel: null,
+})
+check(
+  'buildSearchKnowledgeTool returns null when provider has no defaultModel',
+  noDefaultModel === null,
+)
+
+const tool = buildSearchKnowledgeTool({
+  db: fakeDb,
+  attachedFiles: [
+    { id: 'f1', name: 'health-report.md', description: 'Annual physical.' },
+    { id: 'f2', name: 'mortgage.md', description: 'Loan contract.' },
+  ],
+  embeddingProvider: mkProvider(),
+  chatModel: null,
+})
+check(
+  'buildSearchKnowledgeTool mounts when files + provider are present',
+  tool !== null,
+  tool ? `id=${tool.id}` : 'null',
+)
+check(
+  'tool id is exactly "search_knowledge"',
+  tool?.id === 'search_knowledge',
+  `id=${tool?.id}`,
+)
+check(
+  'tool description names the attached files',
+  typeof tool?.description === 'string' &&
+    tool.description.includes('health-report.md') &&
+    tool.description.includes('mortgage.md'),
+  'mentions both files',
+)
+
+// ── resolveBaseUrl ─────────────────────────────────────────────────────
+//
+// The "Invalid JSON response" production bug: a provider row stored as
+// `http://127.0.0.1:8081` (no `/v1`) made Mastra hit llama-server's
+// native `/embeddings` endpoint instead of the OpenAI-compatible
+// `/v1/embeddings`. The fix lives in `resolveBaseUrl`, which trims
+// trailing slashes and auto-appends `/v1` if missing. These checks
+// pin the normalization so the regression can't slip back in.
+
+check(
+  'resolveBaseUrl appends /v1 when missing',
+  resolveBaseUrl('openai_compatible', 'http://127.0.0.1:8081') ===
+    'http://127.0.0.1:8081/v1',
+  'plain host → host/v1',
+)
+check(
+  'resolveBaseUrl keeps /v1 when already present',
+  resolveBaseUrl('openai_compatible', 'http://127.0.0.1:8081/v1') ===
+    'http://127.0.0.1:8081/v1',
+  'no double-/v1 suffix',
+)
+check(
+  'resolveBaseUrl strips trailing slash before appending',
+  resolveBaseUrl('openai_compatible', 'http://127.0.0.1:8081/') ===
+    'http://127.0.0.1:8081/v1',
+  'trailing slash collapsed',
+)
+check(
+  'resolveBaseUrl strips multiple trailing slashes',
+  resolveBaseUrl('openai_compatible', 'http://127.0.0.1:8081////') ===
+    'http://127.0.0.1:8081/v1',
+  'multi-slash collapsed',
+)
+check(
+  'resolveBaseUrl handles existing /v1 with trailing slash',
+  resolveBaseUrl('openai_compatible', 'http://127.0.0.1:8081/v1/') ===
+    'http://127.0.0.1:8081/v1',
+  'slash after /v1 stripped',
+)
+check(
+  'resolveBaseUrl falls back to vendor default for OpenAI when null',
+  resolveBaseUrl('openai', null).endsWith('/v1'),
+  'OpenAI default ends in /v1',
+)
+
+let threwForMissingLocalUrl = false
+try {
+  resolveBaseUrl('openai_compatible', null)
+} catch {
+  threwForMissingLocalUrl = true
+}
+check(
+  'resolveBaseUrl throws for openai_compatible when no URL stored',
+  threwForMissingLocalUrl,
+  'belt-and-brace against the DTO validation that already requires it',
+)
+
+// ── Summary ────────────────────────────────────────────────────────────
+
+console.log('')
+console.log('━'.repeat(60))
+console.log(` Passed: ${passed}/${passed + failed}`)
+if (failed > 0) {
+  console.log(' Failed:')
+  for (const f of failures) console.log(`   ✗ ${f}`)
+  console.log('━'.repeat(60))
+  process.exitCode = 1
+} else {
+  console.log(' All checks passed.')
+  console.log('━'.repeat(60))
+}
+
+// ── Helpers ────────────────────────────────────────────────────────────
+
+function mkProvider(overrides: Partial<LlmProviderRow> = {}): LlmProviderRow {
+  const now = new Date('2026-05-23T00:00:00Z')
+  return {
+    id: 'embed-provider-id',
+    kind: 'openai_compatible',
+    role: 'embedding',
+    label: 'Workspace embedder',
+    baseUrl: 'http://127.0.0.1:8080/v1',
+    defaultModel: 'bge-large-en',
+    apiKeyEnvelope: null,
+    modelsJson: null,
+    embeddingDims: 1024,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  }
+}
