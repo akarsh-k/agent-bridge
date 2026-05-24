@@ -216,7 +216,9 @@ async function ingestInner(
     const extracted = await extractText(file)
     if (!extracted.text.trim()) {
       await fail(
-        'Extraction produced no usable text. For PDFs that scan as images, OCR is required (Phase 4).',
+        "This PDF has no selectable text. It looks like a scanned image. " +
+          "Run it through an OCR tool (Acrobat, ocrmypdf, or Preview) so " +
+          "the pages get a text layer, then upload again.",
       )
       return
     }
