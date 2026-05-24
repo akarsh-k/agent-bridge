@@ -29,6 +29,7 @@ import { EmptyState } from '../../ui/empty'
 import { ChevronDownIcon, PlusIcon, ToolIcon } from '../../ui/icons'
 import { ApiError, getGitnexusSystemTools } from '../../lib/rpc'
 import { confirmDialog } from '../../ui/dialog-store'
+import { SectionHead } from '../../ui/section-head'
 import { toast } from '../../ui/toast-store'
 
 type SystemToolsState =
@@ -342,15 +343,12 @@ export function ToolsTab({ agentId }: { agentId: string }) {
     return (
       <div>
         <div className="ab-card ab-card-pad ab-form-section">
-          <div className="ab-section-head">
-            <div className="ab-section-title">Tools</div>
-            <div className="ab-section-sub">
-              This is a Build-your-own agent — no built-in toolkit is
-              attached. Add the Inspector toolkit below to give the
-              agent code-search and graph-walk wrappers, or wire your
-              own external MCPs from the Bridge tools tab.
-            </div>
-          </div>
+          <SectionHead
+            title="Tools"
+            sub="This is a Build-your-own agent — no built-in toolkit is attached. Add the Inspector toolkit below to give the agent code-search and graph-walk wrappers, or wire your own external MCPs from the Bridge tools tab."
+            glyph={<ToolIcon width={18} height={18} strokeWidth={1.7} />}
+            tone="accent"
+          />
 
           {tools.length > 0 && (
             <>
@@ -404,19 +402,24 @@ export function ToolsTab({ agentId }: { agentId: string }) {
   return (
     <div>
       <div className="ab-card ab-card-pad ab-form-section">
-        <div className="ab-section-head">
-          <div className="ab-section-title">Tools</div>
-          <div className="ab-section-sub">
-            {systemToolCount} built-in · the inspector wrappers query
-            attached repos (auto-mounted when this agent has at least
-            one indexed repo), plus workspace-level tools like{' '}
-            <code className="ab-mono">search_knowledge</code> for
-            uploaded files and <code className="ab-mono">read_skill</code>{' '}
-            for lazy-loaded skills. Expand a row for the full description
-            and mount condition. For tools the IDE calls into the agent,
-            see the <strong>Bridge tools</strong> tab.
-          </div>
-        </div>
+        <SectionHead
+          title="Tools"
+          sub={
+            <>
+              {systemToolCount} built-in · the inspector wrappers query
+              attached repos (auto-mounted when this agent has at least
+              one indexed repo), plus workspace-level tools like{' '}
+              <code className="ab-mono">search_knowledge</code> for
+              uploaded files and{' '}
+              <code className="ab-mono">read_skill</code> for
+              lazy-loaded skills. Expand a row for the full description
+              and mount condition. For tools the IDE calls into the
+              agent, see the <strong>Bridge tools</strong> tab.
+            </>
+          }
+          glyph={<ToolIcon width={18} height={18} strokeWidth={1.7} />}
+          tone="accent"
+        />
 
         {readyRepos.length === 0 && systemTools.status === 'ready' && (
           <div

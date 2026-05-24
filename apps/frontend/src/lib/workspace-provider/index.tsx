@@ -115,6 +115,27 @@ async function fetchTopLevel(): Promise<TopLevelData> {
 }
 
 async function fetchAgentResources(agentId: string): Promise<AgentResources> {
+  // `Promise.allSettled` so a single per-resource endpoint failure
+  // doesn't wipe out the whole panel. Earlier this used `Promise.all`,
+  // and when the `agents/:agentId/files` route 500'd on a stale DTO
+  // converter every other resource (repos, skills, MCP, etc.) also
+  // disappeared from the Resources panel because the parent promise
+  // rejected. Each resource now degrades to an empty list with a
+  // console.error so the failure is visible but isolated; the rest of
+  // the panel continues to render normally.
+  const settle = <T,>(
+    label: string,
+    p: Promise<T>,
+    fallback: T,
+  ): Promise<T> =>
+    p.catch((err) => {
+      console.error(
+        `[workspace] fetchAgentResources: ${label} failed for agent ${agentId}:`,
+        err,
+      )
+      return fallback
+    })
+
   const [
     skills,
     tools,
@@ -123,30 +144,56 @@ async function fetchAgentResources(agentId: string): Promise<AgentResources> {
     mcpAllowlist,
     repoRelationships,
   ] = await Promise.all([
-    callApi<{ ok: true; skills: readonly SkillResponse[] }>(
-      rpc.api.agents[':agentId'].skills.$get({ param: { agentId } }),
-    ).then((r) => r.skills),
-    callApi<{ ok: true; tools: readonly ToolResponse[] }>(
-      rpc.api.agents[':agentId'].tools.$get({ param: { agentId } }),
-    ).then((r) => r.tools),
-    callApi<{ ok: true; attachments: readonly AttachedRepoResponse[] }>(
-      rpc.api.agents[':agentId'].repos.$get({ param: { agentId } }),
-    ).then((r) => r.attachments),
-    callApi<{
-      ok: true
-      attachments: readonly {
-        attachment: AgentFileResponse
-        file: FileResponse
-      }[]
-    }>(
-      rpc.api.agents[':agentId'].files.$get({ param: { agentId } }),
-    ).then((r) => r.attachments),
-    callApi<{ ok: true; tools: readonly AllowlistEntryResponse[] }>(
-      rpc.api.agents[':agentId']['mcp-tools'].$get({ param: { agentId } }),
-    ).then((r) => r.tools),
-    callApi<{ ok: true; relationships: readonly RepoRelationshipResponse[] }>(
-      rpc.api.agents[':agentId']['repo-relationships'].$get({ param: { agentId } }),
-    ).then((r) => r.relationships),
+    settle(
+      'skills',
+      callApi<{ ok: true; skills: readonly SkillResponse[] }>(
+        rpc.api.agents[':agentId'].skills.$get({ param: { agentId } }),
+      ).then((r) => r.skills),
+      [] as readonly SkillResponse[],
+    ),
+    settle(
+      'tools',
+      callApi<{ ok: true; tools: readonly ToolResponse[] }>(
+        rpc.api.agents[':agentId'].tools.$get({ param: { agentId } }),
+      ).then((r) => r.tools),
+      [] as readonly ToolResponse[],
+    ),
+    settle(
+      'repos',
+      callApi<{ ok: true; attachments: readonly AttachedRepoResponse[] }>(
+        rpc.api.agents[':agentId'].repos.$get({ param: { agentId } }),
+      ).then((r) => r.attachments),
+      [] as readonly AttachedRepoResponse[],
+    ),
+    settle(
+      'files',
+      callApi<{
+        ok: true
+        attachments: readonly {
+          attachment: AgentFileResponse
+          file: FileResponse
+        }[]
+      }>(
+        rpc.api.agents[':agentId'].files.$get({ param: { agentId } }),
+      ).then((r) => r.attachments),
+      [] as readonly { attachment: AgentFileResponse; file: FileResponse }[],
+    ),
+    settle(
+      'mcp-tools',
+      callApi<{ ok: true; tools: readonly AllowlistEntryResponse[] }>(
+        rpc.api.agents[':agentId']['mcp-tools'].$get({ param: { agentId } }),
+      ).then((r) => r.tools),
+      [] as readonly AllowlistEntryResponse[],
+    ),
+    settle(
+      'repo-relationships',
+      callApi<{ ok: true; relationships: readonly RepoRelationshipResponse[] }>(
+        rpc.api.agents[':agentId']['repo-relationships'].$get({
+          param: { agentId },
+        }),
+      ).then((r) => r.relationships),
+      [] as readonly RepoRelationshipResponse[],
+    ),
   ])
   return {
     skills,

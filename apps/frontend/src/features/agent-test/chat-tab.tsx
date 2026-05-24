@@ -103,14 +103,16 @@ export function ChatTab({
         token: `@mcp:${m.toolName}`,
       })
     }
-    // Knowledge files. Token carries the file id (not the name) so
-    // the send handler can extract a `referencedFileIds` array
-    // unambiguously even if two files share a display name.
+    // Knowledge files. Token is the readable `@<filename>` form (no
+    // `@file:<uuid>` prefix) so the composer and rendered bubble both
+    // show the same human-friendly text. Send-time extraction matches
+    // tokens against this catalog (longest-first) to recover fileIds
+    // without ever exposing uuids in the textarea.
     for (const af of r.attachedFiles) {
       out.push({
         kind: 'file',
         label: af.file.name,
-        token: `@file:${af.file.id}`,
+        token: `@${af.file.name}`,
         fileId: af.file.id,
       })
     }
@@ -246,31 +248,33 @@ export function ChatTab({
   const send = () => {
     const text = draft.trim()
     if (!text || chat.sending || chat.activeRunId) return
-    // Extract any `@file:<uuid>` tokens from the draft so the backend
-    // can clamp `search_knowledge` to that scope. The tokens stay in
-    // the prompt text so the assistant can see what the user actually
-    // typed (the UI renders them as `@<filename>` chips); the
-    // dispatcher uses the extracted ids for the tool's scope.
-    const fileIdRegex =
-      /@file:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi
-    const referencedFileIds = Array.from(
-      new Set(
-        Array.from(text.matchAll(fileIdRegex), (m) => m[1]!.toLowerCase()),
-      ),
-    )
-    // Resolve referenced ids → display names for the filter pill.
-    // Look up across both agent + thread attachments since the user
-    // could mention either. Unknown ids degrade to "(unknown file)".
-    const attachedById = new Map<string, string>()
-    const resources = agentResources[agentId]
-    if (resources) {
-      for (const af of resources.attachedFiles) {
-        attachedById.set(af.file.id, af.file.name)
+    // Extract `@<filename>` mentions from the draft so the backend can
+    // clamp `search_knowledge` to that scope. We walk the catalog of
+    // attached files sorted by name LENGTH DESCENDING, so a longer
+    // filename ("vendor-agreement-2024.pdf") wins over a shorter one
+    // that's a substring ("vendor.pdf"). Each match strips its token
+    // from a scratch copy of the text before the next check, so the
+    // shorter prefix doesn't double-count when both are present.
+    const fileMentions = mentionItems
+      .filter(
+        (m): m is MentionItem & { fileId: string } =>
+          m.kind === 'file' && !!m.fileId,
+      )
+      .slice()
+      .sort((a, b) => b.token.length - a.token.length)
+    const seenIds = new Set<string>()
+    const referencedFileIds: string[] = []
+    const referencedFileNames: string[] = []
+    let scan = text
+    for (const f of fileMentions) {
+      if (!scan.includes(f.token)) continue
+      if (!seenIds.has(f.fileId)) {
+        seenIds.add(f.fileId)
+        referencedFileIds.push(f.fileId)
+        referencedFileNames.push(f.label)
       }
+      scan = scan.split(f.token).join('')
     }
-    const referencedFileNames = referencedFileIds.map(
-      (id) => attachedById.get(id) ?? '(unknown file)',
-    )
     setDraft('')
     setMention(null)
     void chat.send(
@@ -441,7 +445,7 @@ export function ChatTab({
                 key={m.id}
                 msg={m}
                 agentInitial={(agent?.name ?? 'A').charAt(0).toUpperCase()}
-                mentionTokens={mentionItems.map((mi) => mi.token)}
+                mentionItems={mentionItems}
               />
             ))
           )}
@@ -656,11 +660,16 @@ function ThinkingDots() {
 function MessageRow({
   msg,
   agentInitial,
-  mentionTokens,
+  mentionItems,
 }: {
   msg: ChatMessage
   agentInitial: string
-  mentionTokens: ReadonlyArray<string>
+  /** Full catalog of @-mention items the agent knows about — used to
+   *  match readable tokens (`@vendor.pdf`, `@skill:Code Review`) in
+   *  the message text and wrap them as styled chips. Catalog-driven
+   *  matching also handles names with spaces, which a strict regex
+   *  would split. */
+  mentionItems: ReadonlyArray<MentionItem>
 }) {
   return (
     <div className={`ab-msg ab-msg-${msg.role === 'user' ? 'user' : 'bot'}`}>
@@ -721,7 +730,7 @@ function MessageRow({
                 className="ab-msg-bubble"
                 style={{ whiteSpace: 'pre-wrap' }}
               >
-                {renderUserText(msg.text, mentionTokens)}
+                {renderUserText(msg.text, mentionItems)}
                 {msg.status === 'streaming' && (
                   <span style={{ opacity: 0.5 }}> ▍</span>
                 )}
@@ -800,30 +809,37 @@ function MessageRow({
  * has since been renamed. */
 function renderUserText(
   text: string,
-  knownTokens: ReadonlyArray<string>,
+  catalog: ReadonlyArray<MentionItem>,
 ): React.ReactNode {
-  // Sort longest-first so `@skill:Code` doesn't mask `@skill:Code Review`.
-  const sortedTokens = [...knownTokens].sort((a, b) => b.length - a.length)
+  // Sort by token length, longest-first, so `@skill:Code` doesn't
+  // mask `@skill:Code Review` when both exist.
+  const sortedItems = [...catalog]
+    .filter((it) => it.token.length > 0)
+    .sort((a, b) => b.token.length - a.token.length)
+  // The token IS the display form for every kind — files are now
+  // `@<filename>` (no `@file:<uuid>` wire prefix), so the chip text
+  // and the underlying token are identical.
+  const displayFor = (item: MentionItem): string => item.token
   const parts: React.ReactNode[] = []
   let i = 0
   let key = 0
   while (i < text.length) {
     if (text[i] === '@') {
       // 1) Try the live catalog first — handles spaces in names.
-      const hit = sortedTokens.find(
-        (t) => t.length > 0 && text.startsWith(t, i),
-      )
+      const hit = sortedItems.find((it) => text.startsWith(it.token, i))
       if (hit) {
         parts.push(
           <span key={`m${key++}`} className="ab-msg-mention">
-            {hit}
+            {displayFor(hit)}
           </span>,
         )
-        i += hit.length
+        i += hit.token.length
         continue
       }
       // 2) Fallback: strict-regex token (no spaces) for replayed
-      //    messages whose catalog item no longer exists.
+      //    messages whose catalog item no longer exists. File uuids
+      //    in this branch get rendered as `@file:<short-id>` — better
+      //    than the full uuid, still honest that the file is gone.
       const tail = text.slice(i)
       const m = tail.match(/^@(repo|skill|tool|mcp):([\w./:-]+)/)
       if (m) {
@@ -833,6 +849,18 @@ function renderUserText(
           </span>,
         )
         i += m[0].length
+        continue
+      }
+      const f = tail.match(
+        /^@file:([0-9a-f]{8})-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i,
+      )
+      if (f) {
+        parts.push(
+          <span key={`m${key++}`} className="ab-msg-mention">
+            @file:{f[1]}…
+          </span>,
+        )
+        i += f[0].length
         continue
       }
     }

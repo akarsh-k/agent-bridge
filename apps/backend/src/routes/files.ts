@@ -42,17 +42,16 @@ import {
   MAX_FILE_BYTES,
   MAX_FILES_PER_WORKSPACE,
   fileItemParamSchema,
-  fileResponseSchema,
   fileUpdateInputSchema,
-  type FileIngestStatus,
   type FileKind,
-  type FileResponse,
 } from '@agent-bridge/shared'
 import {
   knowledgeFileDir,
   knowledgeOriginalPath,
 } from '@agent-bridge/shared/paths'
 import { schema, type AgentBridgeDb } from '@agent-bridge/db'
+
+type FileRow = typeof schema.files.$inferSelect
 import {
   ingestKnowledgeFile,
   rebuildFileChunksAtDim,
@@ -62,30 +61,7 @@ import { getDb } from '../db.js'
 import { getEventBus } from '../event-bus.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 
-type FileRow = typeof schema.files.$inferSelect
-
-function toFileResponse(row: FileRow): FileResponse {
-  return fileResponseSchema.parse({
-    id: row.id,
-    name: row.name,
-    filename: row.filename,
-    kind: row.kind as FileKind,
-    bytes: row.bytes,
-    description: row.description,
-    contentHash: row.contentHash,
-    pageCount: row.pageCount,
-    ingestStatus: row.ingestStatus as FileIngestStatus,
-    chunksDone: row.chunksDone,
-    ingestError: row.ingestError,
-    // Persisted as text in the DB (drizzle DSL has no enum type for
-    // this column). Narrow at the boundary so the response type stays
-    // strict; an unrecognised value would surface as a Zod parse
-    // error here rather than silently flowing to the UI.
-    chunkingMode: row.chunkingMode as FileResponse['chunkingMode'],
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-  })
-}
+import { toFileResponse } from '../lib/file-converter.js'
 
 /**
  * Resolve the file extension from a filename. Returns the lowercase

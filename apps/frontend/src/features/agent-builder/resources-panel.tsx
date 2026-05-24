@@ -18,7 +18,15 @@ import { Pill, type PillKind } from '../../ui/pill'
 import { BrandGlyph } from '../../ui/brand-glyph'
 import { EmptyState } from '../../ui/empty'
 import { Markdown } from '../../ui/markdown'
-import { PlusIcon, FileIcon, ChevronDownIcon } from '../../ui/icons'
+import {
+  PlusIcon,
+  FileIcon,
+  ChevronDownIcon,
+  ReposIcon,
+  McpIcon,
+  LogsIcon,
+} from '../../ui/icons'
+import { SectionHead as CardHead } from '../../ui/section-head'
 import { toast } from '../../ui/toast-store'
 import { confirmDialog } from '../../ui/dialog-store'
 import { RowMenu } from '../../ui/row-menu'
@@ -122,33 +130,6 @@ function SkillLoadingBadge({ skill }: { skill: SkillResponse }) {
   return <Pill kind="neutral">Always on</Pill>
 }
 
-function CardHead({
-  title,
-  sub,
-  action,
-}: {
-  title: string
-  sub: string
-  action?: React.ReactNode
-}) {
-  return (
-    <div
-      className="ab-section-head"
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        justifyContent: 'space-between',
-        gap: 12,
-      }}
-    >
-      <div style={{ minWidth: 0 }}>
-        <div className="ab-section-title">{title}</div>
-        <div className="ab-section-sub">{sub}</div>
-      </div>
-      {action}
-    </div>
-  )
-}
 
 export function ResourcesPanel({ agentId }: { agentId: string }) {
   const {
@@ -294,6 +275,8 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
         <CardHead
           title="Repositories"
           sub={`${resources?.attachedRepos.length ?? 0} attached · code the agent can read and reason about`}
+          glyph={<ReposIcon width={18} height={18} strokeWidth={1.7} />}
+          tone="success"
           action={
             <Button
               variant="secondary"
@@ -438,6 +421,8 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
         <CardHead
           title="Files"
           sub={`${resources?.attachedFiles.length ?? 0} attached · documents the agent can search via search_knowledge`}
+          glyph={<FileIcon width={18} height={18} strokeWidth={1.7} />}
+          tone="accent"
           action={
             <Button
               variant="secondary"
@@ -521,6 +506,8 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
         <CardHead
           title="MCP connections"
           sub={`${resources?.mcpAllowlist.length ?? 0} allowed tools · external servers (Linear, Notion, …) the agent can call`}
+          glyph={<McpIcon width={18} height={18} strokeWidth={1.7} />}
+          tone="warn"
           action={
             <Button
               variant="secondary"
@@ -636,6 +623,8 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
         <CardHead
           title="Skills"
           sub={`${resources?.skills.length ?? 0} attached · 2 built-in · reusable instruction packs the agent runs through`}
+          glyph={<LogsIcon width={18} height={18} strokeWidth={1.7} />}
+          tone="accent"
           action={
             <Button
               variant="secondary"

@@ -21,21 +21,17 @@ import {
   agentFileAttachInputSchema,
   agentFileItemParamSchema,
   agentFileResponseSchema,
-  fileResponseSchema,
   filesAgentParamSchema,
   type AgentFileResponse,
-  type FileIngestStatus,
-  type FileKind,
-  type FileResponse,
 } from '@agent-bridge/shared'
 import { schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
 import { publishAgentConfig } from '../lib/agent-events.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 import { isPostgresErrorWithCode, PG } from '../lib/pg-errors.js'
+import { toFileResponse } from '../lib/file-converter.js'
 
 type AgentFileRow = typeof schema.agentFiles.$inferSelect
-type FileRow = typeof schema.files.$inferSelect
 
 function toAgentFileResponse(row: AgentFileRow): AgentFileResponse {
   return agentFileResponseSchema.parse({
@@ -43,24 +39,6 @@ function toAgentFileResponse(row: AgentFileRow): AgentFileResponse {
     fileId: row.fileId,
     position: row.position,
     createdAt: row.createdAt.toISOString(),
-  })
-}
-
-function toFileResponse(row: FileRow): FileResponse {
-  return fileResponseSchema.parse({
-    id: row.id,
-    name: row.name,
-    filename: row.filename,
-    kind: row.kind as FileKind,
-    bytes: row.bytes,
-    description: row.description,
-    contentHash: row.contentHash,
-    pageCount: row.pageCount,
-    ingestStatus: row.ingestStatus as FileIngestStatus,
-    chunksDone: row.chunksDone,
-    ingestError: row.ingestError,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
   })
 }
 
