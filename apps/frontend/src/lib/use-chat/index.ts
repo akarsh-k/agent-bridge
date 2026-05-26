@@ -1113,7 +1113,7 @@ export function useChat(input: UseChatInput): UseChatResult {
     // (load-messages) also guards against this by preferring `prev`
     // when mapped is shorter, but the delay turns the rare "Mastra
     // slow" case into a no-op instead of a brief flicker.
-    let invalidateTimer: ReturnType<typeof setTimeout> | undefined
+    let invalidateTimer: ReturnType<Window['setTimeout']> | undefined
     if (removed.includes(focused)) {
       invalidateTimer = window.setTimeout(
         () => setMessagesLoadedFor(null),
