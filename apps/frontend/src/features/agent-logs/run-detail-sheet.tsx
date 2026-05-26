@@ -269,7 +269,27 @@ function RunDetailBody({ data }: { data: RunDetailResponse }) {
       {run.errorMessage && <RunErrorCard message={run.errorMessage} />}
       <CollapsibleBody title="Input prompt" body={run.inputPrompt} />
       {run.outputSummary !== null && (
-        <CollapsibleBody title="Output summary" body={run.outputSummary} />
+        <>
+          {stepLimit?.exhausted && (
+            <div
+              style={{
+                margin: '0 0 6px',
+                padding: '8px 12px',
+                borderLeft: '3px solid var(--warn)',
+                background: 'var(--warn-bg)',
+                borderRadius: 'var(--radius)',
+                fontSize: 12,
+                lineHeight: 1.5,
+                color: 'var(--text-dim)',
+              }}
+            >
+              Output may be truncated. The agent loop hit its step limit
+              ({stepLimit.stepCount}/{stepLimit.maxSteps}) before producing
+              the final synthesis turn.
+            </div>
+          )}
+          <CollapsibleBody title="Output summary" body={run.outputSummary} />
+        </>
       )}
       <EventTimeline
         events={events}
@@ -480,14 +500,6 @@ function RunHeader({
             value={`${stepLimit.stepCount} / ${stepLimit.maxSteps}`}
           />
         )}
-        {stepLimit?.exhausted && (
-          <span
-            title="The agent loop hit its step limit before the model finished. The response may be missing the final synthesis turn. Raise the agent's Step limit if this is a deep-research workload."
-            style={{ display: 'inline-flex' }}
-          >
-            <Pill kind="warn">Hit step limit</Pill>
-          </span>
-        )}
         <button
           type="button"
           onClick={() => setShowDebug((s) => !s)}
@@ -497,6 +509,31 @@ function RunHeader({
           {showDebug ? 'Hide details' : 'Show details'}
         </button>
       </div>
+      {stepLimit?.exhausted && (
+        <div
+          role="status"
+          style={{
+            marginTop: 12,
+            padding: '10px 14px',
+            borderLeft: '3px solid var(--warn)',
+            background: 'var(--warn-bg)',
+            borderRadius: 'var(--radius)',
+            fontSize: 13,
+            lineHeight: 1.5,
+            color: 'var(--text)',
+          }}
+        >
+          <div style={{ fontWeight: 600, marginBottom: 2 }}>
+            Hit step limit ({stepLimit.stepCount}/{stepLimit.maxSteps})
+          </div>
+          <div style={{ color: 'var(--text-dim)' }}>
+            The agent loop ran out of steps before the model could write its
+            final answer. The output below is likely missing the synthesis
+            turn. Raise the agent's Step limit on its Configure tab if this
+            is a deep-research workload.
+          </div>
+        </div>
+      )}
       {showDebug && (
         <div
           style={{
