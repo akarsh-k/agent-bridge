@@ -2,6 +2,8 @@
 
 **A local-first agent workbench and MCP bridge that gives IDE coding agents grounded codebase research before they edit.**
 
+> **Public alpha release.** Agent Bridge is in active development. Expect rough edges and breaking changes between releases. Bug reports and feedback are very welcome.
+
 Agent Bridge started from a simple idea: coding agents are good at editing
 code, but they often do weak research before they act.
 
@@ -96,7 +98,7 @@ bridge. For each repo-inspector agent, the bridge exposes:
 
 - `<slug>__inspect_codebase` — structured codebase evidence for
   debugging, tracing, impact analysis, and module understanding.
-  Returns a `mini_repos[]` envelope with ranked file hits, graph
+  Returns a `codebase_inspection_reports[]` envelope with ranked file hits, graph
   context, cross-repo relationships, and summaries.
 - `<slug>__ask_agent` — prose answers for architecture, debugging, and
   general codebase questions.

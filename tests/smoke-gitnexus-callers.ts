@@ -8,7 +8,7 @@
  *
  * Why this exists: the wrappers (`find_in_codebase`,
  * `assess_change_impact`, `trace_flow`) project gitnexus output into
- * mini-repo file rows. A subtle shape mismatch — e.g. reading
+ * codebase-inspection-report file rows. A subtle shape mismatch — e.g. reading
  * `accessedKeys` when gitnexus emits `accesses` — silently produces
  * empty results in production. The smoke locks in the field names and
  * envelope variants gitnexus emits today, so a future gitnexus version

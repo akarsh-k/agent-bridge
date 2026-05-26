@@ -32,12 +32,12 @@ import {
   type ToolDict,
 } from '../gitnexus-callers.js'
 import { keywordSearch, type KeywordHit } from '../keyword-search.js'
-import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
+import { finalizeCodebaseInspectionReport, type CodebaseInspectionReportDraft } from '../codebase-inspection-report.js'
 import { readFileChunkFromDisk } from '../read-source.js'
 import { resolveRepoForWrapper } from '../run-context.js'
-import type { MiniRepo, MiniRepoChunk, MiniRepoFile } from '../types.js'
+import type { CodebaseInspectionReport, CodebaseInspectionReportChunk, CodebaseInspectionReportFile } from '../types.js'
 import {
-  emitMinirepoBuilt,
+  emitReportBuilt,
   emitToolCalled,
   emitToolResult,
   withGitnexusCall,
@@ -54,12 +54,12 @@ export interface DebugHelpInput {
   /** Optional free-form developer query. */
   readonly query?: string
   readonly repoHint?: string | null
-  /** Per-call mini-repo token cap; falls back to the module default when omitted. */
-  readonly miniRepoTokenCap?: number
+  /** Per-call codebase inspection report token cap; falls back to the module default when omitted. */
+  readonly codebaseInspectionReportTokenCap?: number
 }
 
-export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
-  const { tools, repos, errorText, query, repoHint, miniRepoTokenCap } = input
+export async function runDebugHelp(input: DebugHelpInput): Promise<CodebaseInspectionReport> {
+  const { tools, repos, errorText, query, repoHint, codebaseInspectionReportTokenCap } = input
   const handle = await emitToolCalled('debug_help', {
     error_text_chars: errorText.length,
     query,
@@ -68,14 +68,14 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
 
   const trimmedError = errorText.trim()
   if (trimmedError.length === 0) {
-    const result = finalizeMiniRepo(
+    const result = finalizeCodebaseInspectionReport(
       emptyDraft({
         summary: 'Pass the error text or stack trace to debug.',
         warnings: ['empty error_text'],
       }),
-      miniRepoTokenCap,
+      codebaseInspectionReportTokenCap,
     )
-    await emitMinirepoBuilt('debug_help', result)
+    await emitReportBuilt('debug_help', result)
     await emitToolResult({
       handle,
       wrapperName: 'debug_help',
@@ -95,14 +95,14 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
       resolution.ok === 'clarify'
         ? `${resolution.message}. Pick one: ${resolution.candidates.map((c) => c.label).join(', ')}.`
         : `Could not resolve repo: ${resolution.message}`
-    const result = finalizeMiniRepo(
+    const result = finalizeCodebaseInspectionReport(
       emptyDraft({
         summary,
         warnings: [resolution.message],
       }),
-      miniRepoTokenCap,
+      codebaseInspectionReportTokenCap,
     )
-    await emitMinirepoBuilt('debug_help', result)
+    await emitReportBuilt('debug_help', result)
     await emitToolResult({
       handle,
       wrapperName: 'debug_help',
@@ -116,15 +116,15 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
 
   const candidates = extractCandidates(trimmedError, query?.trim() ?? '')
   if (candidates.length === 0) {
-    const result = finalizeMiniRepo(
+    const result = finalizeCodebaseInspectionReport(
       emptyDraft({
         summary:
           'Could not extract any file paths or symbol names from the error text.',
         warnings: ['no candidates extracted'],
       }),
-      miniRepoTokenCap,
+      codebaseInspectionReportTokenCap,
     )
-    await emitMinirepoBuilt('debug_help', result)
+    await emitReportBuilt('debug_help', result)
     await emitToolResult({
       handle,
       wrapperName: 'debug_help',
@@ -238,9 +238,9 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
   // the slice around the hit line so the surrounding context is
   // visible. Falls back to the query/keyword snippet when disk read
   // misses (e.g. file vanished between index and read).
-  const files: MiniRepoFile[] = []
+  const files: CodebaseInspectionReportFile[] = []
   for (const h of picked) {
-    let chunks: MiniRepoChunk[] = []
+    let chunks: CodebaseInspectionReportChunk[] = []
     const focusLine = h.hit.line ?? null
     const chunk = await readFileChunkFromDisk({
       repo: h.repo,
@@ -290,7 +290,7 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
       ? `No matches in ${targets.length} repo(s) for ${candidates.length} candidate(s) extracted from the error text.`
       : `Found ${files.length} suspect call site(s) across ${targets.length} repo(s) from ${candidates.length} candidate(s) (${candidates.slice(0, 4).join(', ')}${candidates.length > 4 ? '…' : ''}).`
 
-  const miniRepo = finalizeMiniRepo(
+  const report = finalizeCodebaseInspectionReport(
     {
       wrapper: 'debug_help',
       summary,
@@ -314,16 +314,16 @@ export async function runDebugHelp(input: DebugHelpInput): Promise<MiniRepo> {
       confidence:
         files.length >= 3 ? 'high' : files.length >= 1 ? 'medium' : 'low',
     },
-    miniRepoTokenCap,
+    codebaseInspectionReportTokenCap,
   )
-  await emitMinirepoBuilt('debug_help', miniRepo)
+  await emitReportBuilt('debug_help', report)
   await emitToolResult({
     handle,
     wrapperName: 'debug_help',
     status: warnings.length > 0 ? 'fallback' : 'ok',
     ...(warnings.length > 0 ? { message: warnings[0] } : {}),
   })
-  return miniRepo
+  return report
 }
 
 // ─── Candidate extraction ────────────────────────────────────────────────
@@ -408,7 +408,7 @@ function inferLanguage(path: string): string {
 function emptyDraft(args: {
   summary: string
   warnings?: readonly string[]
-}): MiniRepoDraft {
+}): CodebaseInspectionReportDraft {
   return {
     wrapper: 'debug_help',
     summary: args.summary,

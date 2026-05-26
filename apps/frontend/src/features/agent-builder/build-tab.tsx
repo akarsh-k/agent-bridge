@@ -43,9 +43,9 @@ export function BuildTab({ agentId }: { agentId: string }) {
   // (controlled inputs of type=number with `value={null}` warn). Parsed
   // to `number | null` at save time.
   const [maxStepsInput, setMaxStepsInput] = useState('')
-  // Per-wrapper mini-repo token cap. Same blank-as-default convention as
-  // `maxStepsInput`. Range is 2_000–64_000 (mirrors the DTO bounds).
-  const [miniRepoCapInput, setMiniRepoCapInput] = useState('')
+  // Per-wrapper codebase-inspection-report token cap. Same blank-as-default
+  // convention as `maxStepsInput`. Range is 2_000–64_000 (mirrors the DTO bounds).
+  const [reportCapInput, setReportCapInput] = useState('')
 
   const parsedMaxSteps = useMemo<number | null | 'invalid'>(() => {
     const trimmed = maxStepsInput.trim()
@@ -57,8 +57,8 @@ export function BuildTab({ agentId }: { agentId: string }) {
     return n
   }, [maxStepsInput])
 
-  const parsedMiniRepoCap = useMemo<number | null | 'invalid'>(() => {
-    const trimmed = miniRepoCapInput.trim()
+  const parsedReportCap = useMemo<number | null | 'invalid'>(() => {
+    const trimmed = reportCapInput.trim()
     if (trimmed === '') return null
     const n = Number(trimmed)
     if (
@@ -70,7 +70,7 @@ export function BuildTab({ agentId }: { agentId: string }) {
       return 'invalid'
     }
     return n
-  }, [miniRepoCapInput])
+  }, [reportCapInput])
 
   const draft = useMemo(
     () => ({
@@ -79,10 +79,10 @@ export function BuildTab({ agentId }: { agentId: string }) {
       systemPrompt,
       llmProviderId: providerId,
       maxSteps: parsedMaxSteps === 'invalid' ? null : parsedMaxSteps,
-      miniRepoTokenCap:
-        parsedMiniRepoCap === 'invalid' ? null : parsedMiniRepoCap,
+      codebaseInspectionReportTokenCap:
+        parsedReportCap === 'invalid' ? null : parsedReportCap,
     }),
-    [name, slug, systemPrompt, providerId, parsedMaxSteps, parsedMiniRepoCap],
+    [name, slug, systemPrompt, providerId, parsedMaxSteps, parsedReportCap],
   )
 
   const isDirty = useMemo(() => {
@@ -98,7 +98,7 @@ export function BuildTab({ agentId }: { agentId: string }) {
       draft.systemPrompt !== agent.systemPrompt ||
       draft.llmProviderId !== agent.llmProviderId ||
       draft.maxSteps !== agent.maxSteps ||
-      draft.miniRepoTokenCap !== agent.miniRepoTokenCap
+      draft.codebaseInspectionReportTokenCap !== agent.codebaseInspectionReportTokenCap
     )
   }, [agent, seededFor, draft])
 
@@ -130,11 +130,11 @@ export function BuildTab({ agentId }: { agentId: string }) {
         toast.error('Step limit must be an integer between 1 and 100.')
         throw new Error('maxSteps invalid')
       }
-      if (parsedMiniRepoCap === 'invalid') {
+      if (parsedReportCap === 'invalid') {
         toast.error(
           'Tool response budget must be an integer between 2,000 and 64,000.',
         )
-        throw new Error('miniRepoTokenCap invalid')
+        throw new Error('codebaseInspectionReportTokenCap invalid')
       }
       try {
         await patchAgent(agent.id, {
@@ -143,7 +143,7 @@ export function BuildTab({ agentId }: { agentId: string }) {
           systemPrompt: draft.systemPrompt,
           llmProviderId: draft.llmProviderId,
           maxSteps: draft.maxSteps,
-          miniRepoTokenCap: draft.miniRepoTokenCap,
+          codebaseInspectionReportTokenCap: draft.codebaseInspectionReportTokenCap,
         })
         toast.success('Identity saved')
       } catch (e) {
@@ -164,8 +164,8 @@ export function BuildTab({ agentId }: { agentId: string }) {
       setSystemPrompt(agent.systemPrompt)
       setProviderId(agent.llmProviderId)
       setMaxStepsInput(agent.maxSteps === null ? '' : String(agent.maxSteps))
-      setMiniRepoCapInput(
-        agent.miniRepoTokenCap === null ? '' : String(agent.miniRepoTokenCap),
+      setReportCapInput(
+        agent.codebaseInspectionReportTokenCap === null ? '' : String(agent.codebaseInspectionReportTokenCap),
       )
     },
   })
@@ -177,8 +177,8 @@ export function BuildTab({ agentId }: { agentId: string }) {
     setSystemPrompt(agent.systemPrompt)
     setProviderId(agent.llmProviderId)
     setMaxStepsInput(agent.maxSteps === null ? '' : String(agent.maxSteps))
-    setMiniRepoCapInput(
-      agent.miniRepoTokenCap === null ? '' : String(agent.miniRepoTokenCap),
+    setReportCapInput(
+      agent.codebaseInspectionReportTokenCap === null ? '' : String(agent.codebaseInspectionReportTokenCap),
     )
   }
 
@@ -373,30 +373,30 @@ export function BuildTab({ agentId }: { agentId: string }) {
           </div>
           {agent.inspectorEnabled && (
             <div className="ab-field">
-              <label className="ab-field-label" htmlFor="b-mini-repo-cap">
+              <label className="ab-field-label" htmlFor="b-inspection-report-cap">
                 Tool response budget
               </label>
               <input
-                id="b-mini-repo-cap"
+                id="b-inspection-report-cap"
                 className="ab-input ab-mono"
                 type="text"
                 inputMode="numeric"
                 placeholder="default (12,000 tokens)"
-                value={miniRepoCapInput}
-                onChange={(e) => setMiniRepoCapInput(e.target.value)}
+                value={reportCapInput}
+                onChange={(e) => setReportCapInput(e.target.value)}
                 aria-invalid={
-                  parsedMiniRepoCap === 'invalid' ? true : undefined
+                  parsedReportCap === 'invalid' ? true : undefined
                 }
               />
               <span
                 className="ab-field-help"
                 style={
-                  parsedMiniRepoCap === 'invalid'
+                  parsedReportCap === 'invalid'
                     ? { color: 'var(--warn)' }
                     : undefined
                 }
               >
-                {parsedMiniRepoCap === 'invalid'
+                {parsedReportCap === 'invalid'
                   ? 'Enter an integer between 2,000 and 64,000, or leave blank.'
                   : 'How much code and context each Inspector tool (find_in_codebase, trace_flow, etc.) can pack into one response. Blank uses the default (12,000 tokens). Raise this if run logs show repeated "dropped … to fit under cap" warnings on large repos. Lower it on small repos to keep responses lean.'}
               </span>

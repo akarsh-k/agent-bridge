@@ -303,7 +303,7 @@ function parseAndRankRgJson(stdout: string, ctx: ParseInput): KeywordHit[] {
   //   - higher total occurrence counts
   //   - earlier-line first hits (decay 1/N)
   // Then flatten to per-line hits with the same file score so the
-  // mini-repo's path-level ordering is stable.
+  // codebase-inspection-report's path-level ordering is stable.
   const fileScores = new Map<string, number>()
   for (const [relPath, f] of perFile.entries()) {
     let score = f.totalSubmatches

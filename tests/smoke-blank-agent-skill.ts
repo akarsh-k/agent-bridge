@@ -346,7 +346,7 @@ async function runDbBackedChecks(expectedToolName: string): Promise<void> {
 interface EnvelopeShape {
   readonly ok?: unknown
   readonly prose_summary?: unknown
-  readonly mini_repos?: unknown
+  readonly codebase_inspection_reports?: unknown
   readonly warnings?: unknown
 }
 

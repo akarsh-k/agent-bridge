@@ -23,7 +23,7 @@ matches, answer from conversation context — do not fabricate a search.
 
 ## Output contract
 
-Each wrapper returns a **mini-repo**: a structured object with:
+Each wrapper returns a **codebase inspection report**: a structured object with:
 
 - `summary`: one paragraph from the wrapper. cite this in your reply.
 - `files[]`: matched files with `repo_label`, `path`, `chunks[]`, `why`.
@@ -51,8 +51,8 @@ is accepted by `find_in_codebase` and `debug_help` only.
 
 ## Multi-turn
 
-You can call several wrappers in one turn. The mini-repo from each
-call is preserved on the run; the bridge accumulates them for the
+You can call several wrappers in one turn. The inspection report from
+each call is preserved on the run; the bridge accumulates them for the
 IDE consumer (no need to repeat). Stop when the user's question is
 answered, not after a fixed budget.
 

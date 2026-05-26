@@ -16,10 +16,10 @@ import type { AgentBridgeDb } from '@agent-bridge/db'
 import { schema } from '@agent-bridge/db'
 import type { AttachedRepo } from '@agent-bridge/shared'
 
-import type { MiniRepoCrossRepoRelationship } from './types.js'
+import type { CodebaseInspectionReportCrossRepoRelationship } from './types.js'
 
 // Re-export so wrappers don't have to import both modules.
-export type { MiniRepoCrossRepoRelationship } from './types.js'
+export type { CodebaseInspectionReportCrossRepoRelationship } from './types.js'
 
 export interface LoadOutgoingRelationshipsInput {
   readonly db: AgentBridgeDb
@@ -71,7 +71,7 @@ export interface LoadAllRepoRelationshipsInput {
 export type LoadRelationshipsInput = LoadOutgoingRelationshipsInput
 
 export interface CrossRepoRelationshipWithTarget {
-  readonly edge: MiniRepoCrossRepoRelationship
+  readonly edge: CodebaseInspectionReportCrossRepoRelationship
   readonly target: AttachedRepo
 }
 
@@ -118,7 +118,7 @@ export async function loadOutgoingRepoRelationships(
         to_repo: r.toRepoId,
         connector: r.connector,
         description: r.description,
-      } satisfies MiniRepoCrossRepoRelationship,
+      } satisfies CodebaseInspectionReportCrossRepoRelationship,
     })
   }
   return out
@@ -164,7 +164,7 @@ export async function loadIncomingRepoRelationships(
         to_repo: toRepoId,
         connector: r.connector,
         description: r.description,
-      } satisfies MiniRepoCrossRepoRelationship,
+      } satisfies CodebaseInspectionReportCrossRepoRelationship,
     })
   }
   return out
@@ -178,7 +178,7 @@ export async function loadIncomingRepoRelationships(
  */
 export async function loadAllRepoRelationships(
   input: LoadAllRepoRelationshipsInput,
-): Promise<MiniRepoCrossRepoRelationship[]> {
+): Promise<CodebaseInspectionReportCrossRepoRelationship[]> {
   const { db, agentId, attached } = input
 
   const rows = await db.db
@@ -194,7 +194,7 @@ export async function loadAllRepoRelationships(
   if (rows.length === 0) return []
 
   const attachedIds = new Set(attached.map((r) => r.repo_id))
-  const out: MiniRepoCrossRepoRelationship[] = []
+  const out: CodebaseInspectionReportCrossRepoRelationship[] = []
   for (const r of rows) {
     if (!attachedIds.has(r.fromRepoId) || !attachedIds.has(r.toRepoId)) continue
     out.push({

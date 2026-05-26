@@ -363,7 +363,7 @@ function ExposedAgentRow({
           {builtInName && (
             <ToolGroup
               label="Inspector (system)"
-              sub="System tool shipped on repo inspectors. Returns structured codebase evidence (mini_repos[])."
+              sub="System tool shipped on repo inspectors. Returns structured codebase evidence (codebase_inspection_reports[])."
               tools={[
                 {
                   name: builtInName,

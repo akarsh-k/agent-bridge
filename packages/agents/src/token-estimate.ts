@@ -207,9 +207,9 @@ export interface TokenEstimate {
 function describeInspectorWrapper(name: string): string {
   switch (name) {
     case 'find_in_codebase':
-      return 'Hybrid keyword + semantic code search across attached repos. Returns mini-repo with files + chunks.'
+      return 'Hybrid keyword + semantic code search across attached repos. Returns codebase inspection report with files + chunks.'
     case 'trace_flow':
-      return 'Walk the call/import graph from a starting anchor toward a goal. Returns mini-repo with graph_subset + chunks.'
+      return 'Walk the call/import graph from a starting anchor toward a goal. Returns codebase inspection report with graph_subset + chunks.'
     case 'assess_change_impact':
       return 'Compute blast radius for a proposed change (rename / remove / modify / add). Returns direct + transitive dependents and operator-curated cross-repo relationships.'
     case 'debug_help':

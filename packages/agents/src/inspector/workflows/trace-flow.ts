@@ -2,7 +2,7 @@
  * `trace_flow` wrapper (`docs/ARCHITECTURE.md §10`).
  *
  * Walks the call/import graph from a starting anchor (file path or
- * symbol name) toward a goal. Returns a mini-repo whose `graph_subset`
+ * symbol name) toward a goal. Returns a codebase inspection report whose `graph_subset`
  * carries the visited nodes and the edges between them; the
  * highest-relevance hops also get fetched as `files` chunks so the
  * LLM has actual code to look at, not just node ids.
@@ -14,10 +14,10 @@
  *      anchor, depth = 4 (the plan's cap). Gitnexus's impact tool
  *      already does the graph walk; reusing it avoids hand-writing a
  *      cypher template that drifts on schema changes.
- *   3. Each impact row becomes a `MiniRepoGraphNode`; consecutive
+ *   3. Each impact row becomes a `CodebaseInspectionReportGraphNode`; consecutive
  *      depths produce edges between them.
  *   4. For the top-K (cap 6) closest hops, fetch `gitnexus_context` to
- *      stuff the file content into mini-repo chunks. Beyond depth 2
+ *      stuff the file content into codebase inspection report chunks. Beyond depth 2
  *      we stop fetching context — too much noise and the wire payload
  *      caps out anyway.
  *
@@ -36,18 +36,18 @@ import {
   type GitnexusImpactRow,
   type ToolDict,
 } from '../gitnexus-callers.js'
-import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
+import { finalizeCodebaseInspectionReport, type CodebaseInspectionReportDraft } from '../codebase-inspection-report.js'
 import { readFileChunkFromDisk } from '../read-source.js'
 import { resolveRepoForWrapper } from '../run-context.js'
 import type {
-  MiniRepo,
-  MiniRepoChunk,
-  MiniRepoFile,
-  MiniRepoGraphEdge,
-  MiniRepoGraphNode,
+  CodebaseInspectionReport,
+  CodebaseInspectionReportChunk,
+  CodebaseInspectionReportFile,
+  CodebaseInspectionReportGraphEdge,
+  CodebaseInspectionReportGraphNode,
 } from '../types.js'
 import {
-  emitMinirepoBuilt,
+  emitReportBuilt,
   emitToolCalled,
   emitToolResult,
   withGitnexusCall,
@@ -66,11 +66,11 @@ export interface TraceFlowInput {
   readonly startSymbol?: string
   readonly goal?: string
   readonly repoHint?: string | null
-  /** Per-call mini-repo token cap; falls back to the module default when omitted. */
-  readonly miniRepoTokenCap?: number
+  /** Per-call codebase inspection report token cap; falls back to the module default when omitted. */
+  readonly codebaseInspectionReportTokenCap?: number
 }
 
-export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
+export async function runTraceFlow(input: TraceFlowInput): Promise<CodebaseInspectionReport> {
   const {
     tools,
     repos,
@@ -78,7 +78,7 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
     startSymbol,
     goal,
     repoHint,
-    miniRepoTokenCap,
+    codebaseInspectionReportTokenCap,
   } = input
   const handle = await emitToolCalled('trace_flow', {
     start_path: startPath,
@@ -89,15 +89,15 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
 
   const anchor = (startPath ?? startSymbol ?? '').trim()
   if (anchor.length === 0) {
-    const result = finalizeMiniRepo(
+    const result = finalizeCodebaseInspectionReport(
       emptyDraft({
         summary:
           'Pass either `start_path` or `start_symbol` to anchor the trace.',
         warnings: ['no anchor provided'],
       }),
-      miniRepoTokenCap,
+      codebaseInspectionReportTokenCap,
     )
-    await emitMinirepoBuilt('trace_flow', result)
+    await emitReportBuilt('trace_flow', result)
     await emitToolResult({
       handle,
       wrapperName: 'trace_flow',
@@ -121,14 +121,14 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
       resolution.ok === 'clarify'
         ? `${message}. Pick one: ${resolution.candidates.map((c) => c.label).join(', ')}.`
         : `Could not resolve repo: ${message}`
-    const result = finalizeMiniRepo(
+    const result = finalizeCodebaseInspectionReport(
       emptyDraft({
         summary,
         warnings: [message],
       }),
-      miniRepoTokenCap,
+      codebaseInspectionReportTokenCap,
     )
-    await emitMinirepoBuilt('trace_flow', result)
+    await emitReportBuilt('trace_flow', result)
     await emitToolResult({
       handle,
       wrapperName: 'trace_flow',
@@ -203,7 +203,7 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
   // understanding flow. Same-depth ties keep gitnexus's own ordering.
   const sorted = [...rows].sort((a, b) => a.depth - b.depth)
 
-  const nodes: MiniRepoGraphNode[] = sorted.map((r, i) => ({
+  const nodes: CodebaseInspectionReportGraphNode[] = sorted.map((r, i) => ({
     id: `${r.path}#${i}`,
     kind: 'file',
     path: r.path,
@@ -214,10 +214,10 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
   // depth-N hop → the previous depth's nodes. Approximation;
   // gitnexus_impact doesn't expose the exact parent-child links in
   // its result shape.
-  const edges: MiniRepoGraphEdge[] = []
+  const edges: CodebaseInspectionReportGraphEdge[] = []
   const anchorId = `__anchor__:${anchor}`
   if (sorted.length > 0) {
-    const byDepth = new Map<number, MiniRepoGraphNode[]>()
+    const byDepth = new Map<number, CodebaseInspectionReportGraphNode[]>()
     for (let i = 0; i < sorted.length; i++) {
       const row = sorted[i]!
       const node = nodes[i]!
@@ -230,7 +230,7 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
       const here = byDepth.get(depths[i]!)!
       const parents =
         i === 0
-          ? [{ id: anchorId } as MiniRepoGraphNode]
+          ? [{ id: anchorId } as CodebaseInspectionReportGraphNode]
           : byDepth.get(depths[i - 1]!)!
       for (const child of here) {
         for (const parent of parents) {
@@ -247,13 +247,13 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
 
   // Read the body of each top hop directly from disk. gitnexus_context
   // is graph-only — for file content we always slice the source.
-  const files: MiniRepoFile[] = []
+  const files: CodebaseInspectionReportFile[] = []
   for (const row of fetchTargets) {
     const chunk = await readFileChunkFromDisk({
       repo: target,
       filePath: row.path,
     })
-    const chunks: MiniRepoChunk[] = chunk
+    const chunks: CodebaseInspectionReportChunk[] = chunk
       ? [
           {
             start_line: chunk.startLine,
@@ -287,7 +287,7 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
       ? `No downstream hops found for "${anchor}" in repo ${target.label}${goalSuffix}.`
       : `Traced ${sorted.length} downstream hop(s) from "${anchor}" in repo ${target.label}${goalSuffix}${strategySuffix}; fetched context for ${files.length} closest file(s).`
 
-  const miniRepo = finalizeMiniRepo(
+  const report = finalizeCodebaseInspectionReport(
     {
       wrapper: 'trace_flow',
       summary,
@@ -305,23 +305,23 @@ export async function runTraceFlow(input: TraceFlowInput): Promise<MiniRepo> {
       confidence:
         nodes.length >= 5 ? 'high' : nodes.length >= 1 ? 'medium' : 'low',
     },
-    miniRepoTokenCap,
+    codebaseInspectionReportTokenCap,
   )
 
-  await emitMinirepoBuilt('trace_flow', miniRepo)
+  await emitReportBuilt('trace_flow', report)
   await emitToolResult({
     handle,
     wrapperName: 'trace_flow',
     status: warnings.length > 0 ? 'fallback' : 'ok',
     ...(warnings.length > 0 ? { message: warnings[0] } : {}),
   })
-  return miniRepo
+  return report
 }
 
 function emptyDraft(args: {
   summary: string
   warnings?: readonly string[]
-}): MiniRepoDraft {
+}): CodebaseInspectionReportDraft {
   return {
     wrapper: 'trace_flow',
     summary: args.summary,

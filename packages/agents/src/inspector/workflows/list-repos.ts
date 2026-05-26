@@ -3,7 +3,7 @@
  * (`docs/ARCHITECTURE.md §10`).
  *
  * Reads from the agent's `attached repos` slice that the inspector
- * mount already loaded. Returns a mini-repo with zero `files` (this
+ * mount already loaded. Returns a codebase inspection report with zero `files` (this
  * tool's job is to give the LLM the inventory, not gather code).
  *
  * Why this is a wrapper at all rather than a fact baked into the
@@ -16,18 +16,18 @@
 
 import type { AttachedRepo } from '@agent-bridge/shared'
 
-import { finalizeMiniRepo } from '../mini-repo.js'
-import type { MiniRepo } from '../types.js'
+import { finalizeCodebaseInspectionReport } from '../codebase-inspection-report.js'
+import type { CodebaseInspectionReport } from '../types.js'
 import {
-  emitMinirepoBuilt,
+  emitReportBuilt,
   emitToolCalled,
   emitToolResult,
 } from '../wrapper-telemetry.js'
 
 export interface ListReposInput {
   readonly repos: readonly AttachedRepo[]
-  /** Per-call mini-repo token cap; falls back to the module default when omitted. */
-  readonly miniRepoTokenCap?: number
+  /** Per-call codebase inspection report token cap; falls back to the module default when omitted. */
+  readonly codebaseInspectionReportTokenCap?: number
 }
 
 /**
@@ -36,34 +36,34 @@ export interface ListReposInput {
  * The work itself is still synchronous; await is only there to
  * sequence event publishes.
  *
- * Routed through `emitMinirepoBuilt` so the resulting mini-repo lands
- * on `runs.minirepo_json` like every other wrapper. That makes
+ * Routed through `emitReportBuilt` so the resulting codebase inspection report lands
+ * on `runs.codebase_inspection_reports_json` like every other wrapper. That makes
  * `list_repos` visible in the chat-tab tool-call cards and the IDE
  * D17 envelope, and gives the `no_repos_attached` warning a path to
  * the event payload.
  */
-export async function runListRepos(input: ListReposInput): Promise<MiniRepo> {
-  const { repos, miniRepoTokenCap } = input
+export async function runListRepos(input: ListReposInput): Promise<CodebaseInspectionReport> {
+  const { repos, codebaseInspectionReportTokenCap } = input
   const handle = await emitToolCalled('list_repos', {})
 
-  const miniRepo = buildListReposMiniRepo(repos, miniRepoTokenCap)
+  const report = buildListReposCodebaseInspectionReport(repos, codebaseInspectionReportTokenCap)
 
-  await emitMinirepoBuilt('list_repos', miniRepo)
+  await emitReportBuilt('list_repos', report)
   await emitToolResult({
     handle,
     wrapperName: 'list_repos',
     status: 'ok',
   })
 
-  return miniRepo
+  return report
 }
 
-function buildListReposMiniRepo(
+function buildListReposCodebaseInspectionReport(
   repos: readonly AttachedRepo[],
   cap: number | undefined,
-): MiniRepo {
+): CodebaseInspectionReport {
   if (repos.length === 0) {
-    return finalizeMiniRepo(
+    return finalizeCodebaseInspectionReport(
       {
         wrapper: 'list_repos',
         summary: 'This agent has no repos attached.',
@@ -79,7 +79,7 @@ function buildListReposMiniRepo(
   }
 
   // Render the inventory inline in `summary` so the LLM picks it up
-  // even from a heavily-truncated mini-repo. `cross_repo_relationships` is
+  // even from a heavily-truncated codebase inspection report. `cross_repo_relationships` is
   // left empty here. `assess_change_impact` is responsible for
   // that data when it actually lands.
   const lines = repos.map((r) => {
@@ -96,7 +96,7 @@ function buildListReposMiniRepo(
     ...lines,
   ].join('\n')
 
-  return finalizeMiniRepo(
+  return finalizeCodebaseInspectionReport(
     {
       wrapper: 'list_repos',
       summary,

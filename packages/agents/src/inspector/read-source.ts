@@ -9,7 +9,7 @@
  * `repoSourceDir(descriptor)`), so this helper does the read.
  *
  * Bounded by `MAX_BYTES_PER_READ` so a wrapper can't accidentally pull
- * a 10 MB minified bundle into the mini-repo.
+ * a 10 MB minified bundle into the codebase inspection report.
  */
 
 import { promises as fs } from 'node:fs'
@@ -21,7 +21,7 @@ import { repoSourceDir } from '@agent-bridge/shared/paths'
 /**
  * Hard cap per read. Larger files are truncated to this many bytes
  * starting from the requested startLine; the caller's chunk-builder
- * still respects the mini-repo's overall token budget downstream.
+ * still respects the codebase inspection report's overall token budget downstream.
  */
 export const MAX_BYTES_PER_READ = 32 * 1024
 

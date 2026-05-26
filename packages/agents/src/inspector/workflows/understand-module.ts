@@ -2,7 +2,7 @@
  * `understand_module` wrapper (`docs/ARCHITECTURE.md §10`).
  *
  * Takes a single anchor (file path OR symbol) and returns enough
- * mini-repo content for the LLM to explain what it does:
+ * codebase inspection report content for the LLM to explain what it does:
  *   - `gitnexus_context` on the anchor → main file body as the
  *     primary chunk.
  *   - `gitnexus_impact` downstream depth=2 → the modules this anchor
@@ -25,12 +25,12 @@ import {
   type GitnexusImpactRow,
   type ToolDict,
 } from '../gitnexus-callers.js'
-import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
+import { finalizeCodebaseInspectionReport, type CodebaseInspectionReportDraft } from '../codebase-inspection-report.js'
 import { readFileChunkFromDisk } from '../read-source.js'
 import { resolveRepoForWrapper } from '../run-context.js'
-import type { MiniRepo, MiniRepoChunk, MiniRepoFile } from '../types.js'
+import type { CodebaseInspectionReport, CodebaseInspectionReportChunk, CodebaseInspectionReportFile } from '../types.js'
 import {
-  emitMinirepoBuilt,
+  emitReportBuilt,
   emitToolCalled,
   emitToolResult,
   withGitnexusCall,
@@ -45,14 +45,14 @@ export interface UnderstandModuleInput {
   /** File path OR symbol name. */
   readonly anchor: string
   readonly repoHint?: string | null
-  /** Per-call mini-repo token cap; falls back to the module default when omitted. */
-  readonly miniRepoTokenCap?: number
+  /** Per-call codebase inspection report token cap; falls back to the module default when omitted. */
+  readonly codebaseInspectionReportTokenCap?: number
 }
 
 export async function runUnderstandModule(
   input: UnderstandModuleInput,
-): Promise<MiniRepo> {
-  const { tools, repos, anchor, repoHint, miniRepoTokenCap } = input
+): Promise<CodebaseInspectionReport> {
+  const { tools, repos, anchor, repoHint, codebaseInspectionReportTokenCap } = input
   const handle = await emitToolCalled('understand_module', {
     anchor,
     repo_hint: repoHint,
@@ -60,14 +60,14 @@ export async function runUnderstandModule(
 
   const trimmed = anchor.trim()
   if (trimmed.length === 0) {
-    const result = finalizeMiniRepo(
+    const result = finalizeCodebaseInspectionReport(
       emptyDraft({
         summary: 'Pass an `anchor` (file path or symbol) to explain.',
         warnings: ['empty anchor'],
       }),
-      miniRepoTokenCap,
+      codebaseInspectionReportTokenCap,
     )
-    await emitMinirepoBuilt('understand_module', result)
+    await emitReportBuilt('understand_module', result)
     await emitToolResult({
       handle,
       wrapperName: 'understand_module',
@@ -91,14 +91,14 @@ export async function runUnderstandModule(
       resolution.ok === 'clarify'
         ? `${message}. Pick one: ${resolution.candidates.map((c) => c.label).join(', ')}.`
         : `Could not resolve repo: ${message}`
-    const result = finalizeMiniRepo(
+    const result = finalizeCodebaseInspectionReport(
       emptyDraft({
         summary,
         warnings: [message],
       }),
-      miniRepoTokenCap,
+      codebaseInspectionReportTokenCap,
     )
-    await emitMinirepoBuilt('understand_module', result)
+    await emitReportBuilt('understand_module', result)
     await emitToolResult({
       handle,
       wrapperName: 'understand_module',
@@ -110,7 +110,7 @@ export async function runUnderstandModule(
   const target = resolution.repo
 
   const warnings: string[] = []
-  const files: MiniRepoFile[] = []
+  const files: CodebaseInspectionReportFile[] = []
   const looksLikePath =
     /[\\/]/.test(trimmed) || /\.[a-zA-Z0-9]{1,8}$/.test(trimmed)
 
@@ -159,7 +159,7 @@ export async function runUnderstandModule(
       padLines: anchorStartLine != null ? 4 : 0,
     })
     if (chunk) {
-      const chunks: MiniRepoChunk[] = [
+      const chunks: CodebaseInspectionReportChunk[] = [
         {
           start_line: chunk.startLine,
           end_line: chunk.endLine,
@@ -270,7 +270,7 @@ export async function runUnderstandModule(
       ? `Couldn't find "${trimmed}" in repo ${target.label}. The path/symbol may not be indexed; try a more specific name.`
       : `Anchor "${trimmed}" in ${target.label}: ${files.length} file(s) — body + ${Math.max(0, files.length - 1)} dependency(ies) (depth ≤ ${DEPENDENCY_DEPTH}).`
 
-  const miniRepo = finalizeMiniRepo(
+  const report = finalizeCodebaseInspectionReport(
     {
       wrapper: 'understand_module',
       summary,
@@ -290,23 +290,23 @@ export async function runUnderstandModule(
       confidence:
         files.length >= 2 ? 'high' : files.length >= 1 ? 'medium' : 'low',
     },
-    miniRepoTokenCap,
+    codebaseInspectionReportTokenCap,
   )
 
-  await emitMinirepoBuilt('understand_module', miniRepo)
+  await emitReportBuilt('understand_module', report)
   await emitToolResult({
     handle,
     wrapperName: 'understand_module',
     status: warnings.length > 0 ? 'fallback' : 'ok',
     ...(warnings.length > 0 ? { message: warnings[0] } : {}),
   })
-  return miniRepo
+  return report
 }
 
 function emptyDraft(args: {
   summary: string
   warnings?: readonly string[]
-}): MiniRepoDraft {
+}): CodebaseInspectionReportDraft {
   return {
     wrapper: 'understand_module',
     summary: args.summary,

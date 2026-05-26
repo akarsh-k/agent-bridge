@@ -13,7 +13,7 @@
  *   2. Call `gitnexus_query` per resolved repo with the raw query.
  *      Gitnexus's hybrid search (BM25 + semantic + RRF) does the heavy
  *      lifting — we don't need a separate vector path here (`§3a`).
- *   3. Take the top-N hits, fold them into mini-repo `files`, using
+ *   3. Take the top-N hits, fold them into codebase inspection report `files`, using
  *      gitnexus's snippet as a single chunk per hit.
  *   4. `expansions: [query]` (LLM expansion replaces this when wired).
  *
@@ -50,7 +50,7 @@ import {
   type ToolDict,
 } from '../gitnexus-callers.js'
 import { keywordSearch, type KeywordHit } from '../keyword-search.js'
-import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
+import { finalizeCodebaseInspectionReport, type CodebaseInspectionReportDraft } from '../codebase-inspection-report.js'
 import type { RepoResolveResult } from '../repo-resolve.js'
 import {
   emitInspectorEvent,
@@ -58,8 +58,8 @@ import {
   previewJson,
   resolveRepoForWrapper,
 } from '../run-context.js'
-import type { MiniRepo, MiniRepoChunk, MiniRepoFile } from '../types.js'
-import { emitMinirepoBuilt, withKeywordCall } from '../wrapper-telemetry.js'
+import type { CodebaseInspectionReport, CodebaseInspectionReportChunk, CodebaseInspectionReportFile } from '../types.js'
+import { emitReportBuilt, withKeywordCall } from '../wrapper-telemetry.js'
 
 export interface FindInCodebaseInput {
   /** Live gitnexus tool dict. shared with all wrappers in one agent. */
@@ -70,7 +70,7 @@ export interface FindInCodebaseInput {
   readonly query: string
   /** Optional friendly-label hint. */
   readonly repoHint?: string | null
-  /** Cap files in mini-repo. default 12. */
+  /** Cap files in codebase inspection report. default 12. */
   readonly maxFiles?: number
   /**
    * Agent's model config — drives the in-wrapper LLM term-expansion call
@@ -79,21 +79,21 @@ export interface FindInCodebaseInput {
    */
   readonly modelConfig?: MastraModelConfig
   /**
-   * Per-call token cap on the finalised mini-repo. When omitted, falls
-   * back to the module-level {@link MINI_REPO_TOKEN_CAP} default — the
+   * Per-call token cap on the finalised codebase inspection report. When omitted, falls
+   * back to the module-level {@link CODEBASE_INSPECTION_REPORT_TOKEN_CAP} default — the
    * mount layer normally supplies the agent's resolved value.
    */
-  readonly miniRepoTokenCap?: number
+  readonly codebaseInspectionReportTokenCap?: number
 }
 
 /**
- * Runs the workflow and returns one mini-repo. Never throws on a
+ * Runs the workflow and returns one codebase inspection report. Never throws on a
  * "no results" path — empty `files` + a `summary` explaining the miss
  * is a legitimate outcome.
  */
 export async function runFindInCodebase(
   input: FindInCodebaseInput,
-): Promise<MiniRepo> {
+): Promise<CodebaseInspectionReport> {
   const {
     tools,
     repos,
@@ -101,7 +101,7 @@ export async function runFindInCodebase(
     repoHint,
     maxFiles = 12,
     modelConfig,
-    miniRepoTokenCap,
+    codebaseInspectionReportTokenCap,
   } = input
 
   const ctx = getInspectorRunContext()
@@ -122,12 +122,12 @@ export async function runFindInCodebase(
 
   const trimmed = query.trim()
   if (trimmed.length === 0) {
-    const result = finalizeMiniRepo(
+    const result = finalizeCodebaseInspectionReport(
       emptyDraft({
         summary: 'Empty query — nothing to search for.',
         warnings: ['empty query'],
       }),
-      miniRepoTokenCap,
+      codebaseInspectionReportTokenCap,
     )
     await emitToolResult({
       runId,
@@ -145,12 +145,12 @@ export async function runFindInCodebase(
   })
 
   if (resolution.ok === false || resolution.ok === 'clarify') {
-    const result = finalizeMiniRepo(
+    const result = finalizeCodebaseInspectionReport(
       emptyDraft({
         summary: buildResolutionFailureSummary(resolution),
         warnings: [resolution.message],
       }),
-      miniRepoTokenCap,
+      codebaseInspectionReportTokenCap,
     )
     await emitToolResult({
       runId,
@@ -374,7 +374,7 @@ export async function runFindInCodebase(
         } satisfies InspectorGitnexusResultPayload)
         // Route gitnexus's diagnostic warning into the wrapper's
         // `warnings[]` so a degraded BM25/FTS arm (or any other
-        // server-side hint) shows up on the mini-repo instead of
+        // server-side hint) shows up on the codebase inspection report instead of
         // disappearing into a silent zero-hit response.
         if (warning) {
           warnings.push(
@@ -459,7 +459,7 @@ export async function runFindInCodebase(
         //      handler (`ROUTE_MAP_CONSUMER_SCORE`). Reason names
         //      the route they fetch + which response keys they read.
         //
-        // Consumer hits are independent file rows in the mini-repo
+        // Consumer hits are independent file rows in the codebase inspection report
         // (still deduped by `(repo, path)` in the merge pass), so
         // the LLM seeing "Where is /api/users handled?" gets both
         // the handler AND its callers in one tool call.
@@ -552,14 +552,14 @@ export async function runFindInCodebase(
   )
 
   const seen = new Set<string>()
-  const files: MiniRepoFile[] = []
+  const files: CodebaseInspectionReportFile[] = []
   for (const { repo, hit } of flattened) {
     if (files.length >= maxFiles) break
     const key = `${repo.repo_id}::${hit.path}`
     if (seen.has(key)) continue
     seen.add(key)
 
-    const chunks: MiniRepoChunk[] = []
+    const chunks: CodebaseInspectionReportChunk[] = []
     if (hit.snippet && hit.snippet.length > 0) {
       const startLine = hit.line ?? 1
       const lineCount = hit.snippet.split('\n').length
@@ -598,7 +598,7 @@ export async function runFindInCodebase(
         : `Gitnexus returned ${totalHits} match(es) but none parsed cleanly.`
       : `Found ${files.length} file match(es) for "${trimmed}" across ${targets.length} repo(s) using ${expansions.length} term variant(s).`
 
-  const miniRepo = finalizeMiniRepo(
+  const report = finalizeCodebaseInspectionReport(
     {
       wrapper: 'find_in_codebase',
       summary,
@@ -620,14 +620,14 @@ export async function runFindInCodebase(
       confidence:
         files.length >= 3 ? 'high' : files.length >= 1 ? 'medium' : 'low',
     },
-    miniRepoTokenCap,
+    codebaseInspectionReportTokenCap,
   )
 
-  // The shared `emitMinirepoBuilt` also persists the mini-repo
-  // to `runs.minirepo_json`. Replaces the inline event emit so the
+  // The shared `emitReportBuilt` also persists the codebase inspection report
+  // to `runs.codebase_inspection_reports_json`. Replaces the inline event emit so the
   // chat-tab tool-call cards + the IDE bridge envelope both see this
   // wrapper's output.
-  await emitMinirepoBuilt('find_in_codebase', miniRepo)
+  await emitReportBuilt('find_in_codebase', report)
 
   await emitToolResult({
     runId,
@@ -636,7 +636,7 @@ export async function runFindInCodebase(
     ...(warnings.length > 0 ? { message: warnings[0] } : {}),
   })
 
-  return miniRepo
+  return report
 }
 
 interface ToolResultArgs {
@@ -782,7 +782,7 @@ async function deriveLanguagesHint(
 function emptyDraft(args: {
   summary: string
   warnings?: readonly string[]
-}): MiniRepoDraft {
+}): CodebaseInspectionReportDraft {
   return {
     wrapper: 'find_in_codebase',
     summary: args.summary,
@@ -809,7 +809,7 @@ function buildResolutionFailureSummary(
 }
 
 /**
- * Cheap path → language inference for the mini-repo's `language` field.
+ * Cheap path → language inference for the codebase inspection report's `language` field.
  * Just enough to drive the chat-tab card's syntax-highlighting hint;
  * the LLM gets the same info from the path anyway.
  */

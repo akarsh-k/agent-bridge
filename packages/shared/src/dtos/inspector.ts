@@ -79,32 +79,32 @@ export const INSPECTOR_TOOL_DEFINITIONS: ReadonlyArray<InspectorToolDefinition> 
     {
       name: 'list_repos',
       description:
-        'List the repositories attached to this agent. Use this once at the start of a conversation when you do not know which repos you have. Returns a mini-repo whose `summary` carries the inventory inline (label, role, status, aliases, description). Cheap, deterministic, no gitnexus calls.',
+        'List the repositories attached to this agent. Use this once at the start of a conversation when you do not know which repos you have. Returns a codebase inspection report whose `summary` carries the inventory inline (label, role, status, aliases, description). Cheap, deterministic, no gitnexus calls.',
     },
     {
       name: 'find_in_codebase',
       description:
-        'Find code in the attached repos using hybrid keyword + semantic search. Returns a mini-repo: a list of matched files with snippets, language tags, and the reason each was matched. Pass a free-form `query` (user-language is fine) and optionally a `repo_hint` to scope to one repo. Read-only. Never edits or proposes file changes.',
+        'Find code in the attached repos using hybrid keyword + semantic search. Returns a codebase inspection report: a list of matched files with snippets, language tags, and the reason each was matched. Pass a free-form `query` (user-language is fine) and optionally a `repo_hint` to scope to one repo. Read-only. Never edits or proposes file changes.',
     },
     {
       name: 'trace_flow',
       description:
-        'Walk the call/import graph from a starting file or symbol toward a goal. Returns a mini-repo with `graph_subset` (nodes + edges) and `files` chunks for the closest hops. Single-repo only. Pass `repo_hint` when the agent has more than one repo. Read-only.',
+        'Walk the call/import graph from a starting file or symbol toward a goal. Returns a codebase inspection report with `graph_subset` (nodes + edges) and `files` chunks for the closest hops. Single-repo only. Pass `repo_hint` when the agent has more than one repo. Read-only.',
     },
     {
       name: 'assess_change_impact',
       description:
-        'Compute blast radius for a proposed change (rename / remove / modify / add). Returns a mini-repo where each `files` row classifies a path as `direct` or `transitive` at depth N, plus operator-curated cross-repo relationships in `cross_repo_relationships`. Single primary repo. Read-only.',
+        'Compute blast radius for a proposed change (rename / remove / modify / add). Returns a codebase inspection report where each `files` row classifies a path as `direct` or `transitive` at depth N, plus operator-curated cross-repo relationships in `cross_repo_relationships`. Single primary repo. Read-only.',
     },
     {
       name: 'debug_help',
       description:
-        'Diagnose a bug from raw error text. Extracts file paths + symbol names via language-agnostic regex, runs the codebase search for each, fetches surrounding context for the top suspect call sites. Returns a mini-repo with file chunks and the matched candidate per row. Read-only.',
+        'Diagnose a bug from raw error text. Extracts file paths + symbol names via language-agnostic regex, runs the codebase search for each, fetches surrounding context for the top suspect call sites. Returns a codebase inspection report with file chunks and the matched candidate per row. Read-only.',
     },
     {
       name: 'understand_module',
       description:
-        'Explain what a file or symbol does. Returns a mini-repo with the anchor file body + its outgoing dependencies (depth ≤ 2). Use when the developer asks "what does X do?" or "how does X work?". Read-only.',
+        'Explain what a file or symbol does. Returns a codebase inspection report with the anchor file body + its outgoing dependencies (depth ≤ 2). Use when the developer asks "what does X do?" or "how does X work?". Read-only.',
     },
   ])
 
@@ -163,12 +163,12 @@ export const INSPECT_CODEBASE_METADATA: InspectCodebaseMetadata = Object.freeze(
     'One MCP tool per agent. Pass `query` plus optional repo hints (`repo_hint`, `remote_url`, `local_folder`, `branch`); the agent runs inspector wrappers (find / trace / impact / debug / understand / list) and returns a structured envelope.\n\n' +
     'Three response shapes you will see:\n\n' +
     '  • Resolved query → ' +
-    '`{ ok: true, mini_repos: [...], resolved_repo?, next_actions?, warnings }`. ' +
+    '`{ ok: true, codebase_inspection_reports: [...], resolved_repo?, next_actions?, warnings }`. ' +
     'Structured evidence: file paths, code chunks, graph slices, cross-repo relationships. ' +
-    'Synthesize the answer from `mini_repos`. `next_actions[]` (when present) lists SUGGESTED follow-ups you may consider, modify, or ignore. Each entry has a `kind`: `cross_repo` (carries `args_patch` with `remote_url` to follow an operator-curated edge), `drill_file` (carries `args_patch.query` to fetch a path whose body was not returned), or `revise_query` (no `args_patch`; the IDE picks a narrower query when results look incomplete or low-confidence). Nothing here is required.\n\n' +
+    'Synthesize the answer from `codebase_inspection_reports`. `next_actions[]` (when present) lists SUGGESTED follow-ups you may consider, modify, or ignore. Each entry has a `kind`: `cross_repo` (carries `args_patch` with `remote_url` to follow an operator-curated edge), `drill_file` (carries `args_patch.query` to fetch a path whose body was not returned), or `revise_query` (no `args_patch`; the IDE picks a narrower query when results look incomplete or low-confidence). Nothing here is required.\n\n' +
     '  • Clarification (multi-repo agent + ambiguous hint) → ' +
     '`{ ok: true, clarification: { kind, candidates, suggested_replies, ... }, warnings }`. ' +
-    'No `mini_repos`; the bridge did NOT dispatch a run. Either ask the user to pick, or choose a `suggested_replies[i]` yourself and re-issue this tool with its `args_patch` merged into the call args.\n\n' +
+    'No `codebase_inspection_reports`; the bridge did NOT dispatch a run. Either ask the user to pick, or choose a `suggested_replies[i]` yourself and re-issue this tool with its `args_patch` merged into the call args.\n\n' +
     '  • Chit-chat (no wrapper ran) → ' +
     '`{ ok: true, prose_summary, warnings }`. The agent\'s free-form reply.\n\n' +
     'Pass `remote_url` (from `git remote get-url origin`) when available; it is the most reliable repo identifier. Set `with_topology: true` only when you need the full `agent_repos` + `repo_relationships` inventory in this single response.\n\n' +

@@ -302,13 +302,13 @@ async function assertClarificationShortCircuit(
     repliesShape ? 'shape ok' : `first=${JSON.stringify(replies[0]).slice(0, 120)}`,
   )
   // Clarification short-circuits, so no wrapper ran. The envelope MUST
-  // carry an empty mini_repos[] and MUST NOT carry prose_summary (which
+  // carry an empty codebase_inspection_reports[] and MUST NOT carry prose_summary (which
   // would imply chit-chat fallback after a real run).
   check(
-    'clarification short-circuit: mini_repos is empty',
-    Array.isArray(envelope['mini_repos']) &&
-      (envelope['mini_repos'] as unknown[]).length === 0,
-    `mini_repos=${JSON.stringify(envelope['mini_repos']).slice(0, 80)}`,
+    'clarification short-circuit: codebase_inspection_reports is empty',
+    Array.isArray(envelope['codebase_inspection_reports']) &&
+      (envelope['codebase_inspection_reports'] as unknown[]).length === 0,
+    `codebase_inspection_reports=${JSON.stringify(envelope['codebase_inspection_reports']).slice(0, 80)}`,
   )
   check(
     'clarification short-circuit: no prose_summary field',

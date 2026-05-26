@@ -68,8 +68,8 @@ export type {
   MountedInspector,
   MountInspectorToolsInput,
 } from './inspector/index.js'
-export type { MiniRepo, MiniRepoFile, MiniRepoChunk, MiniRepoGraphEdge, MiniRepoGraphNode, MiniRepoCrossRepoRelationship, InspectorIntent } from './inspector/types.js'
-export { MINI_REPO_TOKEN_CAP } from './inspector/types.js'
+export type { CodebaseInspectionReport, CodebaseInspectionReportFile, CodebaseInspectionReportChunk, CodebaseInspectionReportGraphEdge, CodebaseInspectionReportGraphNode, CodebaseInspectionReportCrossRepoRelationship, InspectorIntent } from './inspector/types.js'
+export { CODEBASE_INSPECTION_REPORT_TOKEN_CAP } from './inspector/types.js'
 export { builtAgentCache } from './built-agent-cache.js'
 export type { GitnexusMountMeta } from './mcp/gitnexus-mcp.js'
 export type {

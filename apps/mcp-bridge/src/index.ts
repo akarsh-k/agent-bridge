@@ -10,9 +10,9 @@
  *   1. Mint `runId = randomUUID()`, `streamId = bridgeStreamId(runId)`.
  *   2. `runsRepo.createRun(...)` and dispatch the user query through
  *      the standard run pipeline. The agent's wrappers do the actual
- *      code-search work; their mini-repos accumulate on
- *      `runs.minirepo_json` (G3).
- *   3. After dispatch settles, read `minirepo_json` + `output_summary`
+ *      code-search work; their codebase inspection reports accumulate on
+ *      `runs.codebase_inspection_reports_json` (G3).
+ *   3. After dispatch settles, read `codebase_inspection_reports_json` + `output_summary`
  *      and wrap into the D17′ envelope. Return as MCP text content.
  *
  * Source tagging via the `bridge:` streamId prefix (vs `run:` for
@@ -141,7 +141,7 @@ async function listExposableAgents(db: AgentBridgeDb): Promise<AgentRow[]> {
 
 /**
  * Build the bridge's tool registry. Per agent:
- *   - `<slug>__inspect_codebase` (system tool, mini-repo envelope) is
+ *   - `<slug>__inspect_codebase` (system tool, codebase inspection report envelope) is
  *     registered automatically when `agents.inspector_enabled = true`
  *     (Repo-inspector template). Description: operator's
  *     `agents.description` + a system note about the structured envelope.

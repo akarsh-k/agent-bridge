@@ -4,12 +4,12 @@
  * One entry point. The IDE LLM calls `inspect_codebase` with a
  * free-form `query` plus optional repo hints; the bridge dispatches
  * one Mastra run, lets the agent's wrappers do the work, and wraps
- * the run's accumulated mini-repos into the D17′ envelope.
+ * the run's accumulated codebase inspection reports into the D17′ envelope.
  *
  * Wire envelope (D17′):
  *
  *   { ok: true,
- *     mini_repos: MiniRepo[],         // from runs.minirepo_json
+ *     codebase_inspection_reports: CodebaseInspectionReport[],  // from runs.codebase_inspection_reports_json
  *     prose_summary?: string,         // ≤ 1KB; only when no wrapper ran
  *     agent_repos: AgentRepoSummary[],// every repo attached to the agent
  *     repo_relationships: CrossRepoRelationship[], // operator-curated relationships between them
@@ -21,13 +21,13 @@
  * needing a separate `list_repos` round-trip.
  *
  * The agent's free-form prose stream is NOT forwarded to the IDE
- * unless no wrapper invocation populated `runs.minirepo_json` — in
+ * unless no wrapper invocation populated `runs.codebase_inspection_reports_json` — in
  * which case we surface a 1KB summary so chit-chat / clarifications
  * still produce something useful.
  *
  * Explicit `bridge_tools` rows wrap their `output_summary` at
  * an 8KB cap (operators authored prose on purpose). Same envelope
- * shape, larger prose budget; mini-repos still ride along when an
+ * shape, larger prose budget; codebase inspection reports still ride along when an
  * explicit prompt template causes the agent to call wrappers internally.
  */
 
@@ -40,7 +40,7 @@ import {
   loadAttachedRepos,
   resolveRepoFromHint,
   type IdePreResolvedRepo,
-  type MiniRepoCrossRepoRelationship,
+  type CodebaseInspectionReportCrossRepoRelationship,
   type MultiSignalHint,
   type RepoResolveResult,
   type SuggestedReply,
@@ -116,8 +116,8 @@ export type ToolEntry = InspectCodebaseEntry | BridgeToolEntry
 /**
  * Maximum prose payload per envelope kind. Inspect-codebase fallback
  * (when no wrapper ran) gets 1 KiB; explicit tools that author
- * prose on purpose get 8 KiB. mini-repos themselves are bounded by
- * `runsRepo.appendMinirepo`'s 14 KiB cap.
+ * prose on purpose get 8 KiB. codebase inspection reports themselves are bounded by
+ * `runsRepo.appendCodebaseInspectionReport`'s 14 KiB cap.
  */
 const PROSE_CAP_INSPECT_FALLBACK = 1024
 const PROSE_CAP_PHASE7 = 8 * 1024
@@ -187,7 +187,7 @@ export async function executeInspectCodebase(
       const topology = await loadAgentTopology(ctx.db, agent.id, warnings)
       const envelope: WireEnvelope = {
         ok: true,
-        mini_repos: [],
+        codebase_inspection_reports: [],
         clarification: {
           kind: resolution.kind,
           candidates: resolution.candidates.map((r) => agentRepoSummaryFromAttached(r)),
@@ -276,25 +276,25 @@ export async function executeInspectCodebase(
     return mcpError(finalRow.errorMessage ?? 'Run failed')
   }
 
-  const miniRepos = Array.isArray(finalRow.minirepoJson)
-    ? (finalRow.minirepoJson as unknown[])
+  const reports = Array.isArray(finalRow.codebaseInspectionReportsJson)
+    ? (finalRow.codebaseInspectionReportsJson as unknown[])
     : []
   const proseSummary =
-    miniRepos.length === 0
+    reports.length === 0
       ? truncate(finalRow.outputSummary?.trim() ?? '', PROSE_CAP_INSPECT_FALLBACK)
       : ''
 
   // Decide the focal repo for `next_actions`. The bridge's pre-resolved
   // repo wins; failing that, the repo that contributed the most files
-  // across all mini-repos (a stand-in for "the call's primary subject"
+  // across all reports (a stand-in for "the call's primary subject"
   // in fan-out mode). Returns `null` when nothing ran or no files
   // were surfaced.
-  const focalRepo = pickFocalRepo(preResolved, attached, miniRepos)
+  const focalRepo = pickFocalRepo(preResolved, attached, reports)
 
-  // Always load edges so we can compute `next_actions`. The cost is
-  // one query; the win is the IDE getting structured handoffs without
-  // a `with_topology: true` round-trip.
-  let allEdges: readonly MiniRepoCrossRepoRelationship[] = []
+  // Always load relationships so we can compute `next_actions`. The
+  // cost is one query; the win is the IDE getting structured handoffs
+  // without a `with_topology: true` round-trip.
+  let allEdges: readonly CodebaseInspectionReportCrossRepoRelationship[] = []
   try {
     allEdges = await loadAllRepoRelationships({ db: ctx.db, agentId: agent.id, attached })
   } catch (err) {
@@ -305,14 +305,15 @@ export async function executeInspectCodebase(
   const crossRepoActions = focalRepo
     ? computeNextActions(focalRepo, attached, allEdges)
     : []
-  // Suggestions from in-band mini-repo signals (partial warnings,
-  // low confidence, chunkless files). IDE may use, modify, or ignore.
-  const signalActions = computeSignalNextActions(miniRepos)
+  // Suggestions from in-band codebase-inspection-report signals
+  // (partial warnings, low confidence, chunkless files). IDE may use,
+  // modify, or ignore.
+  const signalActions = computeSignalNextActions(reports)
   const nextActions = [...crossRepoActions, ...signalActions]
 
   const envelope: WireEnvelope = {
     ok: true,
-    mini_repos: miniRepos,
+    codebase_inspection_reports: reports,
     ...(proseSummary.length > 0 ? { prose_summary: proseSummary } : {}),
     ...(focalRepo
       ? {
@@ -337,9 +338,9 @@ export async function executeInspectCodebase(
 }
 
 /**
- * Suggested follow-ups synthesised from mini-repo signals. Three
+ * Suggested follow-ups synthesised from codebase inspection report signals. Three
  * triggers: partial-traversal warnings (→ `revise_query`), lowest
- * mini-repo confidence is `low` (→ `revise_query`), files matched
+ * codebase inspection report confidence is `low` (→ `revise_query`), files matched
  * by path with zero chunks (→ `drill_file` with pre-baked
  * `args_patch.query`). All suggestions; the IDE picks what to do.
  * Capped at 3 to keep the envelope focused.
@@ -347,20 +348,20 @@ export async function executeInspectCodebase(
 const SIGNAL_NEXT_ACTIONS_CAP = 3
 
 function computeSignalNextActions(
-  miniRepos: readonly unknown[],
+  reports: readonly unknown[],
 ): readonly (ReviseQueryNextAction | DrillFileNextAction)[] {
   const out: (ReviseQueryNextAction | DrillFileNextAction)[] = []
 
   let sawPartial = false
   let lowestConfidence: 'high' | 'medium' | 'low' | null = null
   const rank = { high: 3, medium: 2, low: 1 } as const
-  // Dedup chunkless files across mini-repos by `repo_label::path`.
+  // Dedup chunkless files across reports by `repo_label::path`.
   const chunklessByKey = new Map<
     string,
     { repoLabel: string | null; path: string }
   >()
 
-  for (const mr of miniRepos) {
+  for (const mr of reports) {
     if (!mr || typeof mr !== 'object') continue
     const m = mr as Record<string, unknown>
 
@@ -465,7 +466,7 @@ function renderPromptTemplate(
  * Explicit `bridge_tools` rows continue to work under D17′
  * (`docs/ARCHITECTURE.md §10` G5). The bridge dispatches the rendered template
  * and wraps the result in the same envelope shape — operator-authored
- * prose gets an 8 KiB cap; any mini-repos the agent's wrappers
+ * prose gets an 8 KiB cap; any codebase inspection reports the agent's wrappers
  * accumulated during the run also ride along.
  */
 export async function executePhase7Tool(
@@ -538,8 +539,8 @@ export async function executePhase7Tool(
     return mcpError(finalRow.errorMessage ?? 'Run failed')
   }
 
-  const miniRepos = Array.isArray(finalRow.minirepoJson)
-    ? (finalRow.minirepoJson as unknown[])
+  const reports = Array.isArray(finalRow.codebaseInspectionReportsJson)
+    ? (finalRow.codebaseInspectionReportsJson as unknown[])
     : []
   const proseSummary = truncate(
     finalRow.outputSummary?.trim() ?? '',
@@ -551,7 +552,7 @@ export async function executePhase7Tool(
 
   const envelope: WireEnvelope = {
     ok: true,
-    mini_repos: miniRepos,
+    codebase_inspection_reports: reports,
     ...(proseSummary.length > 0 ? { prose_summary: proseSummary } : {}),
     agent_repos: topology.agent_repos,
     repo_relationships: topology.repo_relationships,
@@ -564,21 +565,21 @@ export async function executePhase7Tool(
 
 interface WireEnvelope {
   readonly ok: true
-  readonly mini_repos: readonly unknown[]
+  readonly codebase_inspection_reports: readonly unknown[]
   readonly prose_summary?: string
   /**
    * The single repo the bridge resolved from the IDE's structured hint
    * (`remote_url` / `local_folder` / `repo_hint`). Present whenever the
    * IDE supplied at least one signal AND it resolved to a unique repo,
    * OR the agent has a single attached repo. The IDE can render "asked
-   * about X" without re-deriving from `mini_repos`.
+   * about X" without re-deriving from `codebase_inspection_reports`.
    */
   readonly resolved_repo?: ResolvedRepoSlice
   /**
    * Set when the IDE's hint was ambiguous in a multi-repo agent. The
    * bridge skips the run dispatch and surfaces a pre-baked picker so
    * the IDE LLM can either ask the human or pick a `suggested_replies`
-   * entry and retry. Mutually exclusive with `mini_repos.length > 0`
+   * entry and retry. Mutually exclusive with `codebase_inspection_reports.length > 0`
    * in practice (we short-circuit before dispatch).
    */
   readonly clarification?: ClarificationSlice
@@ -586,7 +587,7 @@ interface WireEnvelope {
    * Suggested follow-ups (never directives). Two sources concatenated:
    * `cross_repo` from operator-curated edges touching the focal repo
    * (≤3, outgoing first), and `revise_query`/`drill_file` from
-   * mini-repo signals (≤3). Omitted when empty.
+   * codebase inspection report signals (≤3). Omitted when empty.
    */
   readonly next_actions?: readonly NextAction[]
   /**
@@ -598,7 +599,7 @@ interface WireEnvelope {
   /**
    * Full operator-curated edge list. Same gating as `agent_repos`.
    */
-  readonly repo_relationships?: readonly MiniRepoCrossRepoRelationship[]
+  readonly repo_relationships?: readonly CodebaseInspectionReportCrossRepoRelationship[]
   readonly warnings: readonly string[]
 }
 
@@ -685,13 +686,13 @@ interface AgentRepoSummary {
 
 interface AgentTopology {
   readonly agent_repos: readonly AgentRepoSummary[]
-  readonly repo_relationships: readonly MiniRepoCrossRepoRelationship[]
+  readonly repo_relationships: readonly CodebaseInspectionReportCrossRepoRelationship[]
 }
 
 /**
  * Fetch the agent's repo inventory + cross-repo relationships for inclusion in
  * the response envelope. Failures fold into `warnings` rather than
- * killing the call — the IDE still gets `mini_repos`, just without the
+ * killing the call — the IDE still gets `codebase_inspection_reports`, just without the
  * topology affordance for this turn.
  */
 async function loadAgentTopology(
@@ -701,7 +702,7 @@ async function loadAgentTopology(
 ): Promise<AgentTopology> {
   try {
     const attached = await loadAttachedRepos({ db, agentId })
-    let edges: readonly MiniRepoCrossRepoRelationship[] = []
+    let edges: readonly CodebaseInspectionReportCrossRepoRelationship[] = []
     try {
       edges = await loadAllRepoRelationships({ db, agentId, attached })
     } catch (err) {
@@ -858,7 +859,7 @@ interface AttachedRepoLike {
  *
  * Priority:
  *   1. The bridge's pre-resolved repo (the IDE explicitly named one).
- *   2. The repo with the most files across all mini-repos (fan-out
+ *   2. The repo with the most files across all codebase inspection reports (fan-out
  *      mode — pick the call's "primary subject" by evidence weight).
  *   3. `null` when no files surfaced (chit-chat / empty result).
  *
@@ -868,19 +869,20 @@ interface AttachedRepoLike {
 function pickFocalRepo(
   preResolved: IdePreResolvedRepo | null,
   attached: readonly AttachedRepoLike[],
-  miniRepos: readonly unknown[],
+  reports: readonly unknown[],
 ): AttachedRepoLike | null {
   if (preResolved) {
     return (
       attached.find((r) => r.repo_id === preResolved.repo.repo_id) ?? null
     )
   }
-  // Walk mini_repos[*].files[*].repo_id and tally per-repo file counts.
-  // Mini-repos are operator-trusted JSON from `runs.minirepo_json`; we
-  // still read defensively (unknown[] → narrow before indexing) so a
-  // future shape drift doesn't crash the handler.
+  // Walk codebase_inspection_reports[*].files[*].repo_id and tally
+  // per-repo file counts. Reports are operator-trusted JSON from
+  // `runs.codebase_inspection_reports_json`; we still read defensively
+  // (unknown[] → narrow before indexing) so a future shape drift
+  // doesn't crash the handler.
   const fileCounts = new Map<string, number>()
-  for (const m of miniRepos) {
+  for (const m of reports) {
     if (!m || typeof m !== 'object') continue
     const files = (m as { files?: unknown }).files
     if (!Array.isArray(files)) continue
@@ -922,12 +924,12 @@ const NEXT_ACTIONS_CAP = 3
 function computeNextActions(
   focal: AttachedRepoLike,
   attached: readonly AttachedRepoLike[],
-  edges: readonly MiniRepoCrossRepoRelationship[],
+  edges: readonly CodebaseInspectionReportCrossRepoRelationship[],
 ): CrossRepoNextAction[] {
   const attachedById = new Map(attached.map((r) => [r.repo_id, r]))
 
-  const outgoing: MiniRepoCrossRepoRelationship[] = []
-  const incoming: MiniRepoCrossRepoRelationship[] = []
+  const outgoing: CodebaseInspectionReportCrossRepoRelationship[] = []
+  const incoming: CodebaseInspectionReportCrossRepoRelationship[] = []
   for (const e of edges) {
     if (e.from_repo === focal.repo_id && e.to_repo !== focal.repo_id) {
       outgoing.push(e)
@@ -953,7 +955,7 @@ function computeNextActions(
 function buildNextAction(
   focal: AttachedRepoLike,
   other: AttachedRepoLike,
-  edge: MiniRepoCrossRepoRelationship,
+  edge: CodebaseInspectionReportCrossRepoRelationship,
 ): CrossRepoNextAction {
   // `label` mirrors the connector direction so the IDE can render it
   // verbatim ("Check frontend usage" / "What backend calls this?").

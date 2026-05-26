@@ -127,6 +127,13 @@
       "when": 1779630189150,
       "tag": "0017_outgoing_sentry",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1779700000000,
+      "tag": "0018_rename_minirepo_to_codebase_inspection_report",
+      "breakpoints": true
     }
   ]
 }

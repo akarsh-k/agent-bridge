@@ -96,7 +96,7 @@ import {
   type InspectorMountMeta,
   type MountedInspector,
 } from './inspector/index.js'
-import { MINI_REPO_TOKEN_CAP } from './inspector/types.js'
+import { CODEBASE_INSPECTION_REPORT_TOKEN_CAP } from './inspector/types.js'
 import {
   INSPECTOR_SYSTEM_PROMPT_HEADING,
   loadInspectorSystemPrompt,
@@ -231,15 +231,16 @@ export interface BuiltAgentMeta {
    */
   readonly maxSteps: number
   /**
-   * Effective per-inspector-wrapper mini-repo token cap. Reads
-   * `agents.mini_repo_token_cap`; falls back to {@link MINI_REPO_TOKEN_CAP}
-   * when the column is NULL. Closure-captured by each wrapper at mount
-   * time and passed into `finalizeMiniRepo(draft, cap)`; the cap also
-   * lands on the `inspector.minirepo.built` event payload (`tokensCap`)
+   * Effective per-inspector-wrapper codebase inspection report token cap. Reads
+   * `agents.codebase_inspection_report_token_cap`; falls back to
+   * {@link CODEBASE_INSPECTION_REPORT_TOKEN_CAP} when the column is NULL.
+   * Closure-captured by each wrapper at mount time and passed into
+   * `finalizeCodebaseInspectionReport(draft, cap)`; the cap also
+   * lands on the `inspector.report.built` event payload (`tokensCap`)
    * so the Logs UI shows the operator the value their truncation message
    * is measured against.
    */
-  readonly miniRepoTokenCap: number
+  readonly codebaseInspectionReportTokenCap: number
 }
 
 /**
@@ -509,11 +510,11 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
   // tool dict becomes only the external MCPs (and any future native
   // tools); the LLM has no auto-attached toolkit.
   //
-  // Resolve the per-agent mini-repo token cap once so the mount call
+  // Resolve the per-agent codebase inspection report token cap once so the mount call
   // and the returned meta stay in sync (both need the effective value;
   // computing twice invites drift if the fallback ever changes).
-  const effectiveMiniRepoTokenCap =
-    agentRow.miniRepoTokenCap ?? MINI_REPO_TOKEN_CAP
+  const effectiveCodebaseInspectionReportTokenCap =
+    agentRow.codebaseInspectionReportTokenCap ?? CODEBASE_INSPECTION_REPORT_TOKEN_CAP
   let mountedInspector: MountedInspector | null = null
   try {
     if (inspectorEnabled) {
@@ -526,7 +527,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
         // Sibling tools-less Agent reuses the base URL + key
         // we already decrypted above.
         modelConfig,
-        miniRepoTokenCap: effectiveMiniRepoTokenCap,
+        codebaseInspectionReportTokenCap: effectiveCodebaseInspectionReportTokenCap,
       })
     }
   } catch (err) {
@@ -546,7 +547,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
   // The auto-attached repo inventory + repo-relationships + system-skill +
   // gitnexus library skills blocks have all been removed
   // (`docs/ARCHITECTURE.md §10` D9, D12, F5). Repo inventory now travels
-  // inside `list_repos` mini-repo responses; relationships will return inside
+  // inside `list_repos` codebase inspection report responses; relationships will return inside
   // `assess_change_impact`. Operators keep their authored
   // prompt + skills.
   const attachedRepoCount = mountedGitnexus
@@ -641,7 +642,7 @@ export async function buildAgent(input: BuildAgentInput): Promise<BuiltAgent> {
         ? mountedInspector.meta
         : emptyInspectorMountMeta(),
       maxSteps: agentRow.maxSteps ?? DEFAULT_MAX_STEPS,
-      miniRepoTokenCap: effectiveMiniRepoTokenCap,
+      codebaseInspectionReportTokenCap: effectiveCodebaseInspectionReportTokenCap,
     },
     secrets,
     subscribeMcpLogs,
@@ -695,7 +696,7 @@ export function splitSkills(skills: readonly SkillRow[]): {
  * "Available skills" catalog so the agent knows what's loadable without
  * paying their token cost every turn. Empty bodies are dropped.
  *
- * Repo inventory travels inside `list_repos` mini-repo responses; cross-
+ * Repo inventory travels inside `list_repos` codebase inspection report responses; cross-
  * repo relationships return inside `assess_change_impact`. Size caps on
  * operator skills (≤ 4KB / 200 lines per skill, ≤ 12KB total) and the
  * ≤80-line inspector system prompt are enforced separately.

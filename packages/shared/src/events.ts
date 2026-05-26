@@ -129,7 +129,7 @@ export const runEventKinds = [
    * Wrapper-tool path telemetry (`docs/ARCHITECTURE.md §10` A4). Emitted from
    * `packages/agents/src/inspector/*` around every wrapper invocation,
    * every internal LLM call (term-expansion), every gitnexus client
-   * call, and the mini-repo finalisation. Routed through the same
+   * call, and the codebase inspection report finalisation. Routed through the same
    * `RunRedactor` as everything else so payloads are scrubbed before
    * audit/SSE. Logs UI's `wrapper` filter chip subscribes to these.
    *
@@ -150,13 +150,13 @@ export const runEventKinds = [
    *                                 Args truncated to 2KB.
    *  - `inspector.gitnexus.result`  matching result event with
    *                                 truncated payload preview.
-   *  - `inspector.minirepo.built`   mini-repo finalised. Carries file
+   *  - `inspector.report.built`     codebase inspection report finalised. Carries file
    *                                 count, total tokens, truncation
    *                                 stats, and any `warnings[]` the
-   *                                 mini-repo stamped (truncation,
+   *                                 codebase inspection report stamped (truncation,
    *                                 `no_repos_attached`, etc.). NOT
-   *                                 the mini-repo body itself — that
-   *                                 lands on `runs.minirepo_json` per D17.
+   *                                 the codebase inspection report body itself — that
+   *                                 lands on `runs.codebase_inspection_reports_json` per D17.
    *  - `inspector.fallback`         the LLM term-expansion failed or
    *                                 was unparsable. Wrapper continues
    *                                 with raw query as the only
@@ -178,7 +178,7 @@ export const runEventKinds = [
    */
   'inspector.keyword.called',
   'inspector.keyword.result',
-  'inspector.minirepo.built',
+  'inspector.report.built',
   'inspector.fallback',
   /**
    * Knowledge-files telemetry. Mirrors the inspector.* pattern: every
@@ -1032,7 +1032,7 @@ export interface InspectorKeywordResultPayload {
   readonly message?: string
 }
 
-export interface InspectorMinirepoBuiltPayload {
+export interface InspectorReportBuiltPayload {
   readonly runId: string
   readonly wrapperName: InspectorWrapperName
   readonly fileCount: number
@@ -1042,12 +1042,12 @@ export interface InspectorMinirepoBuiltPayload {
   /** `true` when truncation rules in §5 fired. */
   readonly truncated: boolean
   /**
-   * Verbatim `MiniRepo.warnings` strings. Propagated whenever the
-   * mini-repo carries any warning (truncation messages like
+   * Verbatim `CodebaseInspectionReport.warnings` strings. Propagated whenever the
+   * codebase inspection report carries any warning (truncation messages like
    * `"dropped 3 chunk(s) to fit under 12000-token cap"`,
    * `no_repos_attached`, gitnexus partial-traversal flags, etc.), so
    * the Logs UI can surface them without the operator having to dig
-   * into `runs.minirepo_json`. Elided when there are no warnings to
+   * into `runs.codebase_inspection_reports_json`. Elided when there are no warnings to
    * keep the payload tight; consumers should treat an absent field
    * the same as an empty array.
    */

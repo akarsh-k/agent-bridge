@@ -83,15 +83,15 @@ What crosses between processes:
   the inspector toolkit exposes to the agent's LLM
   (`find_in_codebase`, `trace_flow`, `assess_change_impact`,
   `debug_help`, `understand_module`, `list_repos`). Each wraps one
-  or more `gitnexus_*` calls and returns a structured `MiniRepo`.
-- **MiniRepo** — typed envelope returned by every wrapper invocation
+  or more `gitnexus_*` calls and returns a structured `CodebaseInspectionReport`.
+- **CodebaseInspectionReport** — typed envelope returned by every wrapper invocation
   (`packages/agents/src/inspector/types.ts`). Carries ranked file
   hits, a graph subset, cross-repo relationships, a one-paragraph
   prose summary, and optional `resolved_repo` / `confidence` /
   `groundedness` per §10.4. Capped at 12k tokens.
 - **RunEvent** — one row in `run_events` + one published Redis
   message per side-effect during a run (LLM call, tool call,
-  gitnexus call, mini-repo built, error, finish). Source of the
+  gitnexus call, codebase inspection report built, error, finish). Source of the
   `/logs` timeline and the chat-tab tool-call cards.
 - **Callsite** — provenance for a run: which surface invoked it
   (web chat / IDE bridge / smoke harness), which IDE + version (if
@@ -229,7 +229,7 @@ to Cursor / Claude Code / Codex / any MCP-compatible IDE:
 - `<slug>__ask_agent` is always exposed — free-form Q&A, prose-only
   envelope. Handler: `ask-agent-handler.ts`.
 - `<slug>__inspect_codebase` is additionally exposed when the agent
-  has `inspector_enabled = true` (Repo-inspector template). Mini-repo
+  has `inspector_enabled = true` (Repo-inspector template). Codebase inspection report
   envelope carrying structured codebase evidence (the agent's wrapper
   toolkit gathers it: find / trace / impact / debug / understand /
   list — see §10.7 for the wire shapes). Handler:
@@ -546,7 +546,7 @@ Everything else. Mastra has no opinion or schema here, so we design freely:
 | `llm_providers` (incl. `embedding_dims`) | Mastra providers are instantiated, not stored |
 | `bridge_tools`                       | Operator-authored IDE-facing tools (§8.2)     |
 | `files`, `file_chunks` (incl. `embedding vector(N)` + `tsv` GENERATED), `agent_files`, `thread_files` | Knowledge documents + retrieval index. Mastra has no document schema (§12) |
-| `runs` (incl. `minirepo_json` jsonb) | UI-facing audit log + mini-repo envelope cache |
+| `runs` (incl. `codebase_inspection_reports_json` jsonb) | UI-facing audit log + codebase inspection report envelope cache |
 | `run_events`                         | UI-facing audit log; `mastra.traces` is OTel  |
 
 A few of these columns have non-obvious shapes worth calling out
@@ -565,8 +565,8 @@ inline:
   embedding response and writes it back in the same form. The worker
   asserts on it before kicking off `gitnexus analyze --embeddings`
   so a 384↔1024 mismatch fails fast instead of corrupting the index.
-- **`runs.minirepo_json`** — jsonb array, the mini-repo envelope cache.
-  Each wrapper invocation appends a `MiniRepo` via `appendMinirepo`
+- **`runs.codebase_inspection_reports_json`** — jsonb array, the codebase inspection report envelope cache.
+  Each wrapper invocation appends a `CodebaseInspectionReport` via `appendCodebaseInspectionReport`
   inside one transaction with a 14 KiB oldest-eviction policy
   (see §10.4). Used by both the chat-tab tool-call cards and the
   `inspect_codebase` bridge envelope so they cannot drift.
@@ -729,7 +729,7 @@ agent and returns the matching wire envelope.
   `apps/mcp-bridge/src/ask-agent-handler.ts`.
 - `<agent.slug>__inspect_codebase` — additionally exposed when
   `agents.inspector_enabled = true` (Repo-inspector template).
-  Mini-repo envelope `{ok, mini_repos[], prose_summary?, warnings}`
+  Codebase inspection report envelope `{ok, codebase_inspection_reports[], prose_summary?, warnings}`
   carrying structured codebase evidence. Handler:
   `apps/mcp-bridge/src/inspect-codebase-handler.ts`.
 
@@ -743,7 +743,7 @@ author additional curated tools per agent (`ask_architecture`,
 `explain_module`, `find_tests_for`, …) by inserting `bridge_tools`
 rows with their own input schema + prompt template. These mount
 alongside the built-ins with the operator's chosen names. They wrap
-into the inspect_codebase envelope shape (mini_repos[] + prose) with
+into the inspect_codebase envelope shape (codebase_inspection_reports[] + prose) with
 an 8 KiB prose cap (operators authored their template on purpose, so
 the prose channel is theirs to use). `runs.bridge_tool_name text`
 (nullable) records which explicit tool a run was invoked from —
@@ -1060,7 +1060,7 @@ Bridge surface:
   `inspector_enabled` flips so the IDE's tool registry never loses
   this entry under operator config edits.
 - **Additionally exposed when `inspector_enabled = true`**:
-  `<slug>__inspect_codebase` — mini-repo envelope `{ok, mini_repos[],
+  `<slug>__inspect_codebase` — codebase inspection report envelope `{ok, codebase_inspection_reports[],
   prose_summary?, warnings}` carrying structured codebase evidence.
 - Operator-authored `bridge_tools` rows mount alongside on either
   kind (§8.2). Their names are reserved against the `query_*` prefix
@@ -1106,11 +1106,11 @@ Mastra agent (BuiltAgent cache)
    │   ↓ run-context AsyncLocalStorage (incl. idePreResolvedRepo)
    │   ↓ wrappers call resolveRepoForWrapper(...) — uses pre-resolved
    │     repo as fallback when LLM omits repo_hint
-   │ wrapper telemetry → run_events + minirepo_json
+   │ wrapper telemetry → run_events + codebase_inspection_reports_json
    │
    ▼
 apps/mcp-bridge (envelope assembly)
-   │ inspect_codebase → {ok, mini_repos[], resolved_repo?,
+   │ inspect_codebase → {ok, codebase_inspection_reports[], resolved_repo?,
    │                     next_actions?, clarification?,
    │                     prose_summary?, agent_repos?,
    │                     repo_relationships?, warnings}
@@ -1128,13 +1128,13 @@ The chat tab and the IDE bridge converge on the same
 `packages/agents/src/run-dispatcher.ts` path. The only difference is
 the streamId prefix (`run:` vs `bridge:`), the optional
 `idePreResolvedRepo` (only the bridge ever sets it), and what the
-bridge does with the run's accumulated mini-repos at the end (per
+bridge does with the run's accumulated codebase inspection reports at the end (per
 §10.7).
 
 ### 10.2 Inspector wrapper toolkit
 
 Six wrappers under `packages/agents/src/inspector/workflows/`. Each
-returns a `MiniRepo` (`inspector/types.ts` + `inspector/mini-repo.ts`)
+returns a `CodebaseInspectionReport` (`inspector/types.ts` + `inspector/codebase-inspection-report.ts`)
 capped at 12k tokens internally; the IDE-facing envelope further caps
 the array at 14 KiB total.
 
@@ -1157,10 +1157,10 @@ Output is prose with three flat keys, parsed leniently. Hard fallback
 on any failure → raw query as the only expansion. The other wrappers
 do zero LLM calls.
 
-### 10.4 Mini-repo + accumulator
+### 10.4 Codebase inspection report + accumulator
 
-Each wrapper invocation appends its `MiniRepo` to `runs.minirepo_json`
-(jsonb array) via `runsRepo.appendMinirepo`. Append is read-modify-
+Each wrapper invocation appends its `CodebaseInspectionReport` to `runs.codebase_inspection_reports_json`
+(jsonb array) via `runsRepo.appendCodebaseInspectionReport`. Append is read-modify-
 write inside one transaction with a `SELECT … FOR UPDATE` row lock on
 the run, so parallel wrapper calls (the LLM fans out `find_in_codebase`
 + `understand_module` in one turn) serialize their appends instead of
@@ -1169,7 +1169,7 @@ policy: when the array would exceed 14 KiB serialized, oldest entries
 drop until it fits. Every wrapper writes unconditionally — chat-tab
 tool-call cards and the IDE bridge envelope share one source of truth.
 
-Each `MiniRepo` carries `files[]`, `graph_subset.{nodes,edges}`,
+Each `CodebaseInspectionReport` carries `files[]`, `graph_subset.{nodes,edges}`,
 `cross_repo_relationships[]`, `summary`, `expansions[]`, `warnings[]`,
 `tokens_used`, `tokens_cap` (see `packages/agents/src/inspector/types.ts`).
 Three optional fields the wrappers set when they can:
@@ -1185,15 +1185,15 @@ Three optional fields the wrappers set when they can:
   `understand_module`; graph-node count for `trace_flow`).
   `low` co-occurs with at least one entry in `warnings`.
 - **`groundedness?`** — `{claims, grounded, ungrounded}` auto-derived
-  in `finalizeMiniRepo` (`claims` = files referenced, `grounded` =
+  in `finalizeCodebaseInspectionReport` (`claims` = files referenced, `grounded` =
   files with at least one chunk, `ungrounded` = path-only matches
   with no content). Surfaces "found 8 candidates, read 3 of them"
   to the IDE LLM without it having to count.
 
-All three are propagated through `mini_repos[*]` in the wire envelope
+All three are propagated through `codebase_inspection_reports[*]` in the wire envelope
 (per §10.7), distinct from the envelope-level `resolved_repo` which
 describes the call's primary focus. Confidence stays per-wrapper —
-when one mini-repo grades itself `low`, the bridge surfaces a
+when one codebase inspection report grades itself `low`, the bridge surfaces a
 `revise_query` suggestion in `next_actions` (see §10.7) rather than
 collapsing the per-wrapper signals into a single envelope-level grade.
 
@@ -1209,7 +1209,7 @@ collapsing the per-wrapper signals into a single envelope-level grade.
 
 The dispatcher wraps the for-await loop in
 `runWithInspectorContext({...}, ...)`; wrappers read the context to
-emit redacted telemetry events and to call `appendMinirepo`. Mastra's
+emit redacted telemetry events and to call `appendCodebaseInspectionReport`. Mastra's
 tool-execute context exposes `agent.toolCallId` but not our
 app-level `runId`, hence the ALS.
 
@@ -1261,7 +1261,7 @@ the same scoring pass. Returns a discriminated union over `ok`:
   `suggested_replies[i].args_patch.repo_hint` is pre-baked from the
   candidate's label so the IDE LLM (or wrapper LLM, depending on
   layer) can re-issue without guessing. The bridge short-circuits on
-  this variant; wrappers fold it into a clarification mini-repo
+  this variant; wrappers fold it into a clarification codebase inspection report
   whose `summary` lists the candidates.
 - `{ok: false, code, message, candidates}` — unrecoverable. The
   only code that lands here is `no_repos` (the resolver promotes
@@ -1296,7 +1296,7 @@ through `RunRedactor` so secret previews stay scrubbed:
 - `inspector.tool.called` / `inspector.tool.result`
 - `inspector.llm.called` / `inspector.llm.result` (term expansion)
 - `inspector.gitnexus.called` / `inspector.gitnexus.result` (per call)
-- `inspector.minirepo.built`
+- `inspector.report.built`
 - `inspector.fallback`
 
 Each preview field is capped at `INSPECTOR_PREVIEW_BYTES_CAP = 2048`.
@@ -1319,7 +1319,7 @@ what happened during the call:
 
 ```jsonc
 { "ok": true,
-  "mini_repos": [ /* one MiniRepo per wrapper invocation, oldest dropped to fit 14 KiB */ ],
+  "codebase_inspection_reports": [ /* one CodebaseInspectionReport per wrapper invocation, oldest dropped to fit 14 KiB */ ],
 
   "prose_summary": "≤ 1 KiB",        // only when no wrapper ran (chit-chat)
 
@@ -1369,7 +1369,7 @@ what happened during the call:
 
   "agent_repos": [ /* AgentRepoSummary[] */ ],         // only when with_topology: true
                                                       // OR on clarification short-circuit
-  "repo_relationships": [ /* MiniRepoCrossRepoRelationship[] */ ],
+  "repo_relationships": [ /* CodebaseInspectionReportCrossRepoRelationship[] */ ],
 
   "warnings": [] }
 ```
@@ -1386,7 +1386,7 @@ Rules:
 - **Clarification short-circuits the run.** When the IDE's hint is
   ambiguous in a multi-repo agent, the bridge returns the
   `clarification` envelope without dispatching a Mastra run — so
-  `mini_repos` is empty and there's no `prose_summary`. The
+  `codebase_inspection_reports` is empty and there's no `prose_summary`. The
   clarification envelope always includes `agent_repos` +
   `repo_relationships` regardless of `with_topology` (the IDE needs
   the inventory to render a picker). The IDE LLM picks a
@@ -1410,14 +1410,14 @@ Rules:
     `remote_url` so the bridge's pre-resolver picks the connected repo
     by URL on the follow-up call.
   - **`revise_query`** + **`drill_file`** entries are derived from
-    in-band mini-repo signals: warnings indicating partial traversal
+    in-band codebase inspection report signals: warnings indicating partial traversal
     or step-cap hits (→ `revise_query` with `trigger:
-    'partial_results'`), the lowest `confidence` across mini-repos
+    'partial_results'`), the lowest `confidence` across codebase inspection reports
     being `low` (→ `revise_query` with `trigger: 'low_confidence'`),
     and files matched by path with zero chunks (→ `drill_file` with a
     pre-baked `args_patch.query`). Capped at 3 combined to keep the
     envelope focused.
-- **Each `MiniRepo` carries its own optional `resolved_repo`,
+- **Each `CodebaseInspectionReport` carries its own optional `resolved_repo`,
   `confidence`, and `groundedness`** (per §10.4) — those are the
   per-wrapper view, distinct from the envelope-level `resolved_repo`
   which describes the call's primary focus.
@@ -1430,13 +1430,13 @@ Rules:
   "warnings": [] }
 ```
 
-No `mini_repos` / `resolved_repo` / `next_actions` on `ask_agent`.
+No `codebase_inspection_reports` / `resolved_repo` / `next_actions` on `ask_agent`.
 Even on a Repo-inspector agent, when called via `ask_agent` the
 bridge strips structured evidence from the response — the IDE LLM
 that called this tool wants prose. The wrappers may still fire
 internally during the run (they live in the cached BuiltAgent's tool
 dict and the LLM may choose to call them), and their output still
-lands on `runs.minirepo_json` for /logs replay; it just doesn't
+lands on `runs.codebase_inspection_reports_json` for /logs replay; it just doesn't
 reach the IDE on this tool.
 
 Operator-authored `bridge_tools` rows wrap into the
@@ -1458,7 +1458,7 @@ resolves the same way as dev.
 
 Earlier auto-attached blocks (gitnexus library skills, repo inventory,
 repo relationships) are GONE from the prompt. Repo inventory now travels
-inside `list_repos` mini-repo responses; cross-repo relationships return
+inside `list_repos` codebase inspection report responses; cross-repo relationships return
 inside `assess_change_impact`.
 
 ### 10.9 Operator skill caps

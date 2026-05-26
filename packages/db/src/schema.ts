@@ -183,11 +183,12 @@ export const agents = pgTable(
      */
     maxSteps: integer('max_steps'),
     /**
-     * Per-inspector-wrapper-call token cap on the mini-repo payload
-     * returned to the LLM. `null` means "use the default constant"
-     * ({@link MINI_REPO_TOKEN_CAP} in `packages/agents/src/inspector/types.ts`,
-     * 12_000 at the time of writing); set a positive integer to override.
-     * Range is bounded in the DTO; the wrapper's `finalizeMiniRepo` step
+     * Per-inspector-wrapper-call token cap on the codebase inspection
+     * report payload returned to the LLM. `null` means "use the default
+     * constant" ({@link CODEBASE_INSPECTION_REPORT_TOKEN_CAP} in
+     * `packages/agents/src/inspector/types.ts`, 12_000 at the time of
+     * writing); set a positive integer to override. Range is bounded in
+     * the DTO; the wrapper's `finalizeCodebaseInspectionReport` step
      * truncates files → graph → relationships (in that order) to fit
      * under the effective cap and stamps `warnings[]` so the Logs UI
      * can surface what was dropped.
@@ -198,7 +199,7 @@ export const agents = pgTable(
      * and benefits from raising it. A global bump would waste tokens
      * for the small-repo case.
      */
-    miniRepoTokenCap: integer('mini_repo_token_cap'),
+    codebaseInspectionReportTokenCap: integer('codebase_inspection_report_token_cap'),
     createdAt: createdAt(),
     updatedAt: updatedAt(),
   },
@@ -403,7 +404,7 @@ export const agentRepos = pgTable(
 // ─── repo_relationships ───────────────────────────────────────────────────
 // Agent-scoped directed relationships between two attached repos
 // (operator-curated). Two agents can model the same pair of repos
-// differently. Distinct from `graph_subset.edges` in mini-repos, which
+// differently. Distinct from `graph_subset.edges` in codebase inspection reports, which
 // are code-symbol graph edges derived from gitnexus.
 
 export const repoRelationships = pgTable(
@@ -834,18 +835,19 @@ export const runs = pgTable(
     promptTokens: integer('prompt_tokens'),
     completionTokens: integer('completion_tokens'),
     /**
-     * Mini-repos accumulated across this run's wrapper invocations
-     * (`docs/ARCHITECTURE.md §10`). Each inspector wrapper appends
-     * its `MiniRepo` payload as one element of this array. The IDE
-     * bridge ships this verbatim under D17's `mini_repos[]` field;
-     * chat-only runs that never invoke a wrapper leave it NULL.
+     * Codebase inspection reports accumulated across this run's wrapper
+     * invocations (`docs/ARCHITECTURE.md §10`). Each inspector wrapper
+     * appends its `CodebaseInspectionReport` payload as one element of
+     * this array. The IDE bridge ships this verbatim under D17's
+     * `codebase_inspection_reports[]` field; chat-only runs that never
+     * invoke a wrapper leave it NULL.
      *
      * Capped at ~14 KiB total serialised size by the application
-     * layer (`runsRepo.appendMinirepo`). When append would overflow,
-     * the OLDEST entries drop first — D17's "newest evidence wins"
-     * semantics for IDE consumers.
+     * layer (`runsRepo.appendCodebaseInspectionReport`). When append
+     * would overflow, the OLDEST entries drop first — D17's "newest
+     * evidence wins" semantics for IDE consumers.
      */
-    minirepoJson: jsonb('minirepo_json'),
+    codebaseInspectionReportsJson: jsonb('codebase_inspection_reports_json'),
     /**
      * Always-on per-run provenance + editor context. Populated at
      * dispatch time:

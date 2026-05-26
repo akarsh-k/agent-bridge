@@ -385,7 +385,7 @@ export function summarizeEvent(
         isError: !ok,
       }
     }
-    case 'inspector.minirepo.built': {
+    case 'inspector.report.built': {
       const w = str(p['wrapperName']) ?? 'wrapper'
       const files = num(p['fileCount'])
       const chunks = num(p['chunkCount'])
@@ -405,7 +405,7 @@ export function summarizeEvent(
         parts.push(warnings ? warnings.join('; ') : 'truncated')
       }
       return {
-        title: `Mini-repo built: ${w}`,
+        title: `Inspection report built: ${w}`,
         summary: parts.length > 0 ? truncate(parts.join(' · '), 220) : null,
         tone: truncated ? 'warn' : 'neutral',
         group: 'inspector',

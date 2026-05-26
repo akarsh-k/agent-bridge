@@ -1,15 +1,15 @@
 /**
- * Mini-repo token-cap smoke. Pure-function — no DB, no embedder, no
+ * Codebase inspection report token-cap smoke. Pure-function — no DB, no embedder, no
  * gitnexus subprocess. Runs in <1s.
  *
  * Locks down the regressions that motivated the per-agent
- * `agents.mini_repo_token_cap` work:
+ * `agents.codebase_inspection_report_token_cap` work:
  *
- *   - `finalizeMiniRepo` truncates oversized payloads down to the
+ *   - `finalizeCodebaseInspectionReport` truncates oversized payloads down to the
  *     effective cap and stamps a "fit under N-token cap" warning so
  *     the Logs UI can surface it.
- *   - A wrapper that forgets to thread `miniRepoTokenCap` into
- *     `finalizeMiniRepo` would silently return oversized mini-repos.
+ *   - A wrapper that forgets to thread `codebaseInspectionReportTokenCap` into
+ *     `finalizeCodebaseInspectionReport` would silently return oversized codebase inspection reports.
  *     We cover that by running `runListRepos` (the one wrapper that
  *     needs no gitnexus subprocess) with a tiny cap and a fan of
  *     synthetic repos that overflows it, then asserting tokens_used
@@ -22,17 +22,17 @@
  *     fixture and other direct callers working without changes.
  *
  * Run from repo root:
- *   pnpm test:mini-repo-cap
+ *   pnpm test:codebase-inspection-report-cap
  */
 
 /* eslint-disable no-console */
 
-import { MINI_REPO_TOKEN_CAP } from '@agent-bridge/agents'
+import { CODEBASE_INSPECTION_REPORT_TOKEN_CAP } from '@agent-bridge/agents'
 
 import {
-  finalizeMiniRepo,
-  type MiniRepoDraft,
-} from '../packages/agents/src/inspector/mini-repo.js'
+  finalizeCodebaseInspectionReport,
+  type CodebaseInspectionReportDraft,
+} from '../packages/agents/src/inspector/codebase-inspection-report.js'
 import { runListRepos } from '../packages/agents/src/inspector/workflows/list-repos.js'
 
 import type { AttachedRepo } from '@agent-bridge/shared'
@@ -55,7 +55,7 @@ function check(name: string, ok: boolean, diag = ''): void {
 }
 
 console.log('━'.repeat(60))
-console.log(' Mini-repo token-cap smoke')
+console.log(' Codebase inspection report token-cap smoke')
 console.log('━'.repeat(60))
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -76,7 +76,7 @@ function fakeRepo(label: string): AttachedRepo {
 /** Build a draft whose single file contains a chunk large enough to
  *  overflow any sensible cap. Realistic shape — multi-line content,
  *  not just one giant string — so we exercise the chunk-trimmer path. */
-function oversizedDraft(): MiniRepoDraft {
+function oversizedDraft(): CodebaseInspectionReportDraft {
   const lines = Array.from(
     { length: 400 },
     (_, i) => `// line ${i.toString().padStart(3, ' ')}: lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.`,
@@ -107,7 +107,7 @@ function oversizedDraft(): MiniRepoDraft {
   }
 }
 
-function smallUnderCapDraft(): MiniRepoDraft {
+function smallUnderCapDraft(): CodebaseInspectionReportDraft {
   return {
     wrapper: 'list_repos',
     summary: 'tiny draft that stays under the default cap without any truncation',
@@ -122,24 +122,24 @@ function smallUnderCapDraft(): MiniRepoDraft {
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  // 1. `finalizeMiniRepo` honors an explicit cap and stamps a matching warning.
+  // 1. `finalizeCodebaseInspectionReport` honors an explicit cap and stamps a matching warning.
   {
     const cap = 2_500
-    const result = finalizeMiniRepo(oversizedDraft(), cap)
+    const result = finalizeCodebaseInspectionReport(oversizedDraft(), cap)
     check(
-      'finalizeMiniRepo truncates under explicit cap',
+      'finalizeCodebaseInspectionReport truncates under explicit cap',
       result.tokens_used <= cap,
       `tokens_used=${result.tokens_used} cap=${cap}`,
     )
     check(
-      'finalizeMiniRepo stamps "fit under cap" warning',
+      'finalizeCodebaseInspectionReport stamps "fit under cap" warning',
       result.warnings.some((w: string) =>
         w.includes(`to fit under ${cap}-token cap`),
       ),
       `warnings=${JSON.stringify(result.warnings)}`,
     )
     check(
-      'finalizeMiniRepo records the effective cap on the envelope',
+      'finalizeCodebaseInspectionReport records the effective cap on the envelope',
       result.tokens_cap === cap,
       `tokens_cap=${result.tokens_cap}`,
     )
@@ -147,14 +147,14 @@ async function main(): Promise<void> {
 
   // 2. Omitting the cap falls back to the module default.
   {
-    const result = finalizeMiniRepo(smallUnderCapDraft())
+    const result = finalizeCodebaseInspectionReport(smallUnderCapDraft())
     check(
-      'finalizeMiniRepo default cap = MINI_REPO_TOKEN_CAP',
-      result.tokens_cap === MINI_REPO_TOKEN_CAP,
-      `tokens_cap=${result.tokens_cap} expected=${MINI_REPO_TOKEN_CAP}`,
+      'finalizeCodebaseInspectionReport default cap = CODEBASE_INSPECTION_REPORT_TOKEN_CAP',
+      result.tokens_cap === CODEBASE_INSPECTION_REPORT_TOKEN_CAP,
+      `tokens_cap=${result.tokens_cap} expected=${CODEBASE_INSPECTION_REPORT_TOKEN_CAP}`,
     )
     check(
-      'finalizeMiniRepo leaves under-cap drafts untouched',
+      'finalizeCodebaseInspectionReport leaves under-cap drafts untouched',
       result.warnings.length === 0,
       `warnings=${JSON.stringify(result.warnings)}`,
     )
@@ -162,8 +162,8 @@ async function main(): Promise<void> {
 
   // 3. `runListRepos` on an empty agent surfaces `no_repos_attached`.
   //    No inspector context, so the helper's `emitInspectorEvent` /
-  //    `appendMinirepo` short-circuit. We're only asserting the
-  //    returned MiniRepo's warnings here.
+  //    `appendCodebaseInspectionReport` short-circuit. We're only asserting the
+  //    returned CodebaseInspectionReport's warnings here.
   {
     const result = await runListRepos({ repos: [] })
     check(
@@ -175,17 +175,17 @@ async function main(): Promise<void> {
 
   // 4. `runListRepos` honors a tight per-call cap end-to-end.
   //    Fan of synthetic repos guarantees the rendered summary overflows
-  //    a 2_500-token cap; if any layer drops `miniRepoTokenCap` on the
-  //    floor between input destructuring and `finalizeMiniRepo`, this
+  //    a 2_500-token cap; if any layer drops `codebaseInspectionReportTokenCap` on the
+  //    floor between input destructuring and `finalizeCodebaseInspectionReport`, this
   //    check fails.
   {
     const cap = 2_500
     const repos = Array.from({ length: 100 }, (_, i) =>
       fakeRepo(`repo-${i.toString().padStart(3, '0')}`),
     )
-    const result = await runListRepos({ repos, miniRepoTokenCap: cap })
+    const result = await runListRepos({ repos, codebaseInspectionReportTokenCap: cap })
     check(
-      'runListRepos honors per-call miniRepoTokenCap',
+      'runListRepos honors per-call codebaseInspectionReportTokenCap',
       result.tokens_used <= cap && result.tokens_cap === cap,
       `tokens_used=${result.tokens_used} cap=${result.tokens_cap}`,
     )
@@ -206,6 +206,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error('[mini-repo-cap-smoke] fatal:', err)
+  console.error('[codebase inspection report-cap-smoke] fatal:', err)
   process.exit(1)
 })

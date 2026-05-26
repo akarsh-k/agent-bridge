@@ -35,7 +35,7 @@ import {
 } from '@agent-bridge/shared'
 
 import { loadAttachedRepos } from './repo-loader.js'
-import { MINI_REPO_TOKEN_CAP } from './types.js'
+import { CODEBASE_INSPECTION_REPORT_TOKEN_CAP } from './types.js'
 
 import type { ToolDict } from './gitnexus-callers.js'
 import {
@@ -68,13 +68,13 @@ export interface MountInspectorToolsInput {
    */
   readonly modelConfig?: MastraModelConfig
   /**
-   * Effective per-wrapper mini-repo token cap. Closure-captured by each
-   * wrapper factory and threaded into `finalizeMiniRepo(draft, cap)`.
+   * Effective per-wrapper codebase inspection report token cap. Closure-captured by each
+   * wrapper factory and threaded into `finalizeCodebaseInspectionReport(draft, cap)`.
    * When omitted, wrappers fall back to the module-level
-   * {@link MINI_REPO_TOKEN_CAP} default — keeps tests and smoke scripts
+   * {@link CODEBASE_INSPECTION_REPORT_TOKEN_CAP} default — keeps tests and smoke scripts
    * that bypass `buildAgent` working without a config.
    */
-  readonly miniRepoTokenCap?: number
+  readonly codebaseInspectionReportTokenCap?: number
 }
 
 export interface InspectorMountMeta {
@@ -105,8 +105,8 @@ export interface MountedInspector {
 export async function mountInspectorTools(
   input: MountInspectorToolsInput,
 ): Promise<MountedInspector> {
-  const { db, agentId, gitnexusTools, modelConfig, miniRepoTokenCap } = input
-  const cap = miniRepoTokenCap ?? MINI_REPO_TOKEN_CAP
+  const { db, agentId, gitnexusTools, modelConfig, codebaseInspectionReportTokenCap } = input
+  const cap = codebaseInspectionReportTokenCap ?? CODEBASE_INSPECTION_REPORT_TOKEN_CAP
 
   // Load once at mount; per-call state changes (e.g. a repo flipping
   // status mid-run) trigger a BuiltAgent cache invalidation in
@@ -192,9 +192,9 @@ function buildFindInCodebaseTool(
   repos: readonly AttachedRepo[],
   gitnexusTools: ToolDict,
   modelConfig: MastraModelConfig | undefined,
-  miniRepoTokenCap: number,
+  codebaseInspectionReportTokenCap: number,
 ): Tool<any, any, any, any> {
-  // No `outputSchema` — our `MiniRepo` type uses `readonly` arrays
+  // No `outputSchema` — our `CodebaseInspectionReport` type uses `readonly` arrays
   // (correct for an immutable payload), but Mastra's `createTool`
   // infers Zod's mutable `string[]` from `z.array(...)` and rejects the
   // assignment. Mastra still serialises the return value to the LLM as
@@ -210,7 +210,7 @@ function buildFindInCodebaseTool(
         repos,
         query: input.query,
         repoHint: input.repo_hint ?? null,
-        miniRepoTokenCap,
+        codebaseInspectionReportTokenCap,
         ...(input.max_files !== undefined ? { maxFiles: input.max_files } : {}),
         ...(modelConfig ? { modelConfig } : {}),
       }),
@@ -221,7 +221,7 @@ const listReposInputSchema = z.object({}).strict()
 
 function buildListReposTool(
   repos: readonly AttachedRepo[],
-  miniRepoTokenCap: number,
+  codebaseInspectionReportTokenCap: number,
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'list_repos',
@@ -229,7 +229,7 @@ function buildListReposTool(
     inputSchema: listReposInputSchema,
     // outputSchema omitted for the same readonly-array reason as
     // find_in_codebase; mirrors the closure we captured at mount.
-    execute: async () => runListRepos({ repos, miniRepoTokenCap }),
+    execute: async () => runListRepos({ repos, codebaseInspectionReportTokenCap }),
   })
 }
 
@@ -277,7 +277,7 @@ const traceFlowInputSchema = z
 function buildTraceFlowTool(
   repos: readonly AttachedRepo[],
   gitnexusTools: ToolDict,
-  miniRepoTokenCap: number,
+  codebaseInspectionReportTokenCap: number,
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'trace_flow',
@@ -287,7 +287,7 @@ function buildTraceFlowTool(
       runTraceFlow({
         tools: gitnexusTools,
         repos,
-        miniRepoTokenCap,
+        codebaseInspectionReportTokenCap,
         ...(input.start_path ? { startPath: input.start_path } : {}),
         ...(input.start_symbol ? { startSymbol: input.start_symbol } : {}),
         ...(input.goal ? { goal: input.goal } : {}),
@@ -327,7 +327,7 @@ function buildAssessChangeImpactTool(
   gitnexusTools: ToolDict,
   db: AgentBridgeDb,
   agentId: string,
-  miniRepoTokenCap: number,
+  codebaseInspectionReportTokenCap: number,
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'assess_change_impact',
@@ -342,7 +342,7 @@ function buildAssessChangeImpactTool(
         anchors: input.anchors,
         changeKind: input.change_kind as ChangeKind,
         repoHint: input.repo_hint ?? null,
-        miniRepoTokenCap,
+        codebaseInspectionReportTokenCap,
       }),
   })
 }
@@ -380,7 +380,7 @@ const debugHelpInputSchema = z
 function buildDebugHelpTool(
   repos: readonly AttachedRepo[],
   gitnexusTools: ToolDict,
-  miniRepoTokenCap: number,
+  codebaseInspectionReportTokenCap: number,
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'debug_help',
@@ -391,7 +391,7 @@ function buildDebugHelpTool(
         tools: gitnexusTools,
         repos,
         errorText: input.error_text,
-        miniRepoTokenCap,
+        codebaseInspectionReportTokenCap,
         ...(input.query ? { query: input.query } : {}),
         repoHint: input.repo_hint ?? null,
       }),
@@ -422,7 +422,7 @@ const understandModuleInputSchema = z
 function buildUnderstandModuleTool(
   repos: readonly AttachedRepo[],
   gitnexusTools: ToolDict,
-  miniRepoTokenCap: number,
+  codebaseInspectionReportTokenCap: number,
 ): Tool<any, any, any, any> {
   return createTool({
     id: 'understand_module',
@@ -434,7 +434,7 @@ function buildUnderstandModuleTool(
         repos,
         anchor: input.anchor,
         repoHint: input.repo_hint ?? null,
-        miniRepoTokenCap,
+        codebaseInspectionReportTokenCap,
       }),
   })
 }

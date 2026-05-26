@@ -3,7 +3,7 @@
  * (`docs/ARCHITECTURE.md §10`). Every wrapper emits the same opening (`inspector.tool.called`),
  * the same per-gitnexus-call pair (`inspector.gitnexus.called` /
  * `.gitnexus.result`), and the same closing
- * (`inspector.minirepo.built` + `inspector.tool.result`). Inlined in
+ * (`inspector.report.built` + `inspector.tool.result`). Inlined in
  * `find_in_codebase` first; extracted here once we had three more
  * wrappers about to repeat the pattern.
  *
@@ -25,7 +25,7 @@ import {
   type InspectorGitnexusResultPayload,
   type InspectorKeywordCalledPayload,
   type InspectorKeywordResultPayload,
-  type InspectorMinirepoBuiltPayload,
+  type InspectorReportBuiltPayload,
   type InspectorToolCalledPayload,
   type InspectorToolResultPayload,
   type InspectorWrapperName,
@@ -36,7 +36,7 @@ import {
   getInspectorRunContext,
   previewJson,
 } from './run-context.js'
-import type { MiniRepo } from './types.js'
+import type { CodebaseInspectionReport } from './types.js'
 
 // ─── Tool-level open/close ───────────────────────────────────────────────
 
@@ -77,34 +77,34 @@ export async function emitToolResult(args: {
   await emitInspectorEvent('inspector.tool.result', payload)
 }
 
-export async function emitMinirepoBuilt(
+export async function emitReportBuilt(
   wrapperName: InspectorWrapperName,
-  miniRepo: MiniRepo,
+  report: CodebaseInspectionReport,
 ): Promise<void> {
   const ctx = getInspectorRunContext()
-  await emitInspectorEvent('inspector.minirepo.built', {
+  await emitInspectorEvent('inspector.report.built', {
     runId: ctx?.runId ?? '',
     wrapperName,
-    fileCount: miniRepo.files.length,
-    chunkCount: miniRepo.files.reduce((acc, f) => acc + f.chunks.length, 0),
-    tokensUsed: miniRepo.tokens_used,
-    tokensCap: miniRepo.tokens_cap,
-    truncated: miniRepo.warnings.some((w) => w.includes('to fit under')),
-    ...(miniRepo.warnings.length > 0 ? { warnings: miniRepo.warnings } : {}),
-  } satisfies InspectorMinirepoBuiltPayload)
+    fileCount: report.files.length,
+    chunkCount: report.files.reduce((acc, f) => acc + f.chunks.length, 0),
+    tokensUsed: report.tokens_used,
+    tokensCap: report.tokens_cap,
+    truncated: report.warnings.some((w) => w.includes('to fit under')),
+    ...(report.warnings.length > 0 ? { warnings: report.warnings } : {}),
+  } satisfies InspectorReportBuiltPayload)
 
-  // Persist to `runs.minirepo_json` (`docs/ARCHITECTURE.md §10`).
-  // Runs unconditionally — chat-tab tool-call cards consume the same
-  // column, and the IDE bridge reads it directly. Append handles the
-  // 14 KiB total cap with oldest-eviction. Failure is logged but
-  // never thrown — telemetry must not take down the wrapper's main
-  // result path.
+  // Persist to `runs.codebase_inspection_reports_json`
+  // (`docs/ARCHITECTURE.md §10`). Runs unconditionally — chat-tab
+  // tool-call cards consume the same column, and the IDE bridge reads it
+  // directly. Append handles the 14 KiB total cap with oldest-eviction.
+  // Failure is logged but never thrown — telemetry must not take down
+  // the wrapper's main result path.
   if (ctx) {
     try {
-      await runsRepo.appendMinirepo(ctx.db, ctx.runId, miniRepo)
+      await runsRepo.appendCodebaseInspectionReport(ctx.db, ctx.runId, report)
     } catch (err) {
       console.error(
-        `[inspector] runs.minirepo_json append failed (run=${ctx.runId}, wrapper=${wrapperName}):`,
+        `[inspector] runs.codebase_inspection_reports_json append failed (run=${ctx.runId}, wrapper=${wrapperName}):`,
         err,
       )
     }

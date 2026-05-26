@@ -3,7 +3,7 @@
  *
  * Computes blast radius for a proposed change. Inputs are the changed
  * file(s) or symbol(s) plus a `change_kind` (rename / remove / modify /
- * add). Outputs a mini-repo whose `files` list each affected path
+ * add). Outputs a codebase inspection report whose `files` list each affected path
  * with `why` carrying the classification:
  *
  *   - `direct (depth=1, upstream)`   — code that imports/calls the change directly
@@ -14,7 +14,7 @@
  * for every operator-curated `repo_relationships`
  * row originating from the resolved repo, run gitnexus_impact upstream
  * on each anchor against the target repo too. Hits are added to
- * `mini_repo.cross_repo_relationships` AND folded into `files` with the
+ * `report.cross_repo_relationships` AND folded into `files` with the
  * cross-repo target's label.
  *
  * `add` change_kind: blast radius is empty by definition (nothing
@@ -33,7 +33,7 @@ import {
   type GitnexusImpactRow,
   type ToolDict,
 } from '../gitnexus-callers.js'
-import { finalizeMiniRepo, type MiniRepoDraft } from '../mini-repo.js'
+import { finalizeCodebaseInspectionReport, type CodebaseInspectionReportDraft } from '../codebase-inspection-report.js'
 import {
   loadIncomingRepoRelationships,
   loadOutgoingRepoRelationships,
@@ -41,12 +41,12 @@ import {
 } from '../repo-relationships.js'
 import { resolveRepoForWrapper } from '../run-context.js'
 import type {
-  MiniRepo,
-  MiniRepoCrossRepoRelationship,
-  MiniRepoFile,
+  CodebaseInspectionReport,
+  CodebaseInspectionReportCrossRepoRelationship,
+  CodebaseInspectionReportFile,
 } from '../types.js'
 import {
-  emitMinirepoBuilt,
+  emitReportBuilt,
   emitToolCalled,
   emitToolResult,
   withGitnexusCall,
@@ -65,13 +65,13 @@ export interface AssessChangeImpactInput {
   readonly anchors: readonly string[]
   readonly changeKind: ChangeKind
   readonly repoHint?: string | null
-  /** Per-call mini-repo token cap; falls back to the module default when omitted. */
-  readonly miniRepoTokenCap?: number
+  /** Per-call codebase inspection report token cap; falls back to the module default when omitted. */
+  readonly codebaseInspectionReportTokenCap?: number
 }
 
 export async function runAssessChangeImpact(
   input: AssessChangeImpactInput,
-): Promise<MiniRepo> {
+): Promise<CodebaseInspectionReport> {
   const {
     tools,
     repos,
@@ -80,7 +80,7 @@ export async function runAssessChangeImpact(
     anchors,
     changeKind,
     repoHint,
-    miniRepoTokenCap,
+    codebaseInspectionReportTokenCap,
   } = input
 
   const handle = await emitToolCalled('assess_change_impact', {
@@ -93,14 +93,14 @@ export async function runAssessChangeImpact(
     .map((a) => a.trim())
     .filter((a) => a.length > 0)
   if (trimmedAnchors.length === 0) {
-    const result = finalizeMiniRepo(
+    const result = finalizeCodebaseInspectionReport(
       emptyDraft({
         summary: 'Pass at least one file path or symbol name to assess.',
         warnings: ['no anchors'],
       }),
-      miniRepoTokenCap,
+      codebaseInspectionReportTokenCap,
     )
-    await emitMinirepoBuilt('assess_change_impact', result)
+    await emitReportBuilt('assess_change_impact', result)
     await emitToolResult({
       handle,
       wrapperName: 'assess_change_impact',
@@ -124,14 +124,14 @@ export async function runAssessChangeImpact(
       resolution.ok === 'clarify'
         ? `${message}. Pick one: ${resolution.candidates.map((c) => c.label).join(', ')}.`
         : `Could not resolve repo: ${message}`
-    const result = finalizeMiniRepo(
+    const result = finalizeCodebaseInspectionReport(
       emptyDraft({
         summary,
         warnings: [message],
       }),
-      miniRepoTokenCap,
+      codebaseInspectionReportTokenCap,
     )
-    await emitMinirepoBuilt('assess_change_impact', result)
+    await emitReportBuilt('assess_change_impact', result)
     await emitToolResult({
       handle,
       wrapperName: 'assess_change_impact',
@@ -144,10 +144,10 @@ export async function runAssessChangeImpact(
 
   const warnings: string[] = []
 
-  // `add` is structurally empty. Emit a clean summary + empty mini-repo
+  // `add` is structurally empty. Emit a clean summary + empty codebase inspection report
   // rather than calling gitnexus on a path that doesn't exist yet.
   if (changeKind === 'add') {
-    const miniRepo = finalizeMiniRepo(
+    const report = finalizeCodebaseInspectionReport(
       {
         wrapper: 'assess_change_impact',
         summary: `Change kind "add" has no blast radius. nothing existing references "${trimmedAnchors.join('", "')}" yet in repo ${target.label}.`,
@@ -167,15 +167,15 @@ export async function runAssessChangeImpact(
         // that we missed something.
         confidence: 'high',
       },
-      miniRepoTokenCap,
+      codebaseInspectionReportTokenCap,
     )
-    await emitMinirepoBuilt('assess_change_impact', miniRepo)
+    await emitReportBuilt('assess_change_impact', report)
     await emitToolResult({
       handle,
       wrapperName: 'assess_change_impact',
       status: 'ok',
     })
-    return miniRepo
+    return report
   }
 
   // Same-repo blast radius. We always run BOTH directions:
@@ -307,7 +307,7 @@ export async function runAssessChangeImpact(
   // anchor name as the symbol. Not perfect (relies on shared symbol
   // names across repos) but the operator's repo_relationships block and the
   // LLM's use of `related_repos` cover the gaps.
-  const crossEdges: MiniRepoCrossRepoRelationship[] = []
+  const crossEdges: CodebaseInspectionReportCrossRepoRelationship[] = []
   const crossHits: Array<{
     repo: AttachedRepo
     rows: readonly GitnexusImpactRow[]
@@ -400,7 +400,7 @@ export async function runAssessChangeImpact(
     }
   }
 
-  // Flatten everything into mini-repo files. Dedupe by (repo_id, path),
+  // Flatten everything into codebase inspection report files. Dedupe by (repo_id, path),
   // keeping the lowest depth (closest hit). One file row per unique
   // path; the `why` carries direction + depth from the winning hit.
   type Pick = {
@@ -475,7 +475,7 @@ export async function runAssessChangeImpact(
     })
   }
 
-  const files: MiniRepoFile[] = [...picks.values()]
+  const files: CodebaseInspectionReportFile[] = [...picks.values()]
     .sort(
       (a, b) =>
         a.depth - b.depth ||
@@ -495,7 +495,7 @@ export async function runAssessChangeImpact(
         language: 'unknown',
         chunks: [],
         why: reason,
-      } satisfies MiniRepoFile
+      } satisfies CodebaseInspectionReportFile
     })
 
   // Summary explicitly names the cross-repo dimension
@@ -526,7 +526,7 @@ export async function runAssessChangeImpact(
     : ''
   const summary = `${changeKind.toUpperCase()} of ${trimmedAnchors.length} anchor(s) in ${target.label}: ${sameRepoCount} same-repo + ${crossCount} cross-repo file(s) affected.${riskSuffix}${processSuffix} ${crossSummary}${apiSummary}${partialSuffix}`
 
-  const miniRepo = finalizeMiniRepo(
+  const report = finalizeCodebaseInspectionReport(
     {
       wrapper: 'assess_change_impact',
       summary,
@@ -544,23 +544,23 @@ export async function runAssessChangeImpact(
       confidence:
         files.length >= 3 ? 'high' : files.length >= 1 ? 'medium' : 'low',
     },
-    miniRepoTokenCap,
+    codebaseInspectionReportTokenCap,
   )
 
-  await emitMinirepoBuilt('assess_change_impact', miniRepo)
+  await emitReportBuilt('assess_change_impact', report)
   await emitToolResult({
     handle,
     wrapperName: 'assess_change_impact',
     status: warnings.length > 0 ? 'fallback' : 'ok',
     ...(warnings.length > 0 ? { message: warnings[0] } : {}),
   })
-  return miniRepo
+  return report
 }
 
 function emptyDraft(args: {
   summary: string
   warnings?: readonly string[]
-}): MiniRepoDraft {
+}): CodebaseInspectionReportDraft {
   return {
     wrapper: 'assess_change_impact',
     summary: args.summary,

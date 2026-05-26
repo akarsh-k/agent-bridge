@@ -1,6 +1,6 @@
 /**
  * Fixture harness — phase 2 of 2: exercise each inspector wrapper
- * against the indexed fixture and assert on the returned mini-repos.
+ * against the indexed fixture and assert on the returned codebase inspection reports.
  *
  * Assumes `pnpm test:fixture:setup` ran first (test DB seeded, fixture
  * repos cloned + indexed under `.agent-bridge-data-test/`).
@@ -200,7 +200,7 @@ async function main(): Promise<void> {
     console.log(`  mounted with ${Object.keys(mounted.tools).length} tools`)
 
     try {
-      // 4. list_repos — returns a mini-repo whose `summary` carries the
+      // 4. list_repos — returns a codebase inspection report whose `summary` carries the
       // inventory; `files` stays empty (this isn't a search wrapper).
       const list = await runListRepos({ repos })
       const summaryMentionsAll = ['frontend', 'backend', 'shared'].every((label) =>

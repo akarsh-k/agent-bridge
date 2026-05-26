@@ -325,29 +325,31 @@ export async function appendEvent(
 }
 
 /**
- * Append one mini-repo to `runs.minirepo_json` (`docs/ARCHITECTURE.md §10` Phase
- * G G3). The column stores a JSON array. each inspector wrapper
+ * Append one codebase inspection report to
+ * `runs.codebase_inspection_reports_json` (`docs/ARCHITECTURE.md §10`
+ * Phase G G3). The column stores a JSON array. Each inspector wrapper
  * invocation contributes one element. The IDE bridge reads the array
- * verbatim under D17's `mini_repos[]` field; the chat tab renders each
- * element as an inline tool-call card.
+ * verbatim under D17's `codebase_inspection_reports[]` field; the chat
+ * tab renders each element as an inline tool-call card.
  *
  * Hard 14 KiB total cap — when adding the new entry would push past
- * `MINIREPO_MAX_TOTAL_BYTES`, we drop entries from the FRONT (oldest
- * first) until we fit. "Newest evidence wins" matches D17's intent
- * for IDE consumers; multi-turn conversations keep the freshest
- * wrapper output even when earlier turns produced larger payloads.
+ * `CODEBASE_INSPECTION_REPORT_MAX_TOTAL_BYTES`, we drop entries from
+ * the FRONT (oldest first) until we fit. "Newest evidence wins" matches
+ * D17's intent for IDE consumers; multi-turn conversations keep the
+ * freshest wrapper output even when earlier turns produced larger
+ * payloads.
  *
  * Read-modify-write inside one transaction. CRITICAL: the SELECT takes
  * a `FOR UPDATE` row lock so concurrent transactions on the same run
  * row serialise instead of racing. The LLM routinely fires multiple
  * wrapper tool calls in parallel within a single step (Mastra's
  * `Promise.all` over tools); each completes its wrapper, each calls
- * `appendMinirepo` against the SAME `runs.id`. Without the row lock,
- * both transactions read the SAME prior `minirepoJson` array, each
- * appends its own mini-repo, and the second commit clobbers the first
- * with a single-append delta. Result: one mini-repo silently lost,
- * IDE sees an incomplete evidence set, user perceives the wrapper
- * "didn't include" the file.
+ * `appendCodebaseInspectionReport` against the SAME `runs.id`. Without
+ * the row lock, both transactions read the SAME prior
+ * `codebaseInspectionReportsJson` array, each appends its own report,
+ * and the second commit clobbers the first with a single-append delta.
+ * Result: one report silently lost, IDE sees an incomplete evidence
+ * set, user perceives the wrapper "didn't include" the file.
  *
  * The row lock turns concurrent appends into a queue: T2 blocks on
  * SELECT until T1 commits, then T2 reads the post-T1 array and
@@ -356,34 +358,37 @@ export async function appendEvent(
  * Failures are returned as warnings on the next read, never thrown
  * here. telemetry must not take down a wrapper's main result path.
  */
-export const MINIREPO_MAX_TOTAL_BYTES = 14 * 1024
+export const CODEBASE_INSPECTION_REPORT_MAX_TOTAL_BYTES = 14 * 1024
 
-export async function appendMinirepo(
+export async function appendCodebaseInspectionReport(
   handle: AgentBridgeDb,
   runId: string,
-  miniRepo: unknown,
+  report: unknown,
 ): Promise<{ stored: number; dropped: number } | null> {
   return handle.db.transaction(async (tx) => {
     const [row] = await tx
-      .select({ minirepoJson: runs.minirepoJson })
+      .select({
+        codebaseInspectionReportsJson: runs.codebaseInspectionReportsJson,
+      })
       .from(runs)
       .where(eq(runs.id, runId))
       .limit(1)
       .for('update')
     if (!row) return null
 
-    const current = Array.isArray(row.minirepoJson)
-      ? ([...row.minirepoJson] as unknown[])
+    const current = Array.isArray(row.codebaseInspectionReportsJson)
+      ? ([...row.codebaseInspectionReportsJson] as unknown[])
       : []
-    current.push(miniRepo)
+    current.push(report)
 
     // Trim from the front until total fits. Stops if even the newest
     // single entry blows the cap (we keep it anyway — better the IDE
-    // sees one over-cap mini-repo than nothing).
+    // sees one over-cap report than nothing).
     let dropped = 0
     while (
       current.length > 1 &&
-      JSON.stringify(current).length > MINIREPO_MAX_TOTAL_BYTES
+      JSON.stringify(current).length >
+        CODEBASE_INSPECTION_REPORT_MAX_TOTAL_BYTES
     ) {
       current.shift()
       dropped += 1
@@ -391,7 +396,7 @@ export async function appendMinirepo(
 
     await tx
       .update(runs)
-      .set({ minirepoJson: current })
+      .set({ codebaseInspectionReportsJson: current })
       .where(eq(runs.id, runId))
 
     return { stored: current.length, dropped }

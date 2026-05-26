@@ -1,12 +1,13 @@
 /**
- * Mini-repo assembler (`docs/ARCHITECTURE.md §10` + §5 truncation rules).
+ * Codebase-inspection-report assembler (`docs/ARCHITECTURE.md §10` + §5
+ * truncation rules).
  *
  * Pure functions only — no I/O, no side effects. Wrapper tools build a
- * draft `MiniRepo` from gitnexus + disk reads, hand it to `finalizeMiniRepo`
- * which:
+ * draft `CodebaseInspectionReport` from gitnexus + disk reads, hand it to
+ * `finalizeCodebaseInspectionReport` which:
  *
  *   1. Estimates tokens (char-count / 4).
- *   2. If over `MINI_REPO_TOKEN_CAP`, truncates per §5:
+ *   2. If over `CODEBASE_INSPECTION_REPORT_TOKEN_CAP`, truncates per §5:
  *      - Drop chunks bottom-up from the lowest-relevance file (last in
  *        `files`) until under cap.
  *      - If still over, drop graph nodes/edges past depth 2.
@@ -22,21 +23,24 @@
  */
 
 import type {
+  CodebaseInspectionReport,
+  CodebaseInspectionReportChunk,
+  CodebaseInspectionReportFile,
   InspectorGroundedness,
-  MiniRepo,
-  MiniRepoChunk,
-  MiniRepoFile,
 } from './types.js'
 import {
   CHARS_PER_TOKEN,
-  MINI_REPO_TOKEN_CAP,
+  CODEBASE_INSPECTION_REPORT_TOKEN_CAP,
   SUMMARY_CHAR_CAP,
 } from './types.js'
 
 // ─── Public surface ──────────────────────────────────────────────────────
 
-export interface MiniRepoDraft
-  extends Omit<MiniRepo, 'tokens_used' | 'tokens_cap' | 'warnings'> {
+export interface CodebaseInspectionReportDraft
+  extends Omit<
+    CodebaseInspectionReport,
+    'tokens_used' | 'tokens_cap' | 'warnings'
+  > {
   readonly warnings?: readonly string[]
 }
 
@@ -45,14 +49,14 @@ export interface MiniRepoDraft
  * cap + any warnings the truncation produced. Idempotent. calling twice
  * with the result of the first call is a no-op.
  */
-export function finalizeMiniRepo(
-  draft: MiniRepoDraft,
-  cap: number = MINI_REPO_TOKEN_CAP,
-): MiniRepo {
+export function finalizeCodebaseInspectionReport(
+  draft: CodebaseInspectionReportDraft,
+  cap: number = CODEBASE_INSPECTION_REPORT_TOKEN_CAP,
+): CodebaseInspectionReport {
   const summary = clampSummary(draft.summary)
   const warnings: string[] = [...(draft.warnings ?? [])]
 
-  let files: readonly MiniRepoFile[] = draft.files
+  let files: readonly CodebaseInspectionReportFile[] = draft.files
   let nodes = draft.graph_subset.nodes
   let edges = draft.graph_subset.edges
   let crossRepoRelationships = draft.cross_repo_relationships
@@ -155,12 +159,12 @@ export function finalizeMiniRepo(
 }
 
 /**
- * Compute the default groundedness for a finalized mini-repo. Files are
+ * Compute the default groundedness for a finalized report. Files are
  * "grounded" when they carry at least one chunk (actual code content
  * was surfaced); files with zero chunks were path-only matches.
  */
 function deriveGroundedness(
-  files: readonly MiniRepoFile[],
+  files: readonly CodebaseInspectionReportFile[],
 ): InspectorGroundedness {
   let grounded = 0
   for (const f of files) {
@@ -175,9 +179,11 @@ function deriveGroundedness(
 
 /**
  * Fast standalone token estimate without truncation. Useful for telemetry
- * (the `inspector.minirepo.built` event carries tokens_used in payload).
+ * (the `inspector.report.built` event carries tokens_used in payload).
  */
-export function estimateMiniRepoTokens(draft: MiniRepoDraft): number {
+export function estimateCodebaseInspectionReportTokens(
+  draft: CodebaseInspectionReportDraft,
+): number {
   return estimateTokens({
     summary: clampSummary(draft.summary),
     files: draft.files,
@@ -192,7 +198,7 @@ export function estimateMiniRepoTokens(draft: MiniRepoDraft): number {
 
 interface EstimateInput {
   summary: string
-  files: readonly MiniRepoFile[]
+  files: readonly CodebaseInspectionReportFile[]
   nodes: readonly { id: string; kind: string; path: string; name: string }[]
   edges: readonly { from: string; to: string; kind: string }[]
   crossRepoRelationships: readonly {
@@ -225,9 +231,9 @@ function estimateTokens(input: EstimateInput): number {
 }
 
 interface TrimResult {
-  readonly files: readonly MiniRepoFile[]
+  readonly files: readonly CodebaseInspectionReportFile[]
   readonly droppedChunks: number
-  readonly snapshot?: readonly MiniRepoFile[]
+  readonly snapshot?: readonly CodebaseInspectionReportFile[]
 }
 
 /**
@@ -236,14 +242,16 @@ interface TrimResult {
  * Stops at the first under-cap state OR when no chunks remain.
  */
 function trimChunksUntilUnderCap(
-  files: readonly MiniRepoFile[],
+  files: readonly CodebaseInspectionReportFile[],
   // The recompute function isn't actually used with a closure capture
   // here (we pass a snapshot in directly) — keeping the parameter for
   // future flexibility but using a direct estimate below.
   _recompute: () => number,
   cap: number,
 ): TrimResult {
-  const mutable: MiniRepoChunk[][] = files.map((f) => [...f.chunks])
+  const mutable: CodebaseInspectionReportChunk[][] = files.map((f) => [
+    ...f.chunks,
+  ])
   let dropped = 0
 
   // We need a way to estimate without rebuilding the file list every
@@ -269,7 +277,7 @@ function trimChunksUntilUnderCap(
     dropped += 1
   }
 
-  const out: MiniRepoFile[] = files.map((f, i) => ({
+  const out: CodebaseInspectionReportFile[] = files.map((f, i) => ({
     repo_id: f.repo_id,
     repo_label: f.repo_label,
     path: f.path,
@@ -281,7 +289,7 @@ function trimChunksUntilUnderCap(
   return { files: out, droppedChunks: dropped }
 }
 
-function staticCharsOf(files: readonly MiniRepoFile[]): number {
+function staticCharsOf(files: readonly CodebaseInspectionReportFile[]): number {
   let chars = 0
   for (const f of files) {
     chars += f.path.length + f.repo_label.length + f.why.length + 32
