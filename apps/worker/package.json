@@ -1,6 +1,6 @@
 {
   "name": "worker",
-  "version": "1.0.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "description": "Background worker for Agent Bridge — BullMQ queues for clone/index/wiki jobs.",
   "type": "module",

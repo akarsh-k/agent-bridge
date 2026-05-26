@@ -1,6 +1,6 @@
 {
   "name": "@agent-bridge/agents",
-  "version": "1.0.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "description": "Mastra-backed agent factory. Builds a configured Agent from a DB row (system prompt, model, memory, tools) so apps/backend + apps/worker can run it without touching Mastra directly. This is the ONLY package allowed to import @mastra/* (enforced by the root ESLint guard rail).",
   "type": "module",

@@ -1,6 +1,6 @@
 {
   "name": "@agent-bridge/db",
-  "version": "1.0.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "description": "Drizzle schema + queries for Agent Bridge (Postgres + pgvector).",
   "type": "module",

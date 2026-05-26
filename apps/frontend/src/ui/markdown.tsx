@@ -92,6 +92,46 @@ function escapeHtml(s: string): string {
     .replace(/"/g, '&quot;')
 }
 
+const SAFE_SCHEMES = new Set(['http', 'https', 'mailto'])
+
+/**
+ * Validate a markdown link URL against an allowlist of safe schemes so
+ * a `[click](javascript:…)` (or `data:text/html;…`, `vbscript:…`)
+ * payload can't smuggle a script-executing href into the rendered HTML.
+ *
+ * Returns the normalised URL when safe, `null` when it should be
+ * rejected (caller renders the original `[label](url)` syntax
+ * literally). A "scheme" here is anything before the first `:` that's
+ * a-zA-Z-starting and contains only scheme-legal chars. URLs without a
+ * scheme (relative paths, fragments, query-only) are always allowed.
+ *
+ * Normalisation mirrors the WHATWG URL parser so the scheme check sees
+ * the same string the browser will. Without this, a payload like
+ * `\x01javascript:alert(1)` (leading C0 control) or
+ * `java<TAB>script:alert(1)` (interior tab) slips past a naïve scheme
+ * check ("no match → no scheme → allowed") and still executes once the
+ * browser strips the control char / tab during href parsing.
+ *   - tab / LF / CR are stripped ANYWHERE
+ *   - other C0 controls (U+0000–U+001F) and space are stripped
+ *     leading + trailing only
+ */
+function safeHref(url: string): string | null {
+  let href = url.replace(/[\t\n\r]/g, '')
+
+  // WHATWG: strip leading/trailing C0 controls + space
+  // eslint-disable-next-line no-control-regex
+  href = href.replace(/^[\x00-\x20]+|[\x00-\x20]+$/g, '')
+
+  const match = href.match(/^([A-Za-z][A-Za-z0-9+.-]*):/)
+  if (!match) {
+    // relative URL / fragment / query-only
+    return href
+  }
+
+  const scheme = match[1]!.toLowerCase()
+  return SAFE_SCHEMES.has(scheme) ? href : null
+}
+
 /** Render inline span: **bold**, *italic*, `code`, [link](url). */
 function renderInline(text: string): string {
   let s = escapeHtml(text)
@@ -104,9 +144,18 @@ function renderInline(text: string): string {
     '<strong style="font-weight: 600">$1</strong>',
   )
   s = s.replace(/(^|[^*])\*([^*]+)\*/g, '$1<em>$2</em>')
+  // URL was already HTML-escaped by the `escapeHtml` pass above, so
+  // attribute-breaking chars are inert. `safeHref` blocks unsafe
+  // schemes (`javascript:`, `data:`, `vbscript:`, `file:`, …); on
+  // rejection we keep the original markdown syntax as inert text so
+  // the user sees the suspicious link instead of a silent drop.
   s = s.replace(
     /\[([^\]]+)\]\(([^)]+)\)/g,
-    '<a href="$2" target="_blank" rel="noreferrer" style="color: var(--accent-300); text-decoration: underline">$1</a>',
+    (match, label: string, url: string) => {
+      const safe = safeHref(url)
+      if (safe === null) return match
+      return `<a href="${safe}" target="_blank" rel="noreferrer" style="color: var(--accent-300); text-decoration: underline">${label}</a>`
+    },
   )
   return s
 }

@@ -1,6 +1,6 @@
 {
   "name": "agent-bridge",
-  "version": "1.0.0",
+  "version": "0.1.0-alpha.1",
   "private": true,
   "description": "Agent Bridge — multi-repo grounding for IDE coding agents via MCP.",
   "scripts": {

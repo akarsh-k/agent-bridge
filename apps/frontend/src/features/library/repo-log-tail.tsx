@@ -225,7 +225,8 @@ export function RepoLogTail({ repoId }: { repoId: string }) {
         <div className="ab-repo-activity-titles">
           <div className="ab-section-title">Activity</div>
           <div className="ab-section-sub">
-            Live events from clone / index / embed / wiki jobs against this repo.
+            Live events from clone / index / embed / wiki jobs against this
+            repo.
           </div>
         </div>
         <div className="ab-repo-activity-chip-group">
@@ -376,10 +377,7 @@ function PhaseChip({ phase }: { phase: PhaseState }) {
           <span title="Phase duration">{formatDuration(phase.durationMs)}</span>
         )}
         {phase.status === 'fail' && phase.failMessage && (
-          <span
-            className="ab-phase-fail-reason"
-            title={phase.failMessage}
-          >
+          <span className="ab-phase-fail-reason" title={phase.failMessage}>
             {truncateInline(phase.failMessage, 60)}
           </span>
         )}
@@ -405,9 +403,20 @@ function LongRunHint({ phases }: { phases: readonly PhaseState[] }) {
     phases.find((p) => p.id === 'embed')?.status === 'running'
   if (!indexRunning && !embedRunning) return null
   return (
-    <div className="ab-field-help" style={{ marginTop: 4 }}>
-      Large repos can take several minutes. Gitnexus may go quiet for
-      stretches during the embed pipeline — that's normal.
+    <div
+      style={{
+        margin: '6px 0 12px',
+        padding: '8px 12px',
+        borderLeft: '3px solid var(--accent-300)',
+        background: 'var(--accent-bg)',
+        borderRadius: 'var(--radius)',
+        fontSize: 12,
+        lineHeight: 1.5,
+        color: 'var(--text-dim)',
+      }}
+    >
+      Large repos can take several minutes. Gitnexus may go quiet for stretches
+      during the embed pipeline. That's normal.
     </div>
   )
 }
@@ -465,7 +474,8 @@ function LogFeed({
   // newest row of each phase, so the feed reads as
   // "[INDEX header] [latest index rows] [CLONE header] [clone rows]".
   const items: Array<
-    { kind: 'divider'; phase: PhaseId | null; key: string } | { kind: 'row'; row: LogRow }
+    | { kind: 'divider'; phase: PhaseId | null; key: string }
+    | { kind: 'row'; row: LogRow }
   > = []
   let lastPhase: PhaseId | null | undefined = undefined
   for (const row of ordered) {
@@ -481,11 +491,7 @@ function LogFeed({
   }
 
   return (
-    <div
-      className="ab-repo-activity-feed"
-      role="log"
-      aria-live="polite"
-    >
+    <div className="ab-repo-activity-feed" role="log" aria-live="polite">
       {items.map((it) =>
         it.kind === 'divider' ? (
           <PhaseDivider key={it.key} phase={it.phase} />
@@ -803,7 +809,8 @@ function levelFor(kind: string): LogRow['level'] {
 // Match "Receiving objects: 42% (210/500)" or "Resolving deltas: 100%
 // (500/500)" or even bare "12%". Returns the latest progress reading
 // in the line (some lines pile up multiple counters separated by `,`).
-const PROGRESS_RE = /([A-Za-z][\w .,'-]{0,60}?):?\s*(\d{1,3})%\s*(?:\(([\d,]+)\s*\/\s*([\d,]+)\))?/g
+const PROGRESS_RE =
+  /([A-Za-z][\w .,'-]{0,60}?):?\s*(\d{1,3})%\s*(?:\(([\d,]+)\s*\/\s*([\d,]+)\))?/g
 
 function extractProgress(message: string): ProgressReading | null {
   PROGRESS_RE.lastIndex = 0
@@ -838,7 +845,9 @@ function stripProgressFromMessage(
 ): string {
   if (!progress) return message
   // Replace the entire progress-bearing fragment with the static label.
-  return message.replace(PROGRESS_RE, (_match, label) => String(label ?? '').trim())
+  return message.replace(PROGRESS_RE, (_match, label) =>
+    String(label ?? '').trim(),
+  )
 }
 
 // ─── History fetch ───────────────────────────────────────────────────────
@@ -909,9 +918,9 @@ function mergeEventStreams(
 function signatureOf(ev: RunEvent): string {
   const body =
     ev.data && typeof ev.data === 'object'
-      ? ((ev.data as Record<string, unknown>).line as string | undefined) ??
+      ? (((ev.data as Record<string, unknown>).line as string | undefined) ??
         ((ev.data as Record<string, unknown>).message as string | undefined) ??
-        ''
+        '')
       : typeof ev.data === 'string'
         ? ev.data
         : ''
