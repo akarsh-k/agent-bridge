@@ -25,6 +25,7 @@ coverage
 
 docs/*
 !docs/ARCHITECTURE.md
+!docs/agent-bridge-tour.gif
 
 # Local IDE / editor state (personal, not repo-wide).
 # .cursor/rules/ is intentionally NOT ignored — those are the repo's shared
