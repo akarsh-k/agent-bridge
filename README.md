@@ -4,6 +4,14 @@
 
 > **Public alpha release.** Agent Bridge is in active development. Expect rough edges and breaking changes between releases. Bug reports and feedback are very welcome.
 
+## Demo
+
+<p align="center">
+  <img src="docs/agent-bridge-tour.gif" alt="Agent Bridge demo: asking a local tool to trace component usage across the repository" width="800" />
+</p>
+
+Agent Bridge lets the assistant call local MCP tools to inspect the repository, trace component usage, and return grounded answers from the codebase.
+
 Agent Bridge started from a simple idea: coding agents are good at editing
 code, but they often do weak research before they act.
 
@@ -119,7 +127,7 @@ In this mode, Agent Bridge becomes a local agent workbench. You define
 the agent's behavior, attach the tools it should use, and make it
 callable from your IDE or any MCP-compatible client.
 
-So Agent Bridge is both a research sidecar for coding agents *and* a
+So Agent Bridge is both a research sidecar for coding agents _and_ a
 local-first platform for building custom MCP-exposed agents — it's
 local-first, not local-only; sidecar-first, not sidecar-only.
 
@@ -153,20 +161,20 @@ with external provider costs.
 
 From your IDE coding agent, ask things like:
 
-- *Use Agent Bridge to inspect where `OrderStatus` is defined and which
-  repos depend on it.*
-- *Before changing the checkout schema, ask Agent Bridge what frontend
-  and worker code will be affected.*
-- *This error happens when creating an invoice. Ask Agent Bridge to
-  trace the flow from the frontend mutation to the backend handler.*
-- *Find the tests and modules most likely related to the auth callback
-  bug.*
-- *Ask the architecture agent which services depend on this shared
-  package.*
-- *Ask my custom Notion-connected agent what product requirements are
-  related to this feature.*
-- *Ask the contracts agent what the late-payment penalty is in the
-  vendor agreement — and cite the page.*
+- _Use Agent Bridge to inspect where `OrderStatus` is defined and which
+  repos depend on it._
+- _Before changing the checkout schema, ask Agent Bridge what frontend
+  and worker code will be affected._
+- _This error happens when creating an invoice. Ask Agent Bridge to
+  trace the flow from the frontend mutation to the backend handler._
+- _Find the tests and modules most likely related to the auth callback
+  bug._
+- _Ask the architecture agent which services depend on this shared
+  package._
+- _Ask my custom Notion-connected agent what product requirements are
+  related to this feature._
+- _Ask the contracts agent what the late-payment penalty is in the
+  vendor agreement — and cite the page._
 
 ## What Agent Bridge is not
 
@@ -292,9 +300,7 @@ For Cursor (`~/.cursor/mcp.json`) the production block looks like:
   "mcpServers": {
     "agent-bridge": {
       "command": "/absolute/path/to/node",
-      "args": [
-        "/absolute/path/to/agent-bridge/apps/mcp-bridge/dist/index.js"
-      ]
+      "args": ["/absolute/path/to/agent-bridge/apps/mcp-bridge/dist/index.js"]
     }
   }
 }
@@ -334,22 +340,22 @@ Run logs and tool traces show up in `/logs` in the UI.
 
 Run from the repo root:
 
-| Script              | What it does                                                                                          |
-| ------------------- | ----------------------------------------------------------------------------------------------------- |
-| `pnpm preflight`    | Verifies Node version, `.env`, `node_modules`, and workspace layout.                                  |
+| Script              | What it does                                                                                                                                                                                                                       |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm preflight`    | Verifies Node version, `.env`, `node_modules`, and workspace layout.                                                                                                                                                               |
 | `pnpm start`        | **For end users.** Preflight → `pnpm install` → `pnpm build` (every workspace, topological) → `docker compose up -d` → spawn backend + worker against built outputs. Auto-migrates the DB on boot. One URL: http://localhost:3001. |
-| `pnpm dev`          | **For contributors.** Preflight → build `packages/*` once → `docker compose up -d` → start all apps in parallel with `tsx watch` / Vite HMR / `tsc --watch`. Frontend on 5173, backend on 3001. |
-| `pnpm stop`         | `docker compose down` — stops the Postgres/Redis containers (volumes preserved, data kept).           |
-| `pnpm stop:clean`   | `docker compose down -v` — stops containers **and removes volumes** (destroys local DB + cache data). |
-| `pnpm build`        | Recursive `build` across all workspaces (topological: `packages/*` build before `apps/*`).            |
-| `pnpm typecheck`    | Recursive `typecheck` across all workspaces.                                                          |
-| `pnpm lint`         | ESLint at the root + recursive `lint` across all workspaces.                                          |
-| `pnpm format`       | Prettier — rewrite the whole repo to the project style.                                               |
-| `pnpm format:check` | Prettier — check only; CI-friendly.                                                                   |
-| `pnpm db:generate`  | `drizzle-kit generate` — diff schema, write a new SQL migration.                                      |
-| `pnpm db:migrate`   | `drizzle-kit migrate` — apply pending migrations against `DATABASE_URL`.                              |
-| `pnpm db:studio`    | `drizzle-kit studio` — browse the local DB.                                                           |
-| `pnpm clean:data`   | Wipe `.agent-bridge-data/` (cloned repos, indexes, secrets). Asks first — use `:force` to skip.       |
+| `pnpm dev`          | **For contributors.** Preflight → build `packages/*` once → `docker compose up -d` → start all apps in parallel with `tsx watch` / Vite HMR / `tsc --watch`. Frontend on 5173, backend on 3001.                                    |
+| `pnpm stop`         | `docker compose down` — stops the Postgres/Redis containers (volumes preserved, data kept).                                                                                                                                        |
+| `pnpm stop:clean`   | `docker compose down -v` — stops containers **and removes volumes** (destroys local DB + cache data).                                                                                                                              |
+| `pnpm build`        | Recursive `build` across all workspaces (topological: `packages/*` build before `apps/*`).                                                                                                                                         |
+| `pnpm typecheck`    | Recursive `typecheck` across all workspaces.                                                                                                                                                                                       |
+| `pnpm lint`         | ESLint at the root + recursive `lint` across all workspaces.                                                                                                                                                                       |
+| `pnpm format`       | Prettier — rewrite the whole repo to the project style.                                                                                                                                                                            |
+| `pnpm format:check` | Prettier — check only; CI-friendly.                                                                                                                                                                                                |
+| `pnpm db:generate`  | `drizzle-kit generate` — diff schema, write a new SQL migration.                                                                                                                                                                   |
+| `pnpm db:migrate`   | `drizzle-kit migrate` — apply pending migrations against `DATABASE_URL`.                                                                                                                                                           |
+| `pnpm db:studio`    | `drizzle-kit studio` — browse the local DB.                                                                                                                                                                                        |
+| `pnpm clean:data`   | Wipe `.agent-bridge-data/` (cloned repos, indexes, secrets). Asks first — use `:force` to skip.                                                                                                                                    |
 
 Useful env-var overrides:
 
