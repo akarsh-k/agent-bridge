@@ -20,6 +20,8 @@
   },
   "dependencies": {
     "@agent-bridge/shared": "workspace:*",
+    "@fontsource-variable/geist": "^5.2.9",
+    "@fontsource-variable/geist-mono": "^5.2.8",
     "@sigma/edge-curve": "^3.1.0",
     "graphology": "^0.26.0",
     "graphology-layout-forceatlas2": "^0.10.1",

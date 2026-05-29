@@ -473,7 +473,7 @@ export function ChatTab({
                 background: 'var(--danger-bg)',
                 padding: '8px 12px',
                 borderRadius: 'var(--radius)',
-                border: '1px solid rgba(251, 113, 133, 0.24)',
+                border: '1px solid var(--danger-border)',
               }}
               role="alert"
             >
@@ -773,7 +773,7 @@ function MessageRow({
             className="ab-msg-bubble"
             style={{
               background: 'var(--danger-bg)',
-              border: '1px solid rgba(251, 113, 133, 0.24)',
+              border: '1px solid var(--danger-border)',
               color: 'var(--danger)',
             }}
           >
@@ -1111,11 +1111,13 @@ function AssistantBubble({ msg }: { msg: ChatMessage }) {
   // separately (dispatcher handles `reasoning-*` chunks).
   const visibleText = stripThinkBlocks(msg.text)
   return (
-    <div className="ab-msg-bubble ab-msg-bubble-md">
+    <div
+      className={
+        'ab-msg-bubble ab-msg-bubble-md' +
+        (msg.status === 'streaming' ? ' is-streaming' : '')
+      }
+    >
       <Markdown source={visibleText} />
-      {msg.status === 'streaming' && (
-        <span style={{ opacity: 0.5 }}> ▍</span>
-      )}
     </div>
   )
 }
@@ -1219,7 +1221,7 @@ function ThreadRail({
                   height: 7,
                   flexShrink: 0,
                   borderRadius: 999,
-                  background: '#60a5fa',
+                  background: 'var(--accent-400)',
                   animation: streamingThreadIds.has(t.threadId)
                     ? 'ab-pulse-blue 1.6s ease-in-out infinite'
                     : undefined,

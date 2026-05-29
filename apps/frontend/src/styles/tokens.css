@@ -2,39 +2,57 @@
    Design tokens. Dark-first; a light variant kicks in when
    `prefers-color-scheme: light`. Every surface colour, radius, motion curve,
    and elevation reference comes from here so themes stay consistent.
+
+   Visual language: neutral near-black surfaces, high-contrast text, hairline
+   borders. A single functional blue is the only accent, used sparingly for
+   focus / links / selection / info. Primary actions are MONOCHROME (solid
+   --text on --text-inverted), not the accent — no gradients, no colour glow.
 --------------------------------------------------------------------------- */
 
 :root {
-  /* Layer stack — from deepest (canvas) to highest (modal) */
-  --bg: #08070d;
-  --bg-canvas: #06060c;
-  --bg-grid: rgba(255, 255, 255, 0.035);
-  --surface: #0f0e17;
-  --surface-hi: #161522;
-  --surface-raised: #1b1a2a;
-  --surface-hover: rgba(167, 139, 250, 0.08);
+  /* Layer stack — from deepest (canvas) to highest (raised) */
+  --bg: #0d0e13;
+  --bg-canvas: #0a0b0f;
+  --bg-grid: rgba(174, 198, 255, 0.04);
+  --surface: #15161b;
+  --surface-hi: #1c1d24;
+  --surface-raised: #23242c;
+  --surface-hover: rgba(126, 168, 243, 0.07);
+  /* Recessed well for code / JSON payloads — the page tone, clearly
+   * below the lifted panel/surface it sits on so the well reads as a
+   * contained block, but not the near-black canvas (no hole). The
+   * well's own border is brighter than --border-strong so the edge
+   * reads against the dark fill (dark-on-dark hides a faint hairline). */
+  --code-well: #0d0e13;
+  --code-well-border: rgba(255, 255, 255, 0.24);
 
-  /* Borders — soft by default; strong on focus */
-  --border: rgba(255, 255, 255, 0.07);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --border-focus: rgba(167, 139, 250, 0.55);
+  /* Borders — hairline by default; brighter on focus */
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.16);
+  --border-focus: rgba(91, 141, 239, 0.62);
 
-  /* Text */
-  --text: #edeaf8;
-  --text-dim: #9e98b7;
-  --text-muted: #6a6483;
-  --text-inverted: #0b0a14;
+  /* Text — high contrast, faint cool cast to match the surfaces */
+  --text: #f2f3f5;
+  --text-dim: #a0a3ad;
+  --text-muted: #6c6f7a;
+  --text-inverted: #0a0b0f;
 
-  /* Brand — violet gradient */
-  --accent-50: #f4efff;
-  --accent-300: #c4b5fd;
-  --accent-400: #a78bfa;
-  --accent-500: #8b5cf6;
-  --accent-600: #7c3aed;
-  --accent-glow: rgba(139, 92, 246, 0.35);
-  --accent-bg: rgba(139, 92, 246, 0.12);
-  --accent-bg-hi: rgba(139, 92, 246, 0.2);
-  --accent-border: rgba(167, 139, 250, 0.35);
+  /* Accent — one calm periwinkle-blue, sharing the surfaces' cool
+   * temperature so it reads as native, not pasted on. Used for focus,
+   * links, selection, and info only. Primary actions are monochrome. */
+  --accent-50: #eef3fe;
+  --accent-300: #a9c4f7;
+  --accent-400: #7ea8f3;
+  --accent-500: #5b8def;
+  --accent-600: #3f6fd6;
+  --accent-glow: rgba(91, 141, 239, 0.25);
+  --accent-bg: rgba(91, 141, 239, 0.12);
+  --accent-bg-hi: rgba(91, 141, 239, 0.2);
+  --accent-border: rgba(126, 168, 243, 0.34);
+  /* Solid accent for primary-button fills: deeper than the bright link
+   * accent so white label text clears WCAG AA (~6.6:1). */
+  --accent-solid: #3856ad;
+  --accent-solid-hover: #2f4a93;
 
   /* Semantic — `-bg` is the soft fill behind a tone surface, `-border`
    * is the matching outline. Mirrors the accent token set (which has
@@ -50,27 +68,26 @@
   --warn-bg: rgba(251, 191, 36, 0.12);
   --warn-border: rgba(251, 191, 36, 0.32);
 
-  /* Shape */
-  --radius-xs: 4px;
-  --radius-sm: 6px;
-  --radius: 10px;
-  --radius-lg: 14px;
-  --radius-xl: 18px;
+  /* Shape — sharper, more deliberate corners */
+  --radius-xs: 3px;
+  --radius-sm: 5px;
+  --radius: 7px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
   --radius-pill: 999px;
 
-  /* Elevation */
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-2: 0 6px 20px rgba(0, 0, 0, 0.4),
-    0 2px 4px rgba(0, 0, 0, 0.3);
-  --shadow-glow: 0 0 0 1px var(--accent-border),
-    0 0 24px -4px var(--accent-glow);
+  /* Elevation — flat; borders carry the structure, shadows stay subtle */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2: 0 4px 16px -2px rgba(0, 0, 0, 0.5),
+    0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-glow: 0 0 0 1px var(--accent-border);
 
-  /* Motion */
+  /* Motion — strong ease-out, no overshoot */
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --dur-1: 120ms;
-  --dur-2: 200ms;
-  --dur-3: 320ms;
+  --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-1: 110ms;
+  --dur-2: 180ms;
+  --dur-3: 300ms;
 
   /* Layout */
   --sidebar-w: 264px;
@@ -79,10 +96,11 @@
 
   /* Typography */
   --font-sans:
-    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, sans-serif;
+    'Geist Variable', 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, 'Helvetica Neue', Arial, sans-serif;
   --font-mono:
-    'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    'Geist Mono Variable', 'Geist Mono', ui-monospace, 'SF Mono', Menlo,
+    Consolas, monospace;
 
   color-scheme: dark;
   font-family: var(--font-sans);
@@ -93,7 +111,6 @@
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
-  font-feature-settings: 'ss01', 'cv01', 'cv02';
 }
 
 @media (prefers-color-scheme: light) {
@@ -114,32 +131,36 @@
    * call sites.
    */
   :root {
-    --bg: #f7f6f4;
-    --bg-canvas: #efedea;
-    --bg-grid: rgba(17, 16, 33, 0.06);
+    --bg: #fafbfc;
+    --bg-canvas: #f3f4f6;
+    --bg-grid: rgba(11, 12, 16, 0.05);
     --surface: #ffffff;
-    --surface-hi: #fbfaf8;
+    --surface-hi: #fafbfc;
     --surface-raised: #ffffff;
-    --surface-hover: rgba(109, 40, 217, 0.05);
+    --surface-hover: rgba(47, 91, 192, 0.05);
+    --code-well: #f3f4f6;
+    --code-well-border: rgba(11, 12, 16, 0.16);
 
-    --border: rgba(15, 14, 33, 0.07);
-    --border-strong: rgba(15, 14, 33, 0.14);
-    --border-focus: rgba(109, 40, 217, 0.45);
+    --border: rgba(11, 12, 16, 0.1);
+    --border-strong: rgba(11, 12, 16, 0.16);
+    --border-focus: rgba(47, 91, 192, 0.5);
 
-    --text: #18181b;
-    --text-dim: #52525b;
-    --text-muted: #8a8a93;
+    --text: #0b0c10;
+    --text-dim: #51545d;
+    --text-muted: #888b94;
     --text-inverted: #ffffff;
 
-    --accent-50: #f5f0ff;
-    --accent-300: #8b5cf6;
-    --accent-400: #7c3aed;
-    --accent-500: #6d28d9;
-    --accent-600: #5b21b6;
-    --accent-glow: rgba(109, 40, 217, 0.22);
-    --accent-bg: rgba(109, 40, 217, 0.08);
-    --accent-bg-hi: rgba(109, 40, 217, 0.14);
-    --accent-border: rgba(109, 40, 217, 0.28);
+    --accent-50: #eef3fe;
+    --accent-300: #5b8def;
+    --accent-400: #3f6fd6;
+    --accent-500: #2f5bc0;
+    --accent-600: #244a9e;
+    --accent-glow: rgba(47, 91, 192, 0.2);
+    --accent-bg: rgba(47, 91, 192, 0.08);
+    --accent-bg-hi: rgba(47, 91, 192, 0.14);
+    --accent-border: rgba(47, 91, 192, 0.26);
+    --accent-solid: #2f5bc0;
+    --accent-solid-hover: #244a9e;
 
     --success: #059669;
     --success-bg: rgba(5, 150, 105, 0.1);
@@ -151,14 +172,13 @@
     --warn-bg: rgba(217, 119, 6, 0.1);
     --warn-border: rgba(217, 119, 6, 0.28);
 
-    --shadow-1: 0 1px 2px rgba(15, 14, 33, 0.05),
-      0 0 0 1px rgba(15, 14, 33, 0.02);
-    --shadow-2: 0 10px 28px -6px rgba(15, 14, 33, 0.12),
-      0 2px 6px rgba(15, 14, 33, 0.05);
-    --shadow-3: 0 30px 70px -10px rgba(15, 14, 33, 0.2),
-      0 8px 18px -4px rgba(15, 14, 33, 0.1);
-    --shadow-glow: 0 0 0 1px var(--accent-border),
-      0 8px 28px -6px rgba(109, 40, 217, 0.22);
+    --shadow-1: 0 1px 2px rgba(9, 9, 11, 0.06),
+      0 0 0 1px rgba(9, 9, 11, 0.02);
+    --shadow-2: 0 8px 24px -6px rgba(9, 9, 11, 0.12),
+      0 1px 3px rgba(9, 9, 11, 0.06);
+    --shadow-3: 0 24px 60px -12px rgba(9, 9, 11, 0.18),
+      0 6px 16px -4px rgba(9, 9, 11, 0.1);
+    --shadow-glow: 0 0 0 1px var(--accent-border);
 
     color-scheme: light;
   }

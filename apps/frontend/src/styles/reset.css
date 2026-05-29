@@ -28,19 +28,6 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  /* Soft violet aura behind the workspace; sits below the canvas surface */
-  background-image:
-    radial-gradient(
-      1200px 600px at 18% -10%,
-      rgba(139, 92, 246, 0.14),
-      transparent 70%
-    ),
-    radial-gradient(
-      800px 600px at 110% 10%,
-      rgba(56, 189, 248, 0.08),
-      transparent 60%
-    );
-  background-attachment: fixed;
 }
 
 #root {
@@ -57,13 +44,15 @@ h5,
 h6 {
   font-family: var(--font-sans);
   font-weight: 600;
-  letter-spacing: -0.015em;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
   color: var(--text);
   margin: 0;
 }
 
 p {
   margin: 0;
+  text-wrap: pretty;
 }
 
 code,

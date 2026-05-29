@@ -18,3 +18,4 @@
 /* Page-colocated styles. Loaded here (not via per-page imports) so the
  * Vite dev server bundles them once and the cascade order is explicit. */
 @import '../app/library/files/files-page.css';
+@import '../app/logs/logs-page.css';

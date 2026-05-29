@@ -54,7 +54,7 @@ export function ModelTestStatus({
           ...baseStyle,
           color: 'var(--success)',
           background: 'var(--success-bg)',
-          borderColor: 'rgba(52, 211, 153, 0.28)',
+          borderColor: 'var(--success-border)',
         }}
         title={message ?? undefined}
       >
@@ -68,7 +68,7 @@ export function ModelTestStatus({
         ...baseStyle,
         color: 'var(--danger)',
         background: 'var(--danger-bg)',
-        borderColor: 'rgba(251, 113, 133, 0.3)',
+        borderColor: 'var(--danger-border)',
       }}
       title={message ?? undefined}
     >

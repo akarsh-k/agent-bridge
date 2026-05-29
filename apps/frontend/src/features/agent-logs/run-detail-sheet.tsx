@@ -1,17 +1,17 @@
 /**
- * Right-slide detail surface for one entry in the global /logs feed.
+ * Centered detail modal for one entry in the global /logs feed.
  * Two flavours, one component:
  *
  *   - `kind: 'run'` → agent invocation. Fetches `/api/runs/:id`,
- *     renders prompt + output + run-event timeline.
+ *     renders a metadata rail (status, metrics, timing, ids) beside the
+ *     prompt + output + run-event timeline.
  *   - `kind: 'worker'` → background worker job (clone / index / wiki).
- *     Fetches `/api/worker-jobs/:id`, renders job-meta header +
- *     event timeline. No prompt/output (worker jobs don't have one).
+ *     Fetches `/api/worker-jobs/:id`, renders the job-meta rail beside
+ *     the event timeline. No prompt/output (worker jobs don't have one).
  *
- * Both flavours share the same EventTimeline / Header card / error
- * card primitives so the visual language is identical from the
- * operator's perspective. Mounting: opens with `target` non-null;
- * close clears the prop and the sheet hides.
+ * A wide two-pane modal (not the right sheet) so the dense event
+ * timeline + JSON payloads get room to breathe. Mounting: renders only
+ * when `target` is non-null; close clears the prop.
  */
 
 import { useEffect, useMemo, useState } from 'react'
@@ -19,19 +19,19 @@ import type {
   RunDetailResponse,
   WorkerJobDetailResponse,
 } from '@agent-bridge/shared'
-import { Sheet } from '../../ui/sheet'
 import { Pill } from '../../ui/pill'
+import { CloseIcon } from '../../ui/icons'
 import { ApiError, fetchRun, fetchWorkerJob } from '../../lib/rpc'
 import { formatDurationMs } from './event-labels'
 import { EventTimeline } from './event-timeline'
 
-/** Discriminated union — what the parent wants the sheet to fetch. */
+/** Discriminated union — what the parent wants the modal to fetch. */
 export type DetailTarget =
   | { kind: 'run'; id: string }
   | { kind: 'worker'; id: string }
 
 interface RunDetailSheetProps {
-  /** When non-null, sheet is open and loads detail for that target. */
+  /** When non-null, modal is open and loads detail for that target. */
   target: DetailTarget | null
   onClose: () => void
 }
@@ -72,7 +72,7 @@ export function RunDetailSheet({ target, onClose }: RunDetailSheetProps) {
         } else {
           // The repo activity panel uses a 500-event hydration cap
           // (in `RepoLogTail`) to keep its mount cheap. This detail
-          // sheet is the operator's debug view, so we lift the cap
+          // modal is the operator's debug view, so we lift the cap
           // to the endpoint's maximum (5000) — full history is
           // exactly what someone clicking a worker job here wants.
           const res = await fetchWorkerJob(targetId, 5000)
@@ -97,7 +97,17 @@ export function RunDetailSheet({ target, onClose }: RunDetailSheetProps) {
     }
   }, [targetKind, targetId])
 
-  const open = target !== null
+  // Esc to close while open.
+  useEffect(() => {
+    if (target === null) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [target, onClose])
+
+  if (target === null) return null
 
   const title = (() => {
     if (data?.kind === 'run' && data.run) {
@@ -109,38 +119,57 @@ export function RunDetailSheet({ target, onClose }: RunDetailSheetProps) {
     return loading ? 'Loading…' : 'Detail'
   })()
 
+  const subtitle =
+    data?.kind === 'run' && data.run ? (
+      <RunSubtitle run={data.run.run} />
+    ) : data?.kind === 'worker' && data.worker ? (
+      <WorkerJobSubtitle job={data.worker.job} />
+    ) : null
+
   return (
-    <Sheet
-      open={open}
-      onClose={onClose}
-      title={title}
-      subtitle={
-        data?.kind === 'run' && data.run ? (
-          <RunSubtitle run={data.run.run} />
-        ) : data?.kind === 'worker' && data.worker ? (
-          <WorkerJobSubtitle job={data.worker.job} />
-        ) : undefined
-      }
-    >
-      {error && (
-        <div
-          className="ab-field-help"
-          style={{ color: 'var(--danger)' }}
-          role="alert"
-        >
-          {error}
+    <div className="ab-detail-overlay" onClick={onClose}>
+      <div
+        className="ab-detail-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={typeof title === 'string' ? title : 'Detail'}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="ab-detail-modal-head">
+          <div style={{ minWidth: 0 }}>
+            <div className="ab-detail-modal-title">{title}</div>
+            {subtitle && <div className="ab-detail-modal-sub">{subtitle}</div>}
+          </div>
+          <button
+            type="button"
+            className="ab-icon-btn ab-detail-modal-close"
+            onClick={onClose}
+            aria-label="Close (Esc)"
+            title="Close (Esc)"
+          >
+            <CloseIcon />
+          </button>
         </div>
-      )}
-      {!error && !data && loading && (
-        <div className="ab-field-help">Fetching detail…</div>
-      )}
-      {data?.kind === 'run' && data.run && (
-        <RunDetailBody data={data.run} />
-      )}
-      {data?.kind === 'worker' && data.worker && (
-        <WorkerJobDetailBody data={data.worker} />
-      )}
-    </Sheet>
+
+        {error && (
+          <div className="ab-detail-modal-state" role="alert">
+            <span style={{ color: 'var(--danger)' }}>{error}</span>
+          </div>
+        )}
+        {!error && !data && loading && (
+          <div className="ab-detail-modal-state">
+            <span className="ab-loading-row">
+              <span className="ab-pulse-dot" />
+              Fetching detail…
+            </span>
+          </div>
+        )}
+        {data?.kind === 'run' && data.run && <RunDetailBody data={data.run} />}
+        {data?.kind === 'worker' && data.worker && (
+          <WorkerJobDetailBody data={data.worker} />
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -258,53 +287,92 @@ function CallsiteBadge({
 function RunDetailBody({ data }: { data: RunDetailResponse }) {
   const { run, events } = data
   // Pull the cap-exhausted signal off the most recent run.finished event
-  // so the header can render "Hit step limit (N/M)" without a schema
-  // round-trip onto the `runs` table. The dispatcher always emits exactly
-  // one run.finished per completed run; we just guard for legacy rows
-  // (pre-stepsExhausted field) by treating undefined as absent.
+  // so the rail can render "Steps N/M" and the main can show the
+  // truncation notice without a schema round-trip onto the `runs` table.
   const stepLimit = extractStepLimit(events)
   return (
-    <>
-      <RunHeader run={run} stepLimit={stepLimit} />
-      {run.errorMessage && <RunErrorCard message={run.errorMessage} />}
-      <CollapsibleBody title="Input prompt" body={run.inputPrompt} />
-      {run.outputSummary !== null && (
-        <>
-          {stepLimit?.exhausted && (
-            <div
-              style={{
-                margin: '0 0 6px',
-                padding: '8px 12px',
-                borderLeft: '3px solid var(--warn)',
-                background: 'var(--warn-bg)',
-                borderRadius: 'var(--radius)',
-                fontSize: 12,
-                lineHeight: 1.5,
-                color: 'var(--text-dim)',
-              }}
-            >
-              Output may be truncated. The agent loop hit its step limit
-              ({stepLimit.stepCount}/{stepLimit.maxSteps}) before producing
-              the final synthesis turn.
-            </div>
-          )}
+    <div className="ab-detail-modal-body">
+      <aside className="ab-detail-rail">
+        <RunMetaRail run={run} stepLimit={stepLimit} />
+      </aside>
+      <div className="ab-detail-main">
+        {run.errorMessage && <RunErrorCard message={run.errorMessage} />}
+        {stepLimit?.exhausted && <StepLimitNotice stepLimit={stepLimit} />}
+        <CollapsibleBody title="Input prompt" body={run.inputPrompt} />
+        {run.outputSummary !== null && (
           <CollapsibleBody title="Output summary" body={run.outputSummary} />
-        </>
-      )}
-      <EventTimeline
-        events={events}
-        source="run_events"
-        liveStreamId={run.status === 'running' ? run.streamId : null}
-      />
+        )}
+        <EventTimeline
+          events={events}
+          source="run_events"
+          liveStreamId={run.status === 'running' ? run.streamId : null}
+        />
+      </div>
+    </div>
+  )
+}
+
+function RunMetaRail({
+  run,
+  stepLimit,
+}: {
+  run: RunDetailResponse['run']
+  stepLimit: StepLimitSummary | null
+}) {
+  const metrics: Array<{ label: string; value: string }> = [
+    {
+      label: 'Duration',
+      value:
+        run.durationMs !== null
+          ? formatDurationMs(run.durationMs)
+          : run.status === 'running'
+            ? 'running…'
+            : '—',
+    },
+    {
+      label: 'Prompt tokens',
+      value:
+        run.promptTokens !== null ? run.promptTokens.toLocaleString() : '—',
+    },
+    {
+      label: 'Completion tokens',
+      value:
+        run.completionTokens !== null
+          ? run.completionTokens.toLocaleString()
+          : '—',
+    },
+  ]
+  if (stepLimit) {
+    metrics.push({
+      label: 'Steps',
+      value: `${stepLimit.stepCount} / ${stepLimit.maxSteps}`,
+    })
+  }
+  return (
+    <>
+      <div className="ab-detail-rail-group">
+        <div className="ab-detail-rail-label">Metrics</div>
+        {metrics.map((m) => (
+          <Metric key={m.label} label={m.label} value={m.value} />
+        ))}
+      </div>
+      <div className="ab-detail-rail-group">
+        <div className="ab-detail-rail-label">Timing</div>
+        <DebugCell label="Started" value={formatTs(run.startedAt)} />
+        <DebugCell
+          label="Finished"
+          value={run.finishedAt ? formatTs(run.finishedAt) : '—'}
+        />
+      </div>
+      <div className="ab-detail-rail-group">
+        <div className="ab-detail-rail-label">Stream</div>
+        <DebugCell label="Stream id" value={run.streamId} />
+      </div>
     </>
   )
 }
 
-function WorkerJobSubtitle({
-  job,
-}: {
-  job: WorkerJobDetailResponse['job']
-}) {
+function WorkerJobSubtitle({ job }: { job: WorkerJobDetailResponse['job'] }) {
   const status = workerStatusPill(job.status)
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
@@ -319,80 +387,55 @@ function WorkerJobSubtitle({
   )
 }
 
-function WorkerJobDetailBody({
-  data,
-}: {
-  data: WorkerJobDetailResponse
-}) {
+function WorkerJobDetailBody({ data }: { data: WorkerJobDetailResponse }) {
   const { job, events } = data
   return (
-    <>
-      <WorkerJobHeader job={job} />
-      {job.errorMessage && <RunErrorCard message={job.errorMessage} />}
-      <EventTimeline
-        events={events}
-        source="worker_events"
-        liveStreamId={null}
-      />
-    </>
-  )
-}
-
-function WorkerJobHeader({
-  job,
-}: {
-  job: WorkerJobDetailResponse['job']
-}) {
-  const items: Array<{ label: string; value: string }> = [
-    { label: 'Repo', value: job.repoRemoteUrl },
-    { label: 'Job kind', value: job.jobKind },
-    { label: 'Started', value: formatTs(job.startedAt) },
-    {
-      label: 'Finished',
-      value: job.finishedAt ? formatTs(job.finishedAt) : '—',
-    },
-    {
-      label: 'Duration',
-      value:
-        job.durationMs !== null
-          ? `${(job.durationMs / 1000).toFixed(2)}s`
-          : '—',
-    },
-    { label: 'Job id', value: job.id },
-  ]
-  return (
-    <div className="ab-card ab-card-pad ab-form-section">
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '1fr 1fr',
-          gap: '8px 16px',
-        }}
-      >
-        {items.map((it) => (
-          <div key={it.label}>
-            <div
-              style={{
-                fontSize: 11,
-                color: 'var(--text-muted)',
-                marginBottom: 2,
-              }}
-            >
-              {it.label}
-            </div>
-            <div className="ab-mono" style={{ fontSize: 12 }}>
-              {it.value}
-            </div>
-          </div>
-        ))}
+    <div className="ab-detail-modal-body">
+      <aside className="ab-detail-rail">
+        <WorkerMetaRail job={job} />
+      </aside>
+      <div className="ab-detail-main">
+        {job.errorMessage && <RunErrorCard message={job.errorMessage} />}
+        <EventTimeline
+          events={events}
+          source="worker_events"
+          liveStreamId={null}
+        />
       </div>
     </div>
   )
 }
 
-function workerStatusPill(
-  status: WorkerJobDetailResponse['job']['status'],
-): {
+function WorkerMetaRail({ job }: { job: WorkerJobDetailResponse['job'] }) {
+  return (
+    <>
+      <div className="ab-detail-rail-group">
+        <div className="ab-detail-rail-label">Job</div>
+        <DebugCell label="Repo" value={job.repoRemoteUrl} />
+        <DebugCell label="Job kind" value={job.jobKind} />
+        <DebugCell label="Job id" value={job.id} />
+      </div>
+      <div className="ab-detail-rail-group">
+        <div className="ab-detail-rail-label">Timing</div>
+        <DebugCell label="Started" value={formatTs(job.startedAt)} />
+        <DebugCell
+          label="Finished"
+          value={job.finishedAt ? formatTs(job.finishedAt) : '—'}
+        />
+        <DebugCell
+          label="Duration"
+          value={
+            job.durationMs !== null
+              ? `${(job.durationMs / 1000).toFixed(2)}s`
+              : '—'
+          }
+        />
+      </div>
+    </>
+  )
+}
+
+function workerStatusPill(status: WorkerJobDetailResponse['job']['status']): {
   kind: 'success' | 'warn' | 'danger' | 'neutral'
   label: string
 } {
@@ -448,111 +491,25 @@ function extractStepLimit(
   return null
 }
 
-function RunHeader({
-  run,
-  stepLimit,
-}: {
-  run: RunDetailResponse['run']
-  stepLimit: StepLimitSummary | null
-}) {
-  const [showDebug, setShowDebug] = useState(false)
-  const metrics: Array<{ label: string; value: string }> = [
-    {
-      label: 'Duration',
-      value:
-        run.durationMs !== null
-          ? formatDurationMs(run.durationMs)
-          : run.status === 'running'
-            ? 'running…'
-            : '—',
-    },
-    {
-      label: 'Prompt',
-      value:
-        run.promptTokens !== null
-          ? `${run.promptTokens.toLocaleString()} tok`
-          : '—',
-    },
-    {
-      label: 'Completion',
-      value:
-        run.completionTokens !== null
-          ? `${run.completionTokens.toLocaleString()} tok`
-          : '—',
-    },
-  ]
+function StepLimitNotice({ stepLimit }: { stepLimit: StepLimitSummary }) {
   return (
-    <div className="ab-card ab-card-pad ab-form-section">
-      <div
-        style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '8px 24px',
-          alignItems: 'baseline',
-        }}
-      >
-        {metrics.map((m) => (
-          <Metric key={m.label} label={m.label} value={m.value} />
-        ))}
-        {stepLimit && (
-          <Metric
-            label="Steps"
-            value={`${stepLimit.stepCount} / ${stepLimit.maxSteps}`}
-          />
-        )}
-        <button
-          type="button"
-          onClick={() => setShowDebug((s) => !s)}
-          className="ab-inline-action"
-          style={{ marginLeft: 'auto' }}
-        >
-          {showDebug ? 'Hide details' : 'Show details'}
-        </button>
+    <div
+      role="status"
+      className="ab-card ab-card-pad ab-form-section"
+      style={{
+        background: 'var(--warn-bg)',
+        border: '1px solid var(--warn-border)',
+      }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: 2, color: 'var(--text)' }}>
+        Hit step limit ({stepLimit.stepCount}/{stepLimit.maxSteps})
       </div>
-      {stepLimit?.exhausted && (
-        <div
-          role="status"
-          style={{
-            marginTop: 12,
-            padding: '10px 14px',
-            borderLeft: '3px solid var(--warn)',
-            background: 'var(--warn-bg)',
-            borderRadius: 'var(--radius)',
-            fontSize: 13,
-            lineHeight: 1.5,
-            color: 'var(--text)',
-          }}
-        >
-          <div style={{ fontWeight: 600, marginBottom: 2 }}>
-            Hit step limit ({stepLimit.stepCount}/{stepLimit.maxSteps})
-          </div>
-          <div style={{ color: 'var(--text-dim)' }}>
-            The agent loop ran out of steps before the model could write its
-            final answer. The output below is likely missing the synthesis
-            turn. Raise the agent's Step limit on its Configure tab if this
-            is a deep-research workload.
-          </div>
-        </div>
-      )}
-      {showDebug && (
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: '8px 16px',
-            marginTop: 12,
-            paddingTop: 12,
-            borderTop: '1px solid var(--border)',
-          }}
-        >
-          <DebugCell label="Started" value={formatTs(run.startedAt)} />
-          <DebugCell
-            label="Finished"
-            value={run.finishedAt ? formatTs(run.finishedAt) : '—'}
-          />
-          <DebugCell label="Stream id" value={run.streamId} />
-        </div>
-      )}
+      <div style={{ color: 'var(--text-dim)', fontSize: 13, lineHeight: 1.5 }}>
+        The agent loop ran out of steps before the model could write its final
+        answer. The output below is likely missing the synthesis turn. Raise the
+        agent's Step limit on its Configure tab if this is a deep-research
+        workload.
+      </div>
     </div>
   )
 }
@@ -562,19 +519,14 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div>
       <div
         style={{
-          fontSize: 10,
+          fontSize: 11,
           color: 'var(--text-muted)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
           marginBottom: 2,
         }}
       >
         {label}
       </div>
-      <div
-        className="ab-mono"
-        style={{ fontSize: 14, color: 'var(--text)' }}
-      >
+      <div className="ab-mono" style={{ fontSize: 14, color: 'var(--text)' }}>
         {value}
       </div>
     </div>
@@ -613,15 +565,14 @@ function RunErrorCard({ message }: { message: string }) {
       className="ab-card ab-card-pad ab-form-section"
       style={{
         background: 'var(--danger-bg)',
-        border: '1px solid rgba(251, 113, 133, 0.24)',
+        border: '1px solid var(--danger-border)',
       }}
     >
       <div
         style={{
-          fontSize: 11,
+          fontSize: 12,
+          fontWeight: 600,
           color: 'var(--danger)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.04em',
           marginBottom: 6,
         }}
       >
@@ -635,6 +586,7 @@ function RunErrorCard({ message }: { message: string }) {
           color: 'var(--text)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
+          overflowWrap: 'anywhere',
         }}
       >
         {message}
@@ -643,13 +595,7 @@ function RunErrorCard({ message }: { message: string }) {
   )
 }
 
-function CollapsibleBody({
-  title,
-  body,
-}: {
-  title: string
-  body: string
-}) {
+function CollapsibleBody({ title, body }: { title: string; body: string }) {
   const isJson = useMemo(() => looksLikeJson(body), [body])
   const pretty = useMemo(() => {
     if (!isJson) return null
@@ -676,21 +622,22 @@ function CollapsibleBody({
           onClick={onCopy}
           title="Copy raw text"
         >
-          {copied ? '✓ Copied' : '⧉ Copy'}
+          {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
       <pre
         style={{
           margin: 0,
           padding: '10px 12px',
-          background: 'var(--surface-hi)',
-          border: '1px solid var(--border)',
+          background: 'var(--code-well)',
+          border: '1px solid var(--code-well-border)',
           borderRadius: 'var(--radius)',
           fontFamily: 'var(--font-mono)',
           fontSize: 12,
           color: 'var(--text)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
+          overflowWrap: 'anywhere',
           maxHeight: 480,
           overflow: 'auto',
         }}

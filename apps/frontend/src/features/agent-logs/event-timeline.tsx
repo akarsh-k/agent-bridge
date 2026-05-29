@@ -8,24 +8,20 @@
  *  - **Pairing.** A `run.tool.called` and the matching `run.tool.result`
  *    (or any `inspector.*.called` / `inspector.*.result` pair) collapse
  *    into ONE row showing input + output + duration. While the result is
- *    still in-flight the row stays open with a pulsing "running" pill.
+ *    still in-flight the row stays open with a pulsing dot.
  *  - **Step grouping.** When the agent loops (model → tool → model → tool
- *    → …), `run.step.started` / `run.step.finished` brackets become
+ *    → …), `run.step.started` / `run.step.finished` brackets become quiet
  *    section headers ("Step 2 · stop · 1.4s · 845 tok"). Events outside
- *    any step (lifecycle, config, worker telemetry) flow in free
- *    sections at top level.
+ *    any step (lifecycle, config, worker telemetry) flow at top level.
  *  - **Live tail.** When `liveStreamId` is non-null (running run), the
  *    timeline subscribes to its SSE channel and appends new events with
  *    `ts > lastRestEventTs`. Connection state is surfaced as a small
  *    "Live" indicator in the header.
  *
- * Filter chips above the list scope to a coarse group (Tool / Model /
- * Inspector / Errors). Token frames are always rolled into a single
- * dim row regardless of filter — they're noise per-row but useful as a
- * "tokens flowed here" anchor.
- *
- * Used by `run-detail-sheet.tsx` for both run and worker job sheets;
- * Future iterations will reuse the same component from the chat tab.
+ * Visual language: flat. Steps are labelled sections (not nested cards),
+ * events are hairline-separated rows with a leading tone dot (no
+ * side-stripe), and expansion insets one level. Sentence case throughout;
+ * mono is reserved for clocks and payloads.
  */
 
 import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
@@ -40,7 +36,6 @@ import {
 import {
   CopyJsonButton,
   EventPayloadBody,
-  EventPayloadViewer,
   ViewJsonButton,
 } from './event-payload-viewer'
 
@@ -135,11 +130,13 @@ export function EventTimeline({
         </div>
       </div>
 
-      <TimelineFilterChips
-        value={filter}
-        onChange={setFilter}
-        events={allEvents}
-      />
+      <div className="ab-tl-filter">
+        <TimelineFilterChips
+          value={filter}
+          onChange={setFilter}
+          events={allEvents}
+        />
+      </div>
 
       {sections.length === 0 ? (
         <div className="ab-field-help">
@@ -148,20 +145,11 @@ export function EventTimeline({
             : 'No events recorded.'}
         </div>
       ) : (
-        <ol
-          style={{
-            margin: 0,
-            padding: 0,
-            listStyle: 'none',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-          }}
-        >
+        <div className="ab-tl">
           {sections.map((s, i) => (
             <SectionBlock key={`${s.kind}-${i}`} section={s} />
           ))}
-        </ol>
+        </div>
       )}
     </div>
   )
@@ -202,17 +190,7 @@ function TimelineFilterChips({
     { key: 'errors', label: 'Errors', count: counts.errors },
   ]
   return (
-    <div
-      style={{
-        display: 'inline-flex',
-        gap: 4,
-        padding: 3,
-        margin: '8px 0',
-        background: 'var(--surface-hi)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-      }}
-    >
+    <div className="ab-seg">
       {chips.map((c) => {
         const active = c.key === value
         const empty = c.count === 0 && c.key !== 'all'
@@ -222,31 +200,15 @@ function TimelineFilterChips({
             type="button"
             onClick={() => onChange(c.key)}
             disabled={empty}
-            style={{
-              padding: '4px 10px',
-              fontSize: 11.5,
-              borderRadius: 'var(--radius-xs)',
-              border: 'none',
-              background: active ? 'var(--bg-canvas)' : 'transparent',
-              color: active
-                ? 'var(--text)'
-                : empty
-                  ? 'var(--text-muted)'
-                  : 'var(--text-dim)',
-              cursor: empty ? 'default' : 'pointer',
-              fontWeight: active ? 500 : 400,
-              opacity: empty ? 0.5 : 1,
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-            }}
+            aria-pressed={active}
+            className={`ab-seg-item${active ? ' is-active' : ''}`}
           >
             {c.label}
             {c.count !== undefined && (
               <span
                 style={{
-                  fontSize: 10,
-                  color: 'var(--text-muted)',
+                  marginLeft: 5,
+                  opacity: 0.6,
                   fontVariantNumeric: 'tabular-nums',
                 }}
               >
@@ -544,11 +506,7 @@ function countItems(items: ReadonlyArray<TimelineItem>): number {
 
 function SectionBlock({ section }: { section: Section }) {
   if (section.kind === 'free') {
-    return (
-      <li>
-        <ItemList items={section.items} />
-      </li>
-    )
+    return <ItemList items={section.items} />
   }
   const dur =
     section.finishedTs !== null
@@ -560,32 +518,10 @@ function SectionBlock({ section }: { section: Section }) {
   if (section.totalTokens !== null)
     parts.push(`${section.totalTokens.toLocaleString()} tok`)
   return (
-    <li
-      style={{
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-        background: 'var(--surface-hi)',
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        style={{
-          padding: '6px 12px',
-          display: 'flex',
-          alignItems: 'baseline',
-          gap: 10,
-          borderBottom: '1px solid var(--border)',
-          background: 'var(--bg-canvas)',
-        }}
-      >
+    <div className="ab-tl-step">
+      <div className="ab-tl-step-head">
         <span
-          style={{
-            fontSize: 11,
-            textTransform: 'uppercase',
-            letterSpacing: '0.06em',
-            color: 'var(--accent-300)',
-            fontWeight: 500,
-          }}
+          className="ab-tl-step-num"
           title={
             section.rawStepIndex !== null
               ? `Producer stepIndex: ${section.rawStepIndex}`
@@ -599,54 +535,27 @@ function SectionBlock({ section }: { section: Section }) {
             running
           </Pill>
         ) : (
-          <span style={{ fontSize: 11.5, color: 'var(--text-dim)' }}>
-            {parts.join(' · ')}
-          </span>
+          parts.length > 0 && (
+            <span className="ab-tl-step-meta">{parts.join(' · ')}</span>
+          )
         )}
-        <span style={{ flex: 1 }} />
-        <span
-          className="ab-mono"
-          style={{ fontSize: 10.5, color: 'var(--text-muted)' }}
-        >
-          {formatClock(section.startedTs)}
-        </span>
+        <span className="ab-tl-step-clock">{formatClock(section.startedTs)}</span>
       </div>
-      <div style={{ padding: 10 }}>
-        <ItemList items={section.items} />
-      </div>
-    </li>
+      <ItemList items={section.items} />
+    </div>
   )
 }
 
 function ItemList({ items }: { items: ReadonlyArray<TimelineItem> }) {
   if (items.length === 0) {
-    return (
-      <div
-        style={{
-          color: 'var(--text-muted)',
-          fontSize: 11.5,
-          padding: '4px 4px',
-        }}
-      >
-        No matching events in this step.
-      </div>
-    )
+    return <div className="ab-tl-step-empty">No matching events in this step.</div>
   }
   return (
-    <ol
-      style={{
-        margin: 0,
-        padding: 0,
-        listStyle: 'none',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 6,
-      }}
-    >
+    <div className="ab-tl-rows">
       {items.map((it) => (
         <ItemRow key={it.id} item={it} />
       ))}
-    </ol>
+    </div>
   )
 }
 
@@ -658,28 +567,15 @@ function ItemRow({ item }: { item: TimelineItem }) {
 
 function TokenRollRow({ item }: { item: TokenRollItem }) {
   return (
-    <li
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        padding: '4px 10px',
-        border: '1px dashed var(--border)',
-        borderRadius: 'var(--radius)',
-        background: 'transparent',
-        color: 'var(--text-muted)',
-        fontSize: 11.5,
-      }}
-      title={`${item.count} token frame${item.count === 1 ? '' : 's'} folded`}
-    >
-      <span
-        className="ab-mono"
-        style={{ fontSize: 10.5, color: 'var(--text-muted)', minWidth: 80 }}
+    <div className="ab-tl-row">
+      <div
+        className="ab-tl-tokens"
+        title={`${item.count} token frame${item.count === 1 ? '' : 's'} folded`}
       >
-        {formatClock(item.firstTs)}
-      </span>
-      <span>Tokens · ×{item.count}</span>
-    </li>
+        <span>Tokens · ×{item.count}</span>
+        <span className="ab-tl-clock">{formatClock(item.firstTs)}</span>
+      </div>
+    </div>
   )
 }
 
@@ -689,14 +585,7 @@ function SingleRow({ item }: { item: SingleItem }) {
   const expandable =
     item.event.payload !== null && item.event.payload !== undefined
   return (
-    <li
-      style={{
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-        background: 'var(--bg-canvas)',
-        overflow: 'hidden',
-      }}
-    >
+    <div className={`ab-tl-row${open && expandable ? ' is-open' : ''}`}>
       <RowHeader
         ts={item.event.ts}
         title={summary.title}
@@ -706,8 +595,12 @@ function SingleRow({ item }: { item: SingleItem }) {
         open={open}
         onToggle={expandable ? () => setOpen((o) => !o) : null}
       />
-      {open && expandable && <EventPayloadViewer payload={item.event.payload} />}
-    </li>
+      {open && expandable && (
+        <div className="ab-tl-expand">
+          <PayloadBlock label="Payload" payload={item.event.payload} />
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -730,14 +623,7 @@ function PairRow({ item }: { item: PairItem }) {
   const isInFlight = item.result === null
 
   return (
-    <li
-      style={{
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-        background: 'var(--bg-canvas)',
-        overflow: 'hidden',
-      }}
-    >
+    <div className={`ab-tl-row${open ? ' is-open' : ''}`}>
       <RowHeader
         ts={item.called.ts}
         title={calledSummary.title}
@@ -749,125 +635,62 @@ function PairRow({ item }: { item: PairItem }) {
         onToggle={() => setOpen((o) => !o)}
       />
       {open && (
-        <div
-          style={{
-            borderTop: '1px solid var(--border)',
-            background: 'var(--surface-hi)',
-            padding: '12px 14px 14px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 14,
-          }}
-        >
-          <PairSubsection
-            tone="input"
+        <div className="ab-tl-expand">
+          <PayloadBlock
             label="Input"
+            tone="input"
             ts={item.called.ts}
             payload={item.called.payload}
           />
           {item.result ? (
-            <PairSubsection
-              tone={resultSummary?.isError ? 'error' : 'output'}
+            <PayloadBlock
               label={resultSummary?.isError ? 'Error' : 'Output'}
+              tone={resultSummary?.isError ? 'error' : 'output'}
               ts={item.result.ts}
               payload={item.result.payload}
             />
           ) : (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-                padding: '10px 12px',
-                background: 'var(--bg-canvas)',
-                border: '1px dashed var(--border-strong)',
-                borderRadius: 'var(--radius-sm)',
-                color: 'var(--text-muted)',
-                fontSize: 12,
-              }}
-            >
+            <div className="ab-tl-await">
               <span className="ab-pulse-dot" />
               Awaiting result…
             </div>
           )}
         </div>
       )}
-    </li>
+    </div>
   )
 }
 
 /**
- * One Input / Output / Error block inside an expanded paired row.
- *
- * Each block is a self-contained card on the surface-hi background of
- * the parent expansion: a header strip with a colour-coded label
- * (input = neutral, output = success, error = danger), the timestamp,
- * and a copy button — followed by the payload body inset so the
- * key/value table breathes inside its own padded region.
+ * One Input / Output / Error / Payload block inside an expanded row.
+ * A header strip (tone-coloured label, timestamp, view/copy actions)
+ * over the payload body. No side-stripe — tone reads from the label
+ * colour, the box is a flat inset card.
  */
-function PairSubsection({
-  tone,
+function PayloadBlock({
   label,
+  tone,
   ts,
   payload,
 }: {
-  tone: 'input' | 'output' | 'error'
   label: string
-  ts: string
+  tone?: 'input' | 'output' | 'error'
+  ts?: string
   payload: unknown
 }) {
-  const accent =
-    tone === 'error'
-      ? 'var(--danger)'
-      : tone === 'output'
-        ? 'var(--success)'
-        : 'var(--accent-300)'
   return (
-    <div
-      style={{
-        background: 'var(--bg-canvas)',
-        border: '1px solid var(--border)',
-        borderLeft: `2px solid ${accent}`,
-        borderRadius: 'var(--radius-sm)',
-        overflow: 'hidden',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 10,
-          padding: '8px 12px',
-          borderBottom: '1px solid var(--border)',
-          background: 'var(--surface-hi)',
-        }}
-      >
-        <span
-          style={{
-            fontSize: 10.5,
-            textTransform: 'uppercase',
-            letterSpacing: '0.08em',
-            color: accent,
-            fontWeight: 600,
-          }}
-        >
+    <div className="ab-tl-block">
+      <div className="ab-tl-block-head">
+        <span className="ab-tl-block-label" data-tone={tone}>
           {label}
         </span>
-        <span
-          className="ab-mono"
-          style={{
-            fontSize: 10.5,
-            color: 'var(--text-muted)',
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
-          {formatClock(ts)}
+        {ts && <span className="ab-tl-block-clock">{formatClock(ts)}</span>}
+        <span className="ab-tl-block-actions">
+          <ViewJsonButton payload={payload} />
+          <CopyJsonButton payload={payload} />
         </span>
-        <span style={{ flex: 1 }} />
-        <ViewJsonButton payload={payload} />
-        <CopyJsonButton payload={payload} />
       </div>
-      <div style={{ padding: '10px 12px' }}>
+      <div className="ab-tl-block-body">
         <EventPayloadBody payload={payload} />
       </div>
     </div>
@@ -876,25 +699,17 @@ function PairSubsection({
 
 // ─── Shared row header ─────────────────────────────────────────────────
 //
-// The header is the operator's primary scanning surface. Design intent:
+// The header is the operator's primary scanning surface:
 //
-//   ┃ TOOL · inspect_codebase                  16:43:21.412  ▸
-//   ┃ args.query="redis cluster scaling"
-//   ↑
-//   tonal spine (full row height) — colour reads at scan speed in a
-//   stack of 30 rows, where an 8px dot would not. The kind prefix is
-//   rendered in the mono face like a kernel-log marker, so eyes can
-//   skim a column of "TOOL / WRAPPER / GITNEXUS / STEP" tags without
-//   parsing English. The clean `name` portion is reserved for the actual
-//   identifier the operator cares about (tool name, wrapper id…).
+//   ● tool  inspect_codebase                       16:43:21.412  ›
+//   args.query="redis cluster scaling"
 //
-// State language:
-//   - hover     → background lifts to `--surface-hi`, chevron brightens
-//   - open      → background sticks at `--surface-hi`, spine widens 2→3,
-//                 hairline lid below, chevron rotates 90°
-//   - in-flight → spine takes a vertical light sweep (matches live
-//                 indicators elsewhere in the app)
-//   - focus     → inset accent ring via `.ab-evt-row` class
+// A leading tone dot (success / danger / warn / accent / neutral) reads
+// status at a glance; the kind marker sits in mono next to the
+// identifier the operator cares about. State language:
+//   - hover     → row background lifts to `--surface-hover`
+//   - open      → chevron rotates 90°, payload insets below
+//   - in-flight → the dot pulses (matches live indicators elsewhere)
 
 function RowHeader({
   ts,
@@ -910,9 +725,7 @@ function RowHeader({
   title: string
   summary: string | null
   /** Raw kind (e.g. `inspector.gitnexus.called`) — surfaced as the row's
-   *  accessible name + tooltip for keyboard users and debugging. Not
-   *  rendered in body text; the parsed `title` already carries it in
-   *  human-readable form. */
+   *  accessible name + tooltip for keyboard users and debugging. */
   kindLabel: string
   tone: PillKind
   open: boolean
@@ -920,11 +733,6 @@ function RowHeader({
   inFlight?: boolean
 }) {
   const interactive = onToggle !== null
-  const [hover, setHover] = useState(false)
-
-  const handleClick = () => {
-    if (interactive && onToggle) onToggle()
-  }
   const handleKey = (e: ReactKeyboardEvent) => {
     if (!interactive) return
     if (e.key === 'Enter' || e.key === ' ') {
@@ -932,18 +740,7 @@ function RowHeader({
       onToggle?.()
     }
   }
-
-  const toneColour = spineColour(tone)
   const titleParts = splitTitlePrefix(title)
-
-  // Background priority: hover > open > resting.
-  // Hover wins so the cursor target always feels alive even on open rows.
-  const bg =
-    interactive && hover
-      ? 'var(--surface-hover)'
-      : open
-        ? 'var(--surface-hi)'
-        : 'transparent'
 
   return (
     <div
@@ -951,268 +748,82 @@ function RowHeader({
       tabIndex={interactive ? 0 : undefined}
       aria-expanded={interactive ? open : undefined}
       aria-label={interactive ? `${title} — ${kindLabel}` : undefined}
-      onClick={interactive ? handleClick : undefined}
+      onClick={interactive ? () => onToggle?.() : undefined}
       onKeyDown={interactive ? handleKey : undefined}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      className="ab-evt-row"
-      style={{
-        position: 'relative',
-        width: '100%',
-        display: 'flex',
-        alignItems: 'stretch',
-        gap: 0,
-        background: bg,
-        color: 'var(--text)',
-        cursor: interactive ? 'pointer' : 'default',
-        textAlign: 'left',
-        fontSize: 12,
-        borderBottom: open ? '1px solid var(--border)' : '1px solid transparent',
-        transition:
-          'background var(--dur-1) var(--ease-out), border-color var(--dur-1) var(--ease-out)',
-      }}
+      className={`ab-tl-row-head${interactive ? ' is-interactive' : ''}${
+        open ? ' is-open' : ''
+      }`}
       title={kindLabel}
     >
-      <StatusSpine tone={tone} colour={toneColour} open={open} inFlight={inFlight} />
-      <div
-        style={{
-          flex: 1,
-          minWidth: 0,
-          display: 'flex',
-          alignItems: 'flex-start',
-          gap: 12,
-          padding: open ? '12px 14px' : '10px 14px',
-          transition: 'padding var(--dur-1) var(--ease-out)',
-        }}
-      >
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'baseline',
-              gap: 10,
-              flexWrap: 'wrap',
-              rowGap: 2,
-            }}
-          >
-            {titleParts.prefix && (
-              <span
-                className="ab-mono"
-                style={{
-                  fontSize: 10.5,
-                  fontWeight: 600,
-                  letterSpacing: '0.08em',
-                  textTransform: 'uppercase',
-                  color: dimToneColour(tone),
-                  // Pull the prefix slightly above the baseline of the
-                  // name so the all-caps marker sits visually with the
-                  // ascenders of the lowercase identifier next to it.
-                  position: 'relative',
-                  top: -1,
-                }}
-              >
-                {titleParts.prefix}
-              </span>
-            )}
-            <span
-              style={{
-                color: 'var(--text)',
-                fontSize: 13,
-                fontWeight: 500,
-                lineHeight: 1.3,
-                letterSpacing: '-0.005em',
-                wordBreak: 'break-word',
-                fontVariantLigatures: 'common-ligatures',
-              }}
-            >
-              {titleParts.body}
-            </span>
-            {inFlight && (
-              <span
-                style={{
-                  fontSize: 10.5,
-                  color: 'var(--text-muted)',
-                  fontStyle: 'italic',
-                  letterSpacing: '0.02em',
-                }}
-              >
-                running…
-              </span>
-            )}
-          </div>
-          {summary && (
-            <div
-              style={{
-                color: 'var(--text-dim)',
-                fontSize: 11.5,
-                marginTop: 5,
-                lineHeight: 1.45,
-                // One-line ceiling to keep timeline density readable; if
-                // the operator wants the full payload they expand the row.
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-                overflow: 'hidden',
-                wordBreak: 'break-word',
-              }}
-            >
-              {summary}
-            </div>
+      <span
+        aria-hidden
+        data-tone={dotTone(tone)}
+        className={`ab-tl-dot${inFlight ? ' is-running' : ''}`}
+      />
+      <div className="ab-tl-row-main">
+        <div className="ab-tl-row-title">
+          {titleParts.prefix && (
+            <span className="ab-tl-kind">{titleParts.prefix}</span>
           )}
+          <span className="ab-tl-name">{titleParts.body}</span>
+          {inFlight && <span className="ab-tl-running">running…</span>}
         </div>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            paddingTop: 2,
-            flexShrink: 0,
-          }}
-        >
-          <span
-            className="ab-mono"
-            style={{
-              color: 'var(--text-muted)',
-              fontSize: 10.5,
-              fontVariantNumeric: 'tabular-nums',
-              fontFeatureSettings: '"tnum"',
-              letterSpacing: '0.01em',
-            }}
-          >
-            {formatClock(ts)}
-          </span>
-          {interactive && (
-            <Chevron
-              open={open}
-              colour={hover ? 'var(--accent-300)' : 'var(--text-muted)'}
-            />
-          )}
-        </div>
+        {summary && <div className="ab-tl-summary">{summary}</div>}
+      </div>
+      <div className="ab-tl-row-aside">
+        <span className="ab-tl-clock">{formatClock(ts)}</span>
+        {interactive && <Chevron />}
       </div>
     </div>
   )
 }
 
 /**
- * Vertical tonal spine on the row's left edge. Stretches the full height
- * of the row (so a row with a long summary or wrapped title still reads
- * as one chunk in a stack), takes 2px of width when closed and 3px when
- * open. In-flight rows get a vertical sweep animation so the operator
- * sees energy flowing — not a static dot they have to inspect.
+ * 10px chevron icon. Rotation (0° → 90° on open) is driven by the
+ * parent `.ab-tl-row-head.is-open` class so it animates without a
+ * re-render, and never glyph-swaps (which would shift the timestamp).
  */
-function StatusSpine({
-  tone,
-  colour,
-  open,
-  inFlight,
-}: {
-  tone: PillKind
-  colour: string
-  open: boolean
-  inFlight?: boolean
-}) {
-  // Match the existing live-indicator language — the same gradient family
-  // used by `.ab-pulse-dot` lights up wrapper + worker activity. We ride
-  // it vertically here so a thin bar still reads as "alive".
-  const animated = inFlight === true
-  return (
-    <span
-      aria-hidden
-      data-tone={tone}
-      className={animated ? 'ab-evt-spine ab-evt-spine--running' : 'ab-evt-spine'}
-      style={{
-        flexShrink: 0,
-        alignSelf: 'stretch',
-        width: open ? 3 : 2,
-        background: animated
-          ? `linear-gradient(180deg, ${colour} 0%, var(--accent-300) 50%, ${colour} 100%)`
-          : colour,
-        backgroundSize: animated ? '100% 220%' : undefined,
-        transition: 'width var(--dur-1) var(--ease-out)',
-      }}
-    />
-  )
-}
-
-/**
- * 10px chevron icon. Rotates 0° → 90° on open instead of glyph-swapping
- * `▸` / `▾` (which have different widths and shift the timestamp by 1px
- * on every toggle). Stroke uses `currentColor` driven by the inline
- * `colour` prop so hover can brighten it without re-rendering.
- */
-function Chevron({ open, colour }: { open: boolean; colour: string }) {
+function Chevron() {
   return (
     <svg
+      className="ab-tl-chevron"
       width={10}
       height={10}
       viewBox="0 0 10 10"
       fill="none"
-      stroke={colour}
+      stroke="currentColor"
       strokeWidth={1.6}
       strokeLinecap="round"
       strokeLinejoin="round"
-      style={{
-        flexShrink: 0,
-        transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
-        transition: 'transform var(--dur-2) var(--ease-spring), stroke var(--dur-1) var(--ease-out)',
-      }}
+      aria-hidden
     >
       <path d="M3.5 2 L7 5 L3.5 8" />
     </svg>
   )
 }
 
-/**
- * Map a tone to the spine's solid colour. The spine reads at scan speed
- * (2-3px wide × full row height), so we use the saturated semantic
- * tokens — not the dimmer text variants — so the column of rows looks
- * like a status histogram from across the room.
- */
-function spineColour(tone: PillKind): string {
+/** Map an event tone to the dot's `data-tone` attribute. */
+function dotTone(tone: PillKind): string {
   switch (tone) {
     case 'success':
-      return 'var(--success)'
+      return 'success'
     case 'danger':
-      return 'var(--danger)'
+      return 'danger'
     case 'warn':
-      return 'var(--warn)'
+      return 'warn'
     case 'accent':
-      return 'var(--accent-400)'
+      return 'accent'
     default:
-      // Neutral rows (lifecycle, ping, config) get a soft border tint
-      // instead of the muted-text grey — the spine should still feel
-      // like part of the chrome, not text that escaped its line.
-      return 'var(--border-strong)'
+      return 'neutral'
   }
 }
 
 /**
- * Quieter variant of the spine colour, used by the kind-prefix marker
- * so it harmonises with the spine without competing for attention. The
- * dimmer accent shades work better as text colour at small sizes.
- */
-function dimToneColour(tone: PillKind): string {
-  switch (tone) {
-    case 'success':
-      return 'var(--success)'
-    case 'danger':
-      return 'var(--danger)'
-    case 'warn':
-      return 'var(--warn)'
-    case 'accent':
-      return 'var(--accent-300)'
-    default:
-      return 'var(--text-muted)'
-  }
-}
-
-/**
- * Split a row title like `"Tool: inspect_codebase"` into a short
- * uppercase prefix marker (`TOOL`) and the actual identifier
- * (`inspect_codebase`). Falls through to a single body part when the
- * title doesn't fit the `Prefix: rest` shape (e.g. `Run started`,
- * `Cloning`, `Step 1 finished`) so we don't invent structure that
- * isn't there.
+ * Split a row title like `"Tool: inspect_codebase"` into a short kind
+ * marker (`Tool`) and the actual identifier (`inspect_codebase`). Falls
+ * through to a single body part when the title doesn't fit the
+ * `Prefix: rest` shape (e.g. `Run started`, `Cloning`, `Step 1 finished`)
+ * so we don't invent structure that isn't there.
  */
 function splitTitlePrefix(title: string): {
   prefix: string | null
@@ -1224,7 +835,7 @@ function splitTitlePrefix(title: string): {
   const body = title.slice(idx + 1).trim()
   if (prefix.length === 0 || body.length === 0)
     return { prefix: null, body: title }
-  return { prefix: prefix.toUpperCase(), body }
+  return { prefix, body }
 }
 
 // ─── Helpers (timeline-local) ──────────────────────────────────────────

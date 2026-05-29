@@ -32,11 +32,9 @@
 }
 
 .ab-files-stat-label {
-  font-size: 10.5px;
-  font-weight: 600;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dim);
 }
 
 .ab-files-stat-value {
@@ -114,7 +112,7 @@
 }
 
 .ab-files-chip.is-active .ab-files-chip-count {
-  background: rgba(167, 139, 250, 0.18);
+  background: var(--accent-bg-hi);
   color: var(--accent-300, var(--accent-400));
 }
 
@@ -146,7 +144,7 @@
 
 .ab-files-search input:focus {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.12);
+  box-shadow: 0 0 0 3px var(--accent-bg);
 }
 
 .ab-files-search-icon {
@@ -196,7 +194,7 @@
   z-index: 60;
   display: grid;
   place-items: center;
-  background: rgba(8, 7, 13, 0.72);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   animation: ab-files-drop-in 180ms var(--ease-out);
@@ -219,11 +217,7 @@
   padding: 48px 36px;
   border: 2px dashed var(--accent-400);
   border-radius: var(--radius-xl);
-  background: linear-gradient(
-    160deg,
-    rgba(167, 139, 250, 0.12),
-    rgba(124, 58, 237, 0.04)
-  );
+  background: var(--accent-bg);
   text-align: center;
   pointer-events: none;
   animation: ab-files-drop-panel 240ms var(--ease-spring);
@@ -296,11 +290,7 @@
 .ab-files-empty:hover,
 .ab-files-empty.is-dragover {
   border-color: var(--accent-400);
-  background: linear-gradient(
-    160deg,
-    rgba(167, 139, 250, 0.06),
-    transparent 60%
-  );
+  background: var(--accent-bg);
 }
 
 .ab-files-empty-glyph {
@@ -401,13 +391,8 @@
 
 .ab-files-progress-fill {
   height: 100%;
-  background: linear-gradient(
-    90deg,
-    var(--accent-500),
-    var(--accent-400)
-  );
+  background: var(--accent-500);
   transition: width var(--dur-3) var(--ease-out);
-  box-shadow: 0 0 8px rgba(167, 139, 250, 0.4);
 }
 
 .ab-files-progress-fill.is-indeterminate {
@@ -545,7 +530,7 @@
   border: 1px solid var(--border-focus);
   border-radius: var(--radius);
   outline: none;
-  box-shadow: 0 0 0 3px rgba(167, 139, 250, 0.12);
+  box-shadow: 0 0 0 3px var(--accent-bg);
   transition:
     border-color var(--dur-1) var(--ease-out),
     box-shadow var(--dur-1) var(--ease-out);
@@ -606,13 +591,14 @@
 }
 
 .ab-files-desc-btn.is-primary {
-  color: var(--text-inverted);
-  background: var(--accent-500);
-  border: 1px solid var(--accent-600);
+  color: #fff;
+  background: var(--accent-solid);
+  border: 1px solid var(--accent-solid);
 }
 
 .ab-files-desc-btn.is-primary:hover {
-  background: var(--accent-400);
+  background: var(--accent-solid-hover);
+  border-color: var(--accent-solid-hover);
 }
 
 .ab-files-desc-btn.is-ghost {

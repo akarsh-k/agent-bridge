@@ -19,8 +19,9 @@
 
    Node palette: one solid hue per kind. Picked from OKLCH-equidistant points
    on the L≈0.68/C≈0.18 ring so every kind has equal optical weight against
-   gx-deep. Reserved exception: --gx-accent (violet) is for the active
-   filter chip + primary actions, never for a node.
+   gx-deep. Reserved exception: --gx-accent (the app's periwinkle) is for the
+   active filter chip + primary actions in the chrome, never for a canvas
+   node.
 
    Edges are deliberately desaturated. Default state is a single muted slate;
    they become source-node-tinted ONLY on hover-of-incident-node, so the
@@ -48,17 +49,20 @@
   --gx-text-muted: #6a6a80;
   --gx-text-faint: #45455a;
 
-  /* accent — violet, used SPARINGLY (active chip, primary CTA only) */
-  --gx-accent: #7c3aed;
-  --gx-accent-hi: #8b5cf6;
-  --gx-accent-bg: rgba(124, 58, 237, 0.12);
-  --gx-accent-border: rgba(124, 58, 237, 0.45);
-  --gx-accent-glow: rgba(124, 58, 237, 0.35);
+  /* accent — the app's periwinkle, used SPARINGLY (active chip, primary
+     CTA only). Lives in the chrome, not on canvas nodes, so its proximity
+     to the blue --gx-node-function hue never competes on the canvas. */
+  --gx-accent: #5b8def;
+  --gx-accent-hi: #7ea8f3;
+  --gx-accent-bg: rgba(91, 141, 239, 0.12);
+  --gx-accent-border: rgba(91, 141, 239, 0.45);
+  --gx-accent-glow: rgba(91, 141, 239, 0.35);
 
   /* node palette — one hue per kind. Each is the L500 from Tailwind's
-     ramp; together they form a perceptually distinct rainbow without
-     either drifting close to violet (reserved for accent) or to
-     gx-text-muted (reserved for "nothing"). */
+     ramp; together they form a perceptually distinct rainbow that stays
+     clear of gx-text-muted (reserved for "nothing"). The accent
+     (periwinkle) only appears in chrome, so node hues never collide
+     with it on the canvas. */
   --gx-node-function:  #3b82f6;  /* blue   — the core "behaviour" node */
   --gx-node-method:    #14b8a6;  /* teal   — like function but bound */
   --gx-node-class:     #f59e0b;  /* amber  — types / containers */
@@ -105,9 +109,10 @@
   --gx-r-xl: 16px;
   --gx-r-pill: 999px;
 
-  /* type */
-  --gx-font: 'Outfit', ui-sans-serif, -apple-system, BlinkMacSystemFont,
-    'Segoe UI', Roboto, sans-serif;
-  --gx-font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas,
-    monospace;
+  /* type — match the app (the previous 'Outfit' was never loaded and fell
+     back to system sans). */
+  --gx-font: 'Geist Variable', ui-sans-serif, -apple-system,
+    BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --gx-font-mono: 'Geist Mono Variable', 'JetBrains Mono', ui-monospace,
+    'SF Mono', Menlo, Consolas, monospace;
 }

@@ -60,11 +60,11 @@ export function HomePage() {
         }
       />
 
-      <div className="ab-stat-grid">
-        <Stat label="Agents" value={agents.length} />
-        <Stat label="LLM providers" value={llmProviders.length} />
-        <Stat label="Repositories" value={repos.length} />
-        <Stat label="MCP connections" value={mcpConnections.length} />
+      <div className="ab-inventory">
+        <InventoryItem label="Agents" value={agents.length} />
+        <InventoryItem label="LLM providers" value={llmProviders.length} />
+        <InventoryItem label="Repositories" value={repos.length} />
+        <InventoryItem label="MCP connections" value={mcpConnections.length} />
       </div>
 
       {lastTouched ? (
@@ -119,11 +119,11 @@ export function HomePage() {
   )
 }
 
-function Stat({ label, value }: { label: string; value: number }) {
+function InventoryItem({ label, value }: { label: string; value: number }) {
   return (
-    <div className="ab-card ab-stat">
-      <div className="ab-stat-label">{label}</div>
-      <div className="ab-stat-value">{value}</div>
+    <div className="ab-inventory-item">
+      <div className="ab-inventory-value">{value}</div>
+      <div className="ab-inventory-label">{label}</div>
     </div>
   )
 }

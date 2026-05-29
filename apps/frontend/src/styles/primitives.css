@@ -469,18 +469,18 @@
 }
 
 .btn-primary {
-  background: linear-gradient(180deg, var(--accent-500), var(--accent-600));
-  color: white;
-  border-color: var(--accent-600);
-  box-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.08) inset,
-    0 6px 18px -6px var(--accent-glow);
+  background: var(--accent-solid);
+  color: #fff;
+  border-color: var(--accent-solid);
+  font-weight: 600;
 }
 .btn-primary:hover:not(:disabled) {
-  filter: brightness(1.08);
+  background: var(--accent-solid-hover);
+  border-color: var(--accent-solid-hover);
 }
 .btn-primary:active:not(:disabled) {
-  transform: translateY(1px);
+  background: var(--accent-solid-hover);
+  filter: brightness(0.94);
 }
 
 .btn-ghost {
@@ -556,13 +556,7 @@
   display: grid;
   place-items: center;
   padding: 24px;
-  background:
-    radial-gradient(
-      600px 400px at 50% 30%,
-      rgba(139, 92, 246, 0.12),
-      transparent 70%
-    ),
-    rgba(8, 7, 13, 0.55);
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
   backdrop-filter: blur(6px);
   pointer-events: auto;
   z-index: 5;
@@ -585,38 +579,15 @@
   overflow: hidden;
 }
 
-.overlay-card::before {
-  content: '';
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  padding: 1px;
-  background: linear-gradient(
-    135deg,
-    transparent 40%,
-    var(--accent-border),
-    transparent 80%
-  );
-  pointer-events: none;
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-}
-
 .overlay-icon {
   width: 58px;
   height: 58px;
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   display: grid;
   place-items: center;
-  background: linear-gradient(135deg, var(--accent-400), var(--accent-600));
-  box-shadow: var(--shadow-glow);
-  color: white;
+  background: var(--accent-bg);
+  border: 1px solid var(--accent-border);
+  color: var(--accent-300);
   font-weight: 700;
   font-size: 22px;
 }

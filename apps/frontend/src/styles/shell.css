@@ -7,32 +7,36 @@
 /* ---- Light theme tuning --------------------------------------------------- */
 
 [data-theme='light'] {
-  --bg: #f7f6f4;
-  --bg-canvas: #efedea;
-  --bg-grid: rgba(17, 16, 33, 0.06);
+  --bg: #fafbfc;
+  --bg-canvas: #f3f4f6;
+  --bg-grid: rgba(11, 12, 16, 0.05);
   --surface: #ffffff;
-  --surface-hi: #fbfaf8;
+  --surface-hi: #fafbfc;
   --surface-raised: #ffffff;
-  --surface-hover: rgba(109, 40, 217, 0.05);
+  --surface-hover: rgba(47, 91, 192, 0.05);
+  --code-well: #f3f4f6;
+  --code-well-border: rgba(11, 12, 16, 0.16);
 
-  --border: rgba(15, 14, 33, 0.07);
-  --border-strong: rgba(15, 14, 33, 0.14);
-  --border-focus: rgba(109, 40, 217, 0.45);
+  --border: rgba(11, 12, 16, 0.1);
+  --border-strong: rgba(11, 12, 16, 0.16);
+  --border-focus: rgba(47, 91, 192, 0.5);
 
-  --text: #18181b;
-  --text-dim: #52525b;
-  --text-muted: #8a8a93;
+  --text: #0b0c10;
+  --text-dim: #51545d;
+  --text-muted: #888b94;
   --text-inverted: #ffffff;
 
-  --accent-50: #f5f0ff;
-  --accent-300: #8b5cf6;
-  --accent-400: #7c3aed;
-  --accent-500: #6d28d9;
-  --accent-600: #5b21b6;
-  --accent-glow: rgba(109, 40, 217, 0.22);
-  --accent-bg: rgba(109, 40, 217, 0.08);
-  --accent-bg-hi: rgba(109, 40, 217, 0.14);
-  --accent-border: rgba(109, 40, 217, 0.28);
+  --accent-50: #eef3fe;
+  --accent-300: #5b8def;
+  --accent-400: #3f6fd6;
+  --accent-500: #2f5bc0;
+  --accent-600: #244a9e;
+  --accent-glow: rgba(47, 91, 192, 0.2);
+  --accent-bg: rgba(47, 91, 192, 0.08);
+  --accent-bg-hi: rgba(47, 91, 192, 0.14);
+  --accent-border: rgba(47, 91, 192, 0.26);
+  --accent-solid: #2f5bc0;
+  --accent-solid-hover: #244a9e;
 
   --success: #059669;
   --success-bg: rgba(5, 150, 105, 0.1);
@@ -44,28 +48,17 @@
   --warn-bg: rgba(217, 119, 6, 0.1);
   --warn-border: rgba(217, 119, 6, 0.28);
 
-  --shadow-1: 0 1px 2px rgba(15, 14, 33, 0.05),
-    0 0 0 1px rgba(15, 14, 33, 0.02);
-  --shadow-2: 0 10px 28px -6px rgba(15, 14, 33, 0.12),
-    0 2px 6px rgba(15, 14, 33, 0.05);
-  --shadow-3: 0 30px 70px -10px rgba(15, 14, 33, 0.2),
-    0 8px 18px -4px rgba(15, 14, 33, 0.1);
-  --shadow-glow: 0 0 0 1px var(--accent-border),
-    0 8px 28px -6px rgba(109, 40, 217, 0.22);
+  --shadow-1: 0 1px 2px rgba(9, 9, 11, 0.06),
+    0 0 0 1px rgba(9, 9, 11, 0.02);
+  --shadow-2: 0 8px 24px -6px rgba(9, 9, 11, 0.12),
+    0 1px 3px rgba(9, 9, 11, 0.06);
+  --shadow-3: 0 24px 60px -12px rgba(9, 9, 11, 0.18),
+    0 6px 16px -4px rgba(9, 9, 11, 0.1);
+  --shadow-glow: 0 0 0 1px var(--accent-border);
 }
 
 [data-theme='light'] body {
-  background-image:
-    radial-gradient(
-      1200px 700px at 12% -10%,
-      rgba(124, 58, 237, 0.06),
-      transparent 65%
-    ),
-    radial-gradient(
-      900px 600px at 105% 5%,
-      rgba(56, 189, 248, 0.05),
-      transparent 60%
-    );
+  background-image: none;
 }
 
 /* ---- App shell grid ------------------------------------------------------- */
@@ -164,12 +157,7 @@
      fills it via grid stretch. */
   padding: 16px 12px;
   border-right: 1px solid var(--border);
-  background: linear-gradient(
-    180deg,
-    var(--surface) 0%,
-    rgba(15, 14, 23, 0.7) 100%
-  );
-  backdrop-filter: blur(12px);
+  background: var(--bg-canvas);
   display: flex;
   flex-direction: column;
   gap: 24px;
@@ -179,11 +167,7 @@
 }
 
 [data-theme='light'] .ab-sidebar {
-  background: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.92) 0%,
-    rgba(255, 255, 255, 0.78) 100%
-  );
+  background: var(--bg-canvas);
 }
 
 .ab-brand {
@@ -195,14 +179,13 @@
 .ab-brand-mark {
   width: 26px;
   height: 26px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--accent-400), var(--accent-600));
+  border-radius: var(--radius-sm);
+  background: var(--text);
   display: grid;
   place-items: center;
-  color: white;
+  color: var(--text-inverted);
   font-weight: 700;
   font-size: 13px;
-  box-shadow: 0 4px 12px -2px var(--accent-glow);
 }
 .ab-brand-text {
   display: flex;
@@ -226,10 +209,8 @@
   gap: 2px;
 }
 .ab-nav-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--text-muted);
   padding: 6px 10px;
 }
@@ -255,16 +236,6 @@
 .ab-nav-link[aria-current='page'] {
   background: var(--accent-bg);
   color: var(--text);
-}
-.ab-nav-link[aria-current='page']::before {
-  content: '';
-  position: absolute;
-  left: -12px;
-  top: 7px;
-  bottom: 7px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--accent-400);
 }
 .ab-nav-link svg {
   width: 16px;
@@ -378,14 +349,11 @@
   gap: 12px;
   padding: 0 24px;
   border-bottom: 1px solid var(--border);
-  background: rgba(8, 7, 13, 0.6);
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
   backdrop-filter: blur(16px);
   position: sticky;
   top: 0;
   z-index: 10;
-}
-[data-theme='light'] .ab-topbar {
-  background: rgba(247, 246, 244, 0.85);
 }
 
 .ab-breadcrumbs {
@@ -457,19 +425,20 @@
   0%,
   100% {
     transform: scale(1);
-    box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.4);
+    box-shadow: 0 0 0 0 rgba(126, 168, 243, 0.4);
   }
   50% {
     transform: scale(1.15);
-    box-shadow: 0 0 0 4px rgba(96, 165, 250, 0);
+    box-shadow: 0 0 0 4px rgba(126, 168, 243, 0);
   }
 }
 .ab-avatar {
   width: 30px;
   height: 30px;
   border-radius: var(--radius);
-  background: linear-gradient(135deg, #fb7185, #f43f5e);
-  color: white;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  color: var(--text);
   font-weight: 600;
   font-size: 12px;
   display: grid;
@@ -606,26 +575,18 @@
   font-size: 12px;
 }
 .ab-btn-primary {
-  background: linear-gradient(
-    180deg,
-    var(--accent-400) 0%,
-    var(--accent-500) 100%
-  );
-  color: white;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.15),
-    0 1px 0 rgba(0, 0, 0, 0.1),
-    0 4px 12px -4px var(--accent-glow);
+  background: var(--accent-solid);
+  color: #fff;
+  border-color: var(--accent-solid);
+  font-weight: 600;
 }
 .ab-btn-primary:hover:not(:disabled) {
-  filter: brightness(1.06);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.18),
-    0 4px 18px -4px var(--accent-glow);
+  background: var(--accent-solid-hover);
+  border-color: var(--accent-solid-hover);
 }
 .ab-btn-primary:active:not(:disabled) {
-  background: var(--accent-600);
-  filter: none;
+  background: var(--accent-solid-hover);
+  filter: brightness(0.94);
 }
 .ab-btn-secondary {
   background: var(--surface-hi);
@@ -726,12 +687,7 @@
   background: var(--surface-hi);
 }
 .ab-card-featured {
-  background: linear-gradient(
-    180deg,
-    var(--surface) 0%,
-    var(--surface-hi) 100%
-  );
-  box-shadow: var(--shadow-glow);
+  background: var(--surface);
   border-color: var(--accent-border);
 }
 .ab-grid-cards {
@@ -754,75 +710,38 @@
   font-weight: 600;
 }
 .ab-glyph-violet {
-  background: linear-gradient(
-    135deg,
-    rgba(167, 139, 250, 0.25),
-    rgba(124, 58, 237, 0.15)
-  );
+  background: var(--accent-bg);
   border-color: var(--accent-border);
   color: var(--accent-300);
 }
 .ab-glyph-green {
-  background: linear-gradient(
-    135deg,
-    rgba(52, 211, 153, 0.22),
-    rgba(16, 185, 129, 0.12)
-  );
-  border-color: rgba(52, 211, 153, 0.28);
+  background: var(--success-bg);
+  border-color: var(--success-border);
   color: var(--success);
 }
 .ab-glyph-amber {
-  background: linear-gradient(
-    135deg,
-    rgba(251, 191, 36, 0.2),
-    rgba(217, 119, 6, 0.12)
-  );
-  border-color: rgba(251, 191, 36, 0.3);
+  background: var(--warn-bg);
+  border-color: var(--warn-border);
   color: var(--warn);
 }
 .ab-glyph-cyan {
-  background: linear-gradient(
-    135deg,
-    rgba(56, 189, 248, 0.2),
-    rgba(14, 165, 233, 0.12)
-  );
-  border-color: rgba(56, 189, 248, 0.28);
-  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.14);
+  border-color: rgba(56, 189, 248, 0.3);
+  color: #56c5f5;
 }
 [data-theme='light'] .ab-glyph-violet {
-  background: linear-gradient(
-    135deg,
-    rgba(124, 58, 237, 0.14),
-    rgba(109, 40, 217, 0.08)
-  );
   color: var(--accent-500);
 }
 [data-theme='light'] .ab-glyph-green {
-  background: linear-gradient(
-    135deg,
-    rgba(5, 150, 105, 0.14),
-    rgba(4, 120, 87, 0.08)
-  );
   color: var(--success);
-  border-color: rgba(5, 150, 105, 0.22);
 }
 [data-theme='light'] .ab-glyph-amber {
-  background: linear-gradient(
-    135deg,
-    rgba(217, 119, 6, 0.14),
-    rgba(180, 83, 9, 0.08)
-  );
   color: var(--warn);
-  border-color: rgba(217, 119, 6, 0.22);
 }
 [data-theme='light'] .ab-glyph-cyan {
-  background: linear-gradient(
-    135deg,
-    rgba(14, 165, 233, 0.14),
-    rgba(2, 132, 199, 0.08)
-  );
+  background: rgba(2, 132, 199, 0.1);
   color: #0284c7;
-  border-color: rgba(14, 165, 233, 0.22);
+  border-color: rgba(2, 132, 199, 0.24);
 }
 .ab-glyph-sm {
   width: 30px;
@@ -859,11 +778,7 @@
   border-color: #14131f;
 }
 .ab-brand-linear {
-  background: linear-gradient(
-    135deg,
-    rgba(94, 106, 210, 0.22),
-    rgba(63, 81, 181, 0.14)
-  );
+  background: rgba(94, 106, 210, 0.16);
   color: #8b95e6;
   border-color: rgba(94, 106, 210, 0.32);
 }
@@ -938,29 +853,53 @@
 
 /* ---- Stat cards ----------------------------------------------------------- */
 
-.ab-stat-grid {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 12px;
+/* Inventory bar — a single quiet readout strip, not four hero-metric
+ * cards. Hairline-divided cells; numbers sit at a calm 18px so the page's
+ * real hero (the "resume where you left off" card) leads the eye. */
+.ab-inventory {
+  display: flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
   margin-bottom: 26px;
+  overflow: hidden;
 }
-.ab-stat {
-  padding: 14px 16px;
+.ab-inventory-item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 16px;
+  border-right: 1px solid var(--border);
+  min-width: 0;
 }
-.ab-stat-label {
-  font-size: 12px;
-  color: var(--text-dim);
-  margin-bottom: 6px;
+.ab-inventory-item:last-child {
+  border-right: none;
 }
-.ab-stat-value {
-  font-size: 22px;
+.ab-inventory-value {
+  font-size: 18px;
   font-weight: 600;
   letter-spacing: -0.02em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
 }
-.ab-stat-delta {
-  font-size: 11px;
-  color: var(--success);
-  margin-top: 2px;
+.ab-inventory-label {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+@media (max-width: 640px) {
+  .ab-inventory {
+    flex-wrap: wrap;
+  }
+  .ab-inventory-item {
+    flex: 1 1 50%;
+    border-bottom: 1px solid var(--border);
+  }
+  .ab-inventory-item:nth-child(even) {
+    border-right: none;
+  }
 }
 
 /* ---- Filter bar ----------------------------------------------------------- */
@@ -1538,12 +1477,9 @@ button.ab-list-row {
   align-items: center;
   gap: 6px;
   margin-bottom: 10px;
-  font-family: var(--font-mono);
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-dim);
 }
 .ab-agent-state-dot {
   width: 6px;
@@ -1760,20 +1696,16 @@ button.ab-list-row {
   background: #059669;
 }
 [data-theme='light'] .ab-card-featured {
-  background: linear-gradient(
-    180deg,
-    var(--surface) 0%,
-    rgba(124, 58, 237, 0.04) 100%
-  );
+  background: var(--surface);
 }
 [data-theme='light'] .ab-chat-input-bar {
   background: var(--bg);
 }
 [data-theme='light'] .ab-log-row:hover {
-  background: rgba(124, 58, 237, 0.05);
+  background: var(--surface-hover);
 }
 [data-theme='light'] .ab-msg-tool {
-  background: #f7f6f4;
+  background: var(--surface-hi);
 }
 [data-theme='light'] .ab-sidebar-footer .ab-cmdk {
   background: rgba(15, 14, 33, 0.04);
@@ -2398,13 +2330,12 @@ button.ab-list-row {
 /* Small uppercase tag that sits ABOVE a section title to label its
  * role in a parent-child group (e.g. "Strategy · sliding window" on
  * each of the three memory sub-cards). Reads as a category, not as a
- * heading — narrow tracking + small caps + muted color keeps it
- * clearly subordinate to the .ab-section-title that follows it. */
+ * heading — small + muted color keeps it clearly subordinate to the
+ * .ab-section-title that follows it. */
 .ab-eyebrow {
   display: block;
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--text-muted);
   margin-bottom: 4px;
 }
@@ -2715,8 +2646,7 @@ button.ab-list-row {
   flex-direction: column;
   gap: 4px;
   padding: 16px 12px;
-  border-right: 1px solid var(--border);
-  background: var(--bg-canvas);
+  background: var(--bg);
   overflow-y: auto;
   min-height: 0;
 }
@@ -2725,10 +2655,8 @@ button.ab-list-row {
   align-items: center;
   justify-content: space-between;
   padding: 0 6px 8px;
-  font-family: var(--font-mono);
-  font-size: 10.5px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 500;
   color: var(--text-muted);
 }
 /* "+ New conversation" is an ACTION (do something), not a STATE
@@ -2895,9 +2823,9 @@ button.ab-list-row {
   justify-content: flex-end;
 }
 
-/* Avatars — circular gradient marks. Bot keeps a soft violet tint to
- * stay quiet next to the document-style content; user is dropped
- * entirely (the right-alignment + accent pill IS the cue). */
+/* Avatars — circular marks. Bot keeps a soft accent tint to stay quiet
+ * next to the document-style content; user is dropped entirely (the
+ * right-alignment + accent pill IS the cue). */
 .ab-msg-avatar {
   width: 28px;
   height: 28px;
@@ -2913,13 +2841,12 @@ button.ab-list-row {
   display: none; /* user rows skip the avatar */
 }
 .ab-msg-avatar.is-bot {
-  background: linear-gradient(
-    135deg,
-    var(--accent-400) 0%,
-    var(--accent-600) 100%
-  );
-  color: white;
+  background: var(--accent-bg);
+  color: var(--accent-300);
   box-shadow: 0 0 0 1px var(--accent-border);
+}
+[data-theme='light'] .ab-msg-avatar.is-bot {
+  color: var(--accent-500);
 }
 
 /* Bot message: NO bubble. Text flows naturally in the column —
@@ -2956,7 +2883,7 @@ button.ab-list-row {
   color: var(--text);
   font-size: 14px;
   line-height: 1.55;
-  border-radius: 18px 18px 4px 18px;
+  border-radius: var(--radius-lg);
 }
 /* Light theme: slightly stronger tint so the bubble reads against
  * the near-white surface. The base rule uses `--accent-bg` which is
@@ -2978,6 +2905,42 @@ button.ab-list-row {
 }
 .ab-msg-bubble-md > .ab-md > :last-child {
   margin-bottom: 0;
+}
+/* Streaming caret — appended INLINE to the end of the last rendered
+ * content so it rides with the text as tokens arrive, instead of
+ * dropping to its own line. A trailing inline element after a block
+ * (paragraph, list, …) wraps below it, so we attach to the last block
+ * directly — and when that block is a list, to its last <li> so the
+ * caret sits at the end of the final bullet rather than under it. */
+.ab-msg-bubble-md.is-streaming > .ab-md > :last-child:not(ul):not(ol)::after,
+.ab-msg-bubble-md.is-streaming > .ab-md > ul:last-child > li:last-child::after,
+.ab-msg-bubble-md.is-streaming > .ab-md > ol:last-child > li:last-child::after {
+  content: '▍';
+  margin-left: 2px;
+  color: var(--text-dim);
+  animation: ab-caret-blink 1s steps(2, start) infinite;
+}
+@keyframes ab-caret-blink {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ab-msg-bubble-md.is-streaming
+    > .ab-md
+    > :last-child:not(ul):not(ol)::after,
+  .ab-msg-bubble-md.is-streaming > .ab-md > ul:last-child > li:last-child::after,
+  .ab-msg-bubble-md.is-streaming
+    > .ab-md
+    > ol:last-child
+    > li:last-child::after {
+    animation: none;
+    opacity: 0.55;
+  }
 }
 .ab-msg-meta {
   font-size: 11px;
@@ -3148,10 +3111,10 @@ button.ab-list-row {
 .ab-chat-input-send {
   width: 36px;
   height: 36px;
-  border-radius: 12px;
+  border-radius: var(--radius);
   border: none;
-  background: var(--accent-500);
-  color: white;
+  background: var(--accent-solid);
+  color: #fff;
   display: grid;
   place-items: center;
   cursor: pointer;
@@ -3161,7 +3124,7 @@ button.ab-list-row {
     opacity var(--dur-1) var(--ease-out);
 }
 .ab-chat-input-send:hover:not(:disabled) {
-  background: var(--accent-600);
+  background: var(--accent-solid-hover);
   transform: translateY(-1px);
 }
 .ab-chat-input-send:disabled {
@@ -3260,11 +3223,8 @@ button.ab-list-row {
   padding-top: 6px;
 }
 .ab-mention-group-label {
-  font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
   color: var(--text-muted);
   padding: 6px 12px 4px;
   display: flex;
@@ -3789,12 +3749,7 @@ button.ab-list-row {
 .ab-repo-log-progress {
   position: absolute;
   inset: 0 auto 0 0;
-  background: linear-gradient(
-    90deg,
-    var(--accent-bg) 0%,
-    var(--accent-bg-hi) 80%,
-    var(--accent-bg-hi) 100%
-  );
+  background: var(--accent-bg-hi);
   border-right: 1px solid var(--accent-border);
   z-index: -1;
   transition: width var(--dur-3) var(--ease-out);
@@ -3849,12 +3804,8 @@ button.ab-list-row {
   color: var(--danger);
 }
 .ab-repo-log-row.is-error .ab-repo-log-progress {
-  background: linear-gradient(
-    90deg,
-    var(--danger-bg) 0%,
-    var(--danger-bg) 100%
-  );
-  border-right-color: rgba(251, 113, 133, 0.4);
+  background: var(--danger-bg);
+  border-right-color: var(--danger-border);
 }
 
 /* `×N` counter — small mono pill on the right of a batched row. The
@@ -3885,10 +3836,10 @@ button.ab-list-row {
 @keyframes ab-repo-log-batch-pulse {
   0%,
   100% {
-    box-shadow: 0 0 0 0 rgba(139, 92, 246, 0);
+    box-shadow: 0 0 0 0 rgba(91, 141, 239, 0);
   }
   50% {
-    box-shadow: 0 0 0 4px rgba(139, 92, 246, 0.12);
+    box-shadow: 0 0 0 4px rgba(91, 141, 239, 0.12);
   }
 }
 

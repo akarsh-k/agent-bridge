@@ -135,7 +135,7 @@ export function CopyJsonButton({ payload }: { payload: unknown }) {
       className="ab-inline-action"
       title="Copy raw payload JSON"
     >
-      {copied ? '✓ Copied' : '⧉ Copy JSON'}
+      {copied ? 'Copied' : 'Copy JSON'}
     </button>
   )
 }
@@ -163,7 +163,7 @@ export function ViewJsonButton({ payload }: { payload: unknown }) {
         className="ab-inline-action"
         title="View full JSON"
       >
-        ⤢ View JSON
+        View JSON
       </button>
       {open && <JsonModal payload={payload} onClose={close} />}
     </>
@@ -274,7 +274,7 @@ function JsonModal({
             className="ab-inline-action"
             title="Toggle line wrap"
           >
-            {wrap ? '↹ No wrap' : '↵ Wrap'}
+            {wrap ? 'No wrap' : 'Wrap'}
           </button>
           <button
             type="button"
@@ -282,7 +282,7 @@ function JsonModal({
             className="ab-inline-action"
             title="Copy raw payload JSON"
           >
-            {copied ? '✓ Copied' : '⧉ Copy JSON'}
+            {copied ? 'Copied' : 'Copy JSON'}
           </button>
           <button
             ref={closeRef}
@@ -292,7 +292,7 @@ function JsonModal({
             title="Close (Esc)"
             aria-label="Close"
           >
-            ✕ Close
+            Close
           </button>
         </div>
         <pre
@@ -383,13 +383,7 @@ function ValueBlock({ value }: { value: unknown }) {
   return <NestedJson value={value} />
 }
 
-function Atom({
-  children,
-  dim,
-}: {
-  children: React.ReactNode
-  dim?: boolean
-}) {
+function Atom({ children, dim }: { children: React.ReactNode; dim?: boolean }) {
   return (
     <span
       className="ab-mono"
@@ -415,6 +409,7 @@ function StringValue({ value }: { value: string }) {
           color: 'var(--text)',
           wordBreak: 'break-word',
           whiteSpace: 'pre-wrap',
+          overflowWrap: 'anywhere',
         }}
       >
         {value}
@@ -426,15 +421,13 @@ function StringValue({ value }: { value: string }) {
       <pre
         style={{
           margin: 0,
-          padding: '6px 8px',
-          background: 'var(--bg-canvas)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-xs)',
+          padding: 0,
           fontFamily: 'var(--font-mono)',
           fontSize: 11.5,
           color: 'var(--text)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
+          overflowWrap: 'anywhere',
           maxHeight: expanded ? NESTED_MAX_HEIGHT : 96,
           overflow: 'auto',
         }}
@@ -447,7 +440,9 @@ function StringValue({ value }: { value: string }) {
         className="ab-inline-action"
         style={{ marginTop: 4 }}
       >
-        {expanded ? 'Show less' : `Show all (${value.length.toLocaleString()} chars)`}
+        {expanded
+          ? 'Show less'
+          : `Show all (${value.length.toLocaleString()} chars)`}
       </button>
     </div>
   )
@@ -455,22 +450,21 @@ function StringValue({ value }: { value: string }) {
 
 function NestedJson({ value }: { value: unknown }) {
   const json = useMemo(() => safeStringify(value), [value])
-  const long = json.length > LONG_STRING_PREVIEW * 2 || json.split('\n').length > 8
+  const long =
+    json.length > LONG_STRING_PREVIEW * 2 || json.split('\n').length > 8
   const [expanded, setExpanded] = useState(false)
   return (
     <div>
       <pre
         style={{
           margin: 0,
-          padding: '6px 8px',
-          background: 'var(--bg-canvas)',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius-xs)',
+          padding: 0,
           fontFamily: 'var(--font-mono)',
           fontSize: 11.5,
           color: 'var(--text)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
+          overflowWrap: 'anywhere',
           maxHeight: expanded || !long ? NESTED_MAX_HEIGHT : 120,
           overflow: 'auto',
         }}
@@ -484,7 +478,9 @@ function NestedJson({ value }: { value: unknown }) {
           className="ab-inline-action"
           style={{ marginTop: 4 }}
         >
-          {expanded ? 'Collapse' : `Expand (${json.length.toLocaleString()} chars)`}
+          {expanded
+            ? 'Collapse'
+            : `Expand (${json.length.toLocaleString()} chars)`}
         </button>
       )}
     </div>
