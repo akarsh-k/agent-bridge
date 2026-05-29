@@ -111,21 +111,44 @@ export async function handlePullRepoJob(
   }
 
   if (row.status !== 'pulling') {
-    // Defensive: the backend route owns the `… → pulling` CAS. If we
-    // observe any other status here it means the row transitioned out
-    // from under us — bail cleanly instead of mutating the source tree.
+    // Defensive bail. The backend route owns the `… → pulling` CAS, so a
+    // job that arrives against a non-`pulling` row is a stale/duplicate
+    // delivery: BullMQ is at-least-once, and a stall or worker restart can
+    // re-run a pull that already completed and auto-chained the repo to
+    // `ready`/`indexing`. The original run is the row's owner and has
+    // already settled it.
+    //
+    // CRITICAL: do NOT write the repo row here. Routing this through
+    // `finishAndPublish({ status: 'error' })` would clobber a healthy
+    // `ready`/`indexing` repo into `error` over a benign duplicate, because
+    // `finishPull` writes unconditionally (no status CAS). We mark only
+    // THIS worker_jobs row as aborted and return — the pulled tree is
+    // already in place, so there is nothing to do, and a success return
+    // stops BullMQ from retrying. (The index-repo / generate-wiki guards
+    // likewise never mutate repo status in this case.)
     const message =
-      `Repo ${input.repoId} is ${row.status}, expected 'pulling' ` +
-      `(the backend should CAS the row before enqueue)`
-    await finishAndPublish({
-      publish,
-      db,
-      streamId,
+      `Repo ${input.repoId} is '${row.status}', expected 'pulling'. ` +
+      `Treating as a stale/duplicate pull delivery and skipping without ` +
+      `touching repo status (the row is owned by another run).`
+    console.warn(`[pull-repo] ${message}`)
+    if (jobId) {
+      try {
+        await workerJobsRepo.markWorkerJobFinished(db, jobId, {
+          status: 'aborted',
+          errorMessage: message,
+        })
+      } catch (err) {
+        console.warn(
+          `[pull-repo] failed to finalise skipped job ${jobId}: ${errMsg(err)}`,
+        )
+      }
+    }
+    return {
       repoId: input.repoId,
-      result: { status: 'error', lastError: message },
-      jobId,
-    })
-    throw new Error(message)
+      status: 'error',
+      durationMs: Date.now() - startedAt,
+      lastError: message,
+    }
   }
 
   if (!row.localPath) {
@@ -317,13 +340,7 @@ async function runGitFetch(args: RunGitFetchArgs): Promise<void> {
   const { sourceDir, branch, patPlaintext, onStderrLine } = args
   const askpass = getGitAskpassPath()
 
-  const gitArgs = [
-    'fetch',
-    '--depth=1',
-    '--progress',
-    'origin',
-    branch,
-  ]
+  const gitArgs = ['fetch', '--depth=1', '--progress', 'origin', branch]
 
   const child = spawnSandboxed('git', gitArgs, {
     sandbox: 'git',
@@ -478,7 +495,7 @@ async function finishAndPublish(args: {
       await workerJobsRepo.markWorkerJobFinished(db, jobId, {
         status: result.status === 'cloned' ? 'completed' : 'error',
         errorMessage:
-          result.status === 'error' ? result.lastError ?? null : null,
+          result.status === 'error' ? (result.lastError ?? null) : null,
       })
     } catch (err) {
       console.warn(

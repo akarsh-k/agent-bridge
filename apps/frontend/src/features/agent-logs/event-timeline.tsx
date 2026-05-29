@@ -24,7 +24,13 @@
  * mono is reserved for clocks and payloads.
  */
 
-import { useMemo, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
+import {
+  createContext,
+  useContext,
+  useMemo,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from 'react'
 import type { RunEvent } from '@agent-bridge/shared'
 import { Pill, type PillKind } from '../../ui/pill'
 import { useSSE } from '../../lib/use-sse'
@@ -63,6 +69,14 @@ export interface EventTimelineProps {
   liveStreamId: string | null
 }
 
+/**
+ * Earliest event timestamp (ms) for the open run, so every row can show a
+ * `+Δ` offset from run start instead of a near-identical wall clock. The
+ * absolute time stays available on hover. 0 means "no anchor yet" — the
+ * formatter falls back to the absolute clock.
+ */
+const TimelineAnchorContext = createContext<number>(0)
+
 export function EventTimeline({
   events,
   source,
@@ -91,6 +105,16 @@ export function EventTimeline({
     [events, liveEvents],
   )
 
+  // Anchor for relative clocks: the earliest event in the run.
+  const runStart = useMemo(() => {
+    let min = Infinity
+    for (const e of allEvents) {
+      const t = Date.parse(e.ts)
+      if (Number.isFinite(t) && t < min) min = t
+    }
+    return Number.isFinite(min) ? min : 0
+  }, [allEvents])
+
   const sections = useMemo(
     () => buildSections(allEvents, filter),
     [allEvents, filter],
@@ -100,58 +124,77 @@ export function EventTimeline({
   const tailing = liveStreamId !== null
 
   return (
-    <div className="ab-card ab-card-pad ab-form-section">
-      <div className="ab-section-head">
-        <div className="ab-section-title">
-          Event timeline{' '}
-          <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
-            ({allEvents.length} event{allEvents.length === 1 ? '' : 's'}
-            {liveEvents.length > 0 ? ` · +${liveEvents.length} live` : ''})
-          </span>
+    <TimelineAnchorContext.Provider value={runStart}>
+      <div className="ab-card ab-card-pad ab-form-section">
+        <div className="ab-section-head">
+          <div className="ab-section-title">
+            Event timeline{' '}
+            <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+              ({allEvents.length} event{allEvents.length === 1 ? '' : 's'}
+              {liveEvents.length > 0 ? ` · +${liveEvents.length} live` : ''})
+            </span>
+          </div>
+          <div className="ab-section-sub">
+            From <code className="ab-mono">{source}</code>, oldest first; clocks
+            are offsets from run start.
+            {tailing && (
+              <>
+                {' '}
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 4,
+                    color: sse.connected
+                      ? 'var(--success)'
+                      : 'var(--text-muted)',
+                  }}
+                >
+                  {sse.connected && <span className="ab-pulse-dot" />}
+                  {sse.connected ? 'Live' : 'Connecting…'}
+                </span>
+              </>
+            )}
+          </div>
         </div>
-        <div className="ab-section-sub">
-          From <code className="ab-mono">{source}</code>, oldest first.
-          {tailing && (
-            <>
-              {' '}
-              <span
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 4,
-                  color: sse.connected ? 'var(--success)' : 'var(--text-muted)',
-                }}
-              >
-                {sse.connected && <span className="ab-pulse-dot" />}
-                {sse.connected ? 'Live' : 'Connecting…'}
-              </span>
-            </>
-          )}
-        </div>
-      </div>
 
-      <div className="ab-tl-filter">
-        <TimelineFilterChips
-          value={filter}
-          onChange={setFilter}
-          events={allEvents}
-        />
-      </div>
+        <div className="ab-tl-filter">
+          <TimelineFilterChips
+            value={filter}
+            onChange={setFilter}
+            events={allEvents}
+          />
+        </div>
 
-      {sections.length === 0 ? (
-        <div className="ab-field-help">
-          {totalShown === 0 && allEvents.length > 0
-            ? 'No events match this filter.'
-            : 'No events recorded.'}
-        </div>
-      ) : (
-        <div className="ab-tl">
-          {sections.map((s, i) => (
-            <SectionBlock key={`${s.kind}-${i}`} section={s} />
-          ))}
-        </div>
-      )}
-    </div>
+        {sections.length === 0 ? (
+          <div className="ab-field-help">
+            {totalShown === 0 && allEvents.length > 0
+              ? 'No events match this filter.'
+              : 'No events recorded.'}
+          </div>
+        ) : (
+          <div className="ab-tl">
+            {sections.map((s, i) => (
+              <SectionBlock key={`${s.kind}-${i}`} section={s} />
+            ))}
+          </div>
+        )}
+      </div>
+    </TimelineAnchorContext.Provider>
+  )
+}
+
+/**
+ * A row/step/block clock. Shows `+Δ` from run start (the scannable signal:
+ * how far into the run, where the gaps are) with the absolute wall-clock
+ * time on hover for cross-referencing other logs.
+ */
+function RelTime({ iso, className }: { iso: string; className: string }) {
+  const t0 = useContext(TimelineAnchorContext)
+  return (
+    <span className={className} title={formatClock(iso)}>
+      {formatOffset(iso, t0)}
+    </span>
   )
 }
 
@@ -314,7 +357,9 @@ function buildSections(
       if (current && current.kind === 'step') {
         current.finishedTs = item.event.ts
         current.finishReason = strField(p['finishReason'])
-        current.totalTokens = numField(deepGetField(p, ['usage', 'totalTokens']))
+        current.totalTokens = numField(
+          deepGetField(p, ['usage', 'totalTokens']),
+        )
         sections.push(current)
         current = null
         continue
@@ -425,15 +470,11 @@ function pairInfo(e: TimelineEvent): PairInfo | null {
     }
     case 'run.model.called': {
       const idx = numField(p['stepIndex'])
-      return idx !== null
-        ? { role: 'called', key: `model:${idx}` }
-        : null
+      return idx !== null ? { role: 'called', key: `model:${idx}` } : null
     }
     case 'run.model.result': {
       const idx = numField(p['stepIndex'])
-      return idx !== null
-        ? { role: 'result', key: `model:${idx}` }
-        : null
+      return idx !== null ? { role: 'result', key: `model:${idx}` } : null
     }
     case 'inspector.tool.called':
       return key('called', 'wrapper', strField(p['wrapperName']))
@@ -508,6 +549,20 @@ function SectionBlock({ section }: { section: Section }) {
   if (section.kind === 'free') {
     return <ItemList items={section.items} />
   }
+  return <StepBlock section={section} />
+}
+
+/**
+ * One step group: a labelled header over its events. The header is a
+ * disclosure when the step has events, so an operator can fold a step to
+ * skim the shape of a long run. Open by default — never hide events until
+ * the operator asks. Empty steps (header only) stay static.
+ */
+function StepBlock({ section }: { section: StepSection }) {
+  const [open, setOpen] = useState(true)
+  const count = countItems(section.items)
+  const collapsible = count > 0
+
   const dur =
     section.finishedTs !== null
       ? Date.parse(section.finishedTs) - Date.parse(section.startedTs)
@@ -517,38 +572,62 @@ function SectionBlock({ section }: { section: Section }) {
   if (dur !== null && Number.isFinite(dur)) parts.push(formatDurationMs(dur))
   if (section.totalTokens !== null)
     parts.push(`${section.totalTokens.toLocaleString()} tok`)
+
+  const headInner = (
+    <>
+      {collapsible && <Chevron />}
+      <span
+        className="ab-tl-step-num"
+        title={
+          section.rawStepIndex !== null
+            ? `Producer stepIndex: ${section.rawStepIndex}`
+            : undefined
+        }
+      >
+        Step {section.displayNumber}
+      </span>
+      {section.finishedTs === null ? (
+        <Pill kind="warn" dot>
+          running
+        </Pill>
+      ) : (
+        parts.length > 0 && (
+          <span className="ab-tl-step-meta">{parts.join(' · ')}</span>
+        )
+      )}
+      {collapsible && !open && (
+        <span className="ab-tl-step-meta">
+          {count} event{count === 1 ? '' : 's'}
+        </span>
+      )}
+      <RelTime iso={section.startedTs} className="ab-tl-step-clock" />
+    </>
+  )
+
   return (
     <div className="ab-tl-step">
-      <div className="ab-tl-step-head">
-        <span
-          className="ab-tl-step-num"
-          title={
-            section.rawStepIndex !== null
-              ? `Producer stepIndex: ${section.rawStepIndex}`
-              : undefined
-          }
+      {collapsible ? (
+        <button
+          type="button"
+          className={`ab-tl-step-head is-button${open ? ' is-open' : ''}`}
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
         >
-          Step {section.displayNumber}
-        </span>
-        {section.finishedTs === null ? (
-          <Pill kind="warn" dot>
-            running
-          </Pill>
-        ) : (
-          parts.length > 0 && (
-            <span className="ab-tl-step-meta">{parts.join(' · ')}</span>
-          )
-        )}
-        <span className="ab-tl-step-clock">{formatClock(section.startedTs)}</span>
-      </div>
-      <ItemList items={section.items} />
+          {headInner}
+        </button>
+      ) : (
+        <div className="ab-tl-step-head">{headInner}</div>
+      )}
+      {open && <ItemList items={section.items} />}
     </div>
   )
 }
 
 function ItemList({ items }: { items: ReadonlyArray<TimelineItem> }) {
   if (items.length === 0) {
-    return <div className="ab-tl-step-empty">No matching events in this step.</div>
+    return (
+      <div className="ab-tl-step-empty">No matching events in this step.</div>
+    )
   }
   return (
     <div className="ab-tl-rows">
@@ -573,7 +652,7 @@ function TokenRollRow({ item }: { item: TokenRollItem }) {
         title={`${item.count} token frame${item.count === 1 ? '' : 's'} folded`}
       >
         <span>Tokens · ×{item.count}</span>
-        <span className="ab-tl-clock">{formatClock(item.firstTs)}</span>
+        <RelTime iso={item.firstTs} className="ab-tl-clock" />
       </div>
     </div>
   )
@@ -684,7 +763,7 @@ function PayloadBlock({
         <span className="ab-tl-block-label" data-tone={tone}>
           {label}
         </span>
-        {ts && <span className="ab-tl-block-clock">{formatClock(ts)}</span>}
+        {ts && <RelTime iso={ts} className="ab-tl-block-clock" />}
         <span className="ab-tl-block-actions">
           <ViewJsonButton payload={payload} />
           <CopyJsonButton payload={payload} />
@@ -771,7 +850,7 @@ function RowHeader({
         {summary && <div className="ab-tl-summary">{summary}</div>}
       </div>
       <div className="ab-tl-row-aside">
-        <span className="ab-tl-clock">{formatClock(ts)}</span>
+        <RelTime iso={ts} className="ab-tl-clock" />
         {interactive && <Chevron />}
       </div>
     </div>
@@ -873,6 +952,26 @@ function formatClock(iso: string): string {
   const s = String(d.getSeconds()).padStart(2, '0')
   const ms = String(d.getMilliseconds()).padStart(3, '0')
   return `${h}:${m}:${s}.${ms}`
+}
+
+/**
+ * Offset of `iso` from the run-start anchor `t0` (ms epoch), e.g. `+0.41s`,
+ * `+12.34s`, `+1m04s`. Falls back to the absolute clock when there's no
+ * usable anchor (single malformed timestamp, empty run).
+ */
+function formatOffset(iso: string, t0: number): string {
+  const t = Date.parse(iso)
+  if (!Number.isFinite(t) || !Number.isFinite(t0) || t0 <= 0) {
+    return formatClock(iso)
+  }
+  const s = Math.max(0, t - t0) / 1000
+  if (s < 60) return `+${s.toFixed(2)}s`
+  // Round to whole seconds FIRST, then split — rounding the remainder on
+  // its own can carry to 60 (e.g. 119.6s → "1m60s" instead of "2m00s").
+  const whole = Math.round(s)
+  const m = Math.floor(whole / 60)
+  const rem = whole % 60
+  return `+${m}m${String(rem).padStart(2, '0')}s`
 }
 
 function isObj(v: unknown): v is Record<string, unknown> {

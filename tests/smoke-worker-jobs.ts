@@ -16,8 +16,11 @@
  *        `repo.embed.started`
  *
  * Runs in <5s against the existing test DB (created by `pnpm
- * test:fixture:setup`). Does NOT touch the embedder, gitnexus, or
- * BullMQ — pure DB + filesystem reads.
+ * test:fixture:setup`). Does NOT touch the embedder, gitnexus, or BullMQ.
+ * Mostly DB + filesystem reads; the pull-guard case invokes the real
+ * `handlePullRepoJob`, whose guard path constructs the worker event bus, so
+ * Redis must be reachable (it never publishes; `closeEventBus()` releases the
+ * connection before exit).
  *
  * Run from repo root:
  *   pnpm test:worker-jobs
@@ -50,11 +53,13 @@ const testDbUrl = (() => {
 })()
 process.env['DATABASE_URL'] = testDbUrl
 
-const { createDb, reposRepo, workerJobsRepo, schema } = await import(
-  '@agent-bridge/db'
-)
+const { createDb, reposRepo, workerJobsRepo, schema } =
+  await import('@agent-bridge/db')
 const { eq } = await import('drizzle-orm')
 const indexRepoModule = await import('../apps/worker/src/jobs/index-repo.js')
+const { handlePullRepoJob } =
+  await import('../apps/worker/src/jobs/pull-repo.js')
+const { closeEventBus } = await import('../apps/worker/src/event-bus.js')
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = path.resolve(HERE, '..')
@@ -178,7 +183,11 @@ try {
   const reapedJobs = await workerJobsRepo.reapStaleRunningJobs(db)
   const reapedRepos = await reposRepo.reapStuckTransitionalRepos(db)
 
-  check('reapStaleRunningJobs returned >=1', reapedJobs >= 1, `reaped=${reapedJobs}`)
+  check(
+    'reapStaleRunningJobs returned >=1',
+    reapedJobs >= 1,
+    `reaped=${reapedJobs}`,
+  )
   check(
     'reapStuckTransitionalRepos returned >=1',
     reapedRepos >= 1,
@@ -290,6 +299,101 @@ try {
   await db.db.delete(schema.repos).where(eq(schema.repos.id, casRepo.id))
 }
 
+// ── 3b. Pull guard: stale/duplicate delivery must not clobber a repo ───────
+//
+// Regression lock for the bug where a re-delivered pull job (BullMQ is
+// at-least-once: a stall or worker restart re-runs a job that already
+// completed) found the row already settled at `ready` and the guard flipped
+// it to `error` via the unconditional `finishPull`. The guard must now leave
+// the repo row untouched and only mark its OWN worker_jobs row `aborted`.
+//
+// Invokes the real `handlePullRepoJob` so we test behaviour, not a mirror.
+// The guard path constructs the worker event bus (Redis) but never publishes;
+// `closeEventBus()` in the finally releases the connection.
+
+console.log('\n• Pull guard (stale/duplicate delivery)')
+
+const PULL_URL = `https://example.test/smoke-pull-guard/${process.pid}-${Date.now()}.git`
+const [pullRepo] = await db.db
+  .insert(schema.repos)
+  .values({
+    remoteUrl: PULL_URL,
+    branch: 'main',
+    status: 'ready',
+    localPath: '/tmp/fake/source',
+    lastError: null,
+  })
+  .returning()
+
+if (!pullRepo) {
+  console.error('Failed to seed pull-guard repo; aborting')
+  process.exit(1)
+}
+
+try {
+  const fakeJob = {
+    data: {
+      repoId: pullRepo.id,
+      remoteUrl: PULL_URL,
+      branch: 'main',
+      hasPat: false,
+    },
+  } as unknown as Parameters<typeof handlePullRepoJob>[0]
+
+  let threw = false
+  let result: Awaited<ReturnType<typeof handlePullRepoJob>> | null = null
+  try {
+    result = await handlePullRepoJob(fakeJob)
+  } catch {
+    threw = true
+  }
+
+  check('pull guard returns without throwing', !threw)
+
+  const [repoAfter] = await db.db
+    .select()
+    .from(schema.repos)
+    .where(eq(schema.repos.id, pullRepo.id))
+  // THE invariant: a healthy repo is never downgraded by a stale delivery.
+  check(
+    "healthy repo stays status='ready' (not clobbered to 'error')",
+    repoAfter?.status === 'ready',
+    `status=${repoAfter?.status}`,
+  )
+  check(
+    'repo lastError left untouched (still null)',
+    repoAfter?.lastError === null,
+    `lastError=${repoAfter?.lastError ?? 'null'}`,
+  )
+
+  const repoJobs = await db.db
+    .select()
+    .from(schema.workerJobs)
+    .where(eq(schema.workerJobs.repoId, pullRepo.id))
+  const pullJob = repoJobs.find((j) => j.jobKind === 'pull')
+  check(
+    "guard marks its worker_jobs row status='aborted'",
+    pullJob?.status === 'aborted',
+    `status=${pullJob?.status ?? 'none'}`,
+  )
+  check(
+    'aborted job records the skip reason',
+    typeof pullJob?.errorMessage === 'string' &&
+      pullJob.errorMessage.includes("expected 'pulling'"),
+  )
+  check(
+    "handler result reports a no-op (status='error', not a real pull)",
+    result?.status === 'error',
+    `result=${result?.status ?? 'none'}`,
+  )
+} finally {
+  await db.db
+    .delete(schema.workerJobs)
+    .where(eq(schema.workerJobs.repoId, pullRepo.id))
+  await db.db.delete(schema.repos).where(eq(schema.repos.id, pullRepo.id))
+  await closeEventBus()
+}
+
 // ── 4. Static source checks (lock down recent invariant fixes) ────────────
 
 console.log('\n• Static source assertions')
@@ -312,17 +416,13 @@ const backendQueuesSrc = await fs.readFile(
 function attemptsForCloneInWorker(src: string): number | null {
   const cloneSection = sliceAfter(src, 'const cloneRepoQueue = new Queue')
   if (!cloneSection) return null
-  const m = cloneSection
-    .slice(0, 1200)
-    .match(/^\s*attempts:\s*(\d+)/m)
+  const m = cloneSection.slice(0, 1200).match(/^\s*attempts:\s*(\d+)/m)
   return m ? Number(m[1]) : null
 }
 function attemptsForCloneInBackend(src: string): number | null {
   const cloneSection = sliceAfter(src, 'export async function enqueueCloneRepo')
   if (!cloneSection) return null
-  const m = cloneSection
-    .slice(0, 1200)
-    .match(/^\s*attempts:\s*(\d+)/m)
+  const m = cloneSection.slice(0, 1200).match(/^\s*attempts:\s*(\d+)/m)
   return m ? Number(m[1]) : null
 }
 
@@ -367,6 +467,28 @@ check(
     resolutionBlock.includes('Building graph database'),
 )
 
+// Pull guard must NOT route a non-`pulling` row through finishAndPublish/
+// finishPull (an unconditional write that clobbers a healthy repo to
+// `error`). It must bail by marking its own job `aborted` and returning.
+const pullRepoSrc = await fs.readFile(
+  path.join(REPO_ROOT, 'apps/worker/src/jobs/pull-repo.ts'),
+  'utf8',
+)
+const pullGuardBlock = isolatePullGuardBlock(pullRepoSrc)
+check(
+  'pull guard block does NOT call finishAndPublish (no repo-status write)',
+  // The call form — the branch's own comment mentions the name to explain
+  // why it must not be used, so match `await finishAndPublish`, not the bare
+  // identifier.
+  pullGuardBlock !== null && !pullGuardBlock.includes('await finishAndPublish'),
+)
+check(
+  "pull guard block marks the worker job 'aborted' and returns",
+  pullGuardBlock !== null &&
+    pullGuardBlock.includes("status: 'aborted'") &&
+    pullGuardBlock.includes('return {'),
+)
+
 // Boot reaper is wired in worker main() before queue registration.
 check(
   'worker boot calls reapStaleRunningJobs',
@@ -404,6 +526,20 @@ function isolateProbeFailBlock(src: string): string | null {
   // The catch block ends at the next "}\n    }" sequence that closes
   // the outer `if (probeArgs) { … }`. Cheaper to just grab 2500 chars.
   return src.slice(tryStart, tryStart + 2500)
+}
+
+function isolatePullGuardBlock(src: string): string | null {
+  // Exactly the guard branch: from `if (row.status !== 'pulling')` to the
+  // close of its `return { … }`. Bounding at the return matters — the very
+  // next block (`if (!row.localPath)`) legitimately calls finishAndPublish,
+  // so a looser window would false-positive.
+  const start = src.indexOf("if (row.status !== 'pulling')")
+  if (start < 0) return null
+  const retIdx = src.indexOf('return {', start)
+  if (retIdx < 0) return null
+  const retClose = src.indexOf('}', retIdx) // return object has no nested braces
+  if (retClose < 0) return null
+  return src.slice(start, retClose + 1)
 }
 
 function isolateResolutionCacheBlock(src: string): string | null {

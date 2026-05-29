@@ -1,0 +1,733 @@
+/*
+ * Logs page. The workspace activity stream: agent runs, worker jobs,
+ * and config events in one scannable feed, plus the toolbar that
+ * filters it. Namespaced `ab-logs-*` / `ab-run-*`; token-driven only,
+ * no hardcoded colors. Replaces the previous inline-styled table.
+ */
+
+/* ── Header (title + live indicator + refresh) ─────────────────────── */
+
+.ab-logs-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.ab-logs-live.is-on {
+  color: var(--success);
+}
+
+/* ── Toolbar (search + segmented filters) ──────────────────────────── */
+
+.ab-logs-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+
+.ab-logs-search {
+  position: relative;
+  flex: 1 1 260px;
+  min-width: 220px;
+}
+.ab-logs-search > svg {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+.ab-logs-search input {
+  width: 100%;
+  height: 34px;
+  padding: 0 12px 0 32px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    box-shadow var(--dur-1) var(--ease-out);
+}
+.ab-logs-search input::placeholder {
+  color: var(--text-muted);
+}
+.ab-logs-search input:focus {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+/* Segmented filter group — one per filter axis (type / source / status). */
+.ab-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.ab-seg.is-disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.ab-seg-item {
+  padding: 4px 10px;
+  font-size: 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: var(--radius-xs);
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+  transition:
+    color var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out);
+}
+.ab-seg-item:hover {
+  color: var(--text-dim);
+}
+.ab-seg-item.is-active {
+  background: var(--bg-canvas);
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* ── Feed ───────────────────────────────────────────────────────────── */
+
+.ab-runs-feed {
+  display: flex;
+  flex-direction: column;
+}
+
+.ab-run-row {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: baseline;
+  width: 100%;
+  padding: 13px 16px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  transition: background var(--dur-1) var(--ease-out);
+}
+.ab-run-row:last-child {
+  border-bottom: 0;
+}
+.ab-run-row.is-interactive {
+  cursor: pointer;
+}
+.ab-run-row.is-interactive:hover {
+  background: var(--surface-hi);
+}
+.ab-run-row.is-interactive:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--border-focus);
+}
+
+/* Right cluster: metrics + a "this opens" chevron. The chevron is
+ * always faintly present on clickable rows and brightens on hover so
+ * the affordance reads without relying on hover discovery. */
+.ab-run-end {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.ab-run-chevron {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--text-muted);
+  opacity: 0.4;
+  transition:
+    opacity var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+.ab-run-row.is-interactive:hover .ab-run-chevron,
+.ab-run-row.is-interactive:focus-visible .ab-run-chevron {
+  opacity: 1;
+  color: var(--text-dim);
+}
+
+/* Status column — leading so status scans straight down the left edge. */
+.ab-run-status {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+/* Main column — identity then the prompt, given room to breathe. */
+.ab-run-main {
+  min-width: 0;
+}
+.ab-run-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.ab-run-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.01em;
+  word-break: break-word;
+}
+.ab-run-slug {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  word-break: break-all;
+}
+.ab-run-prompt {
+  margin-top: 3px;
+  font-size: 13px;
+  color: var(--text-dim);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.ab-run-prompt.is-error {
+  color: var(--danger);
+}
+.ab-run-prompt.is-empty {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* Right metrics column — mono + tabular so figures align across rows. */
+.ab-run-metrics {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.ab-run-time {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+.ab-run-stats {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* ── Loading / empty ────────────────────────────────────────────────── */
+
+.ab-runs-empty {
+  padding: 56px 24px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+/* Narrow viewports: collapse to two columns; status badge rides above
+ * the identity block so the prompt still gets full width. */
+@media (max-width: 720px) {
+  .ab-run-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 6px;
+  }
+  .ab-run-status {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ── Run / job detail modal ─────────────────────────────────────────── */
+/*
+ * A wide centered modal (not the right sheet) for going deep on one
+ * run: a persistent metadata rail on the left, the prompt / output /
+ * event timeline given full width on the right. Reuses the dialog
+ * backdrop + ab-dialog-in entrance.
+ */
+/* Full-screen overlay that centers the modal via flex. Centering lives
+ * here (not on the modal's transform) so the modal's entrance animation
+ * can't drift it off-center — that "opening from the side" feel. */
+.ab-detail-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 101;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgba(6, 6, 12, 0.6);
+  backdrop-filter: blur(3px);
+  animation: ab-detail-fade 160ms var(--ease-out);
+}
+@keyframes ab-detail-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.ab-detail-modal {
+  position: relative;
+  width: min(1200px, 100%);
+  height: min(860px, 100%);
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-3);
+  overflow: hidden;
+  animation: ab-detail-modal-in 200ms var(--ease-out);
+}
+@keyframes ab-detail-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+.ab-detail-modal-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ab-detail-modal-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  word-break: break-word;
+}
+.ab-detail-modal-sub {
+  margin-top: 6px;
+}
+.ab-detail-modal-close {
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.ab-detail-modal-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+}
+.ab-detail-modal-state {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 40px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+.ab-detail-rail {
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-canvas);
+  padding: 18px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.ab-detail-rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ab-detail-rail-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+.ab-detail-main {
+  min-width: 0;
+  overflow-y: auto;
+  padding: 18px 20px;
+}
+
+@media (max-width: 860px) {
+  .ab-detail-overlay {
+    padding: 12px;
+  }
+  .ab-detail-modal-body {
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .ab-detail-rail {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+}
+
+/* ── Event timeline ─────────────────────────────────────────────────── */
+/*
+ * Flat by design: steps are quiet section headers, events are
+ * hairline-separated rows with a leading tone dot (no side-stripe, no
+ * per-row card), and expansion insets one level. Sentence case
+ * throughout; mono reserved for clocks and payloads.
+ */
+.ab-tl-filter {
+  margin: 4px 0 14px;
+}
+
+.ab-tl {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Step group — a labelled section, not a nested box. Generous space
+ * above each step separates the groups; the step's items are indented
+ * so they visibly nest under the header (events not in any step stay at
+ * the left margin, clearly outside a step). */
+.ab-tl-step {
+  margin-top: 14px;
+}
+.ab-tl-step:first-child {
+  margin-top: 0;
+}
+.ab-tl-step-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 10px 6px;
+  border-top: 1px solid var(--border);
+}
+.ab-tl-step:first-child .ab-tl-step-head {
+  border-top: 0;
+}
+/* Collapsible step header — a full-width disclosure button. Keeps the
+ * step's top hairline; resets the other UA button borders and chrome. */
+.ab-tl-step-head.is-button {
+  width: 100%;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background var(--dur-1) var(--ease-out);
+}
+.ab-tl-step-head.is-button:hover {
+  background: var(--surface-hover);
+}
+.ab-tl-step-head.is-button:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--border-focus);
+}
+.ab-tl-step-head.is-button .ab-tl-chevron {
+  margin-right: -2px;
+}
+.ab-tl-step-head.is-button.is-open .ab-tl-chevron {
+  transform: rotate(90deg);
+}
+.ab-tl-step .ab-tl-rows {
+  padding-left: 16px;
+}
+.ab-tl-step-num {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-300);
+}
+.ab-tl-step-meta {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+.ab-tl-step-clock {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.ab-tl-step-empty {
+  padding: 6px 8px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+}
+
+/* Rows — flat, hairline separated. */
+.ab-tl-rows {
+  display: flex;
+  flex-direction: column;
+}
+.ab-tl-row {
+  position: relative;
+  border-top: 1px solid var(--border);
+}
+/* Timeline spine — a hairline rail running through the tone dots (dot
+ * center is 16px in, 21px down). Each row draws its own segment so the
+ * line tracks variable row heights; first/last rows cap at the dot so it
+ * doesn't overhang the group. The opaque dots paint over it. */
+.ab-tl-row::before {
+  content: '';
+  position: absolute;
+  left: 16px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--border);
+  pointer-events: none;
+}
+.ab-tl-rows > .ab-tl-row:first-child::before {
+  top: 21px;
+}
+.ab-tl-rows > .ab-tl-row:last-child::before {
+  bottom: auto;
+  height: 21px;
+}
+/* An expanded row reads as its own panel — no rail behind it. */
+.ab-tl-row.is-open::before {
+  display: none;
+}
+/* A lone event has nothing to connect to — skip the stub. */
+.ab-tl-rows > .ab-tl-row:only-child::before {
+  display: none;
+}
+.ab-tl-rows .ab-tl-row:first-child {
+  border-top: 0;
+}
+/* Open accordion item: detaches from the flat list into its own lifted,
+ * rounded panel with breathing room above and below, so the expanded
+ * item is clearly separated from its neighbours. A divider splits the
+ * header from the body. */
+.ab-tl-row.is-open {
+  background: var(--surface-hi);
+  border-top-color: transparent;
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin: 6px 0;
+  box-shadow: var(--shadow-1);
+}
+.ab-tl-row.is-open + .ab-tl-row {
+  border-top-color: transparent;
+}
+.ab-tl-row.is-open .ab-tl-row-head {
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}
+.ab-tl-row-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  width: 100%;
+  padding: 12px 12px;
+  background: transparent;
+  border: 0;
+  text-align: left;
+  font: inherit;
+  color: var(--text);
+  border-radius: var(--radius-sm);
+}
+.ab-tl-row-head.is-interactive {
+  cursor: pointer;
+  transition: background var(--dur-1) var(--ease-out);
+}
+.ab-tl-row-head.is-interactive:hover {
+  background: var(--surface-hi);
+}
+.ab-tl-row-head.is-interactive:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--border-focus);
+}
+
+.ab-tl-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-pill);
+  flex-shrink: 0;
+  /* Centered on the title's first line (line-height 1.4 ≈ 18px). */
+  margin-top: 5px;
+  background: var(--text-muted);
+}
+.ab-tl-dot[data-tone='success'] {
+  background: var(--success);
+}
+.ab-tl-dot[data-tone='danger'] {
+  background: var(--danger);
+}
+.ab-tl-dot[data-tone='warn'] {
+  background: var(--warn);
+}
+.ab-tl-dot[data-tone='accent'] {
+  background: var(--accent-400);
+}
+.ab-tl-dot.is-running {
+  animation: ab-pulse 1.6s var(--ease-out) infinite;
+}
+
+.ab-tl-row-main {
+  flex: 1;
+  min-width: 0;
+}
+.ab-tl-row-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+.ab-tl-kind {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  /* Functional text (event type) — needs to clear AA, so --text-dim
+   * (~7:1) rather than --text-muted (~3.5:1, fails on this surface). */
+  color: var(--text-dim);
+}
+.ab-tl-name {
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text);
+  letter-spacing: -0.005em;
+  word-break: break-word;
+}
+.ab-tl-running {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--text-muted);
+}
+.ab-tl-summary {
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  word-break: break-word;
+}
+.ab-tl-row-aside {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding-top: 2px;
+}
+.ab-tl-clock {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  /* Timestamps are functional (operators read them) — keep at AA. */
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.ab-tl-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  opacity: 0.7;
+  transition:
+    transform var(--dur-2) var(--ease-out),
+    opacity var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+.ab-tl-row-head.is-interactive:hover .ab-tl-chevron {
+  opacity: 1;
+  color: var(--text-dim);
+}
+.ab-tl-row-head.is-open .ab-tl-chevron {
+  transform: rotate(90deg);
+}
+
+/* Token-roll — the quietest possible "tokens flowed here" marker.
+ * Indented to align with event-row names; clock on the right so it
+ * lines up with every other row's clock. */
+.ab-tl-tokens {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 12px 8px 31px;
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+/* Expanded payload — bounded by the open panel's content padding (12px,
+ * matching the header) so the data well uses the full width, with room
+ * to breathe below the header divider. */
+.ab-tl-expand {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 12px 12px 16px;
+}
+/* Payload section — NOT a card. A plain label row over a single
+ * recessed data well, so the open item reads as one panel with flat
+ * content inside, never card-in-card-in-card. */
+.ab-tl-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ab-tl-block-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px;
+}
+.ab-tl-block-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.ab-tl-block-label[data-tone='output'] {
+  color: var(--success);
+}
+.ab-tl-block-label[data-tone='error'] {
+  color: var(--danger);
+}
+.ab-tl-block-clock {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+.ab-tl-block-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.ab-tl-block-body {
+  padding: 10px 12px;
+  background: var(--code-well);
+  border: 1px solid var(--code-well-border);
+  border-radius: var(--radius-sm);
+}
+.ab-tl-await {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+}

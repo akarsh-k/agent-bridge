@@ -1,5 +1,8 @@
 # Logs
-logs
+# Anchored + dir-only: a bare `logs` also matched the `src/app/logs` route
+# and silently un-tracked the whole logs page. Keep this to a top-level
+# build/output logs dir; `*.log` below still covers stray log files.
+/logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
