@@ -80,6 +80,7 @@ import {
   type RunMcpLogPayload,
   type RunModelCalledPayload,
   type RunModelResultPayload,
+  type RunModelWaitingPayload,
   type RunStartedPayload,
   type RunStepFinishedPayload,
   type RunStepStartedPayload,
@@ -400,6 +401,54 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
     const threadFilesForRun = memoryIds?.mastraThreadId
       ? await loadThreadFilesForRun(db, memoryIds.mastraThreadId)
       : []
+    // Heartbeat for the silent gap before a model turn streams its first
+    // chunk (the 30-90s "step 1 → step 2" dead air on big contexts / local
+    // models). `lastActivityTs` is reset on every stream chunk; while the
+    // stream is quiet past the threshold we emit `run.model.waiting` so a
+    // live watcher sees "thinking… Ns" instead of a frozen log. SSE-only —
+    // never audited, so `run_events` stays small (same rationale as
+    // run.token vs run.token.batch). Fire-and-forget: a heartbeat failure
+    // must never break the run.
+    //
+    // `betweenSteps` gates it to the model-turn boundary (run start →
+    // first step, and step-finish → next step-start). WITHIN a step the
+    // stream also goes quiet during tool execution — Mastra blocks awaiting
+    // a tool-result chunk while the inspector works, and inspector.* events
+    // bypass this loop so they don't reset the clock. We must NOT label that
+    // "waiting on model" (the tool is working, and it has its own events),
+    // so heartbeats are suppressed once a step has started until it finishes.
+    let lastActivityTs = Date.now()
+    let betweenSteps = true
+    const WAIT_HEARTBEAT_MS = 3000
+    const waitHeartbeat = setInterval(() => {
+      if (!betweenSteps) return
+      const now = Date.now()
+      const elapsedMs = now - lastActivityTs
+      if (elapsedMs < WAIT_HEARTBEAT_MS) return
+      const waitingEvent: RunEvent = {
+        kind: 'run.model.waiting',
+        ts: now,
+        streamId,
+        data: {
+          runId,
+          // `currentStepIndex` is the last STARTED step (0-based, inits -1),
+          // so the turn we're now waiting for is +2 in 1-based display terms.
+          stepIndex: Math.max(1, mapState.currentStepIndex + 2),
+          sinceTs: lastActivityTs,
+          elapsedMs,
+        } satisfies RunModelWaitingPayload,
+      }
+      // Run stream only — the run-detail timeline consumes (and folds) these.
+      // Deliberately NOT mirrored to `agentStreamId` like tokens are: the
+      // cross-agent activity feed (`AgentEventSink`, cap-50 buffer) ignores
+      // heartbeat kinds, so mirroring would only churn its buffer for nothing.
+      //
+      // `.catch` is mandatory: an unhandled rejection from a voided publish
+      // would crash the process and take the run down — the opposite of a
+      // best-effort heartbeat.
+      void eventBus.publish(waitingEvent).catch(() => {})
+    }, WAIT_HEARTBEAT_MS)
+    try {
     await runWithInspectorContext(
       {
         db,
@@ -421,6 +470,9 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
           async () => {
         const output = await builtAgent.stream(prompt, streamOptions)
         for await (const chunk of output.fullStream as AsyncIterable<unknown>) {
+      // A chunk arrived — the model is producing, not waiting. Resets the
+      // heartbeat clock so `run.model.waiting` only fires during true silence.
+      lastActivityTs = Date.now()
       const mapped = mapChunk(chunk, runId, mapState)
       if (!mapped) continue
 
@@ -454,12 +506,16 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
 
       if (mapped.kind === 'run.step.started') {
         stepCount += 1
+        // The model turn is producing now — close the waiting window.
+        betweenSteps = false
       }
 
       if (mapped.kind === 'run.step.finished') {
         const payload = mapped.data as RunStepFinishedPayload
         if (payload.finishReason) finishReason = payload.finishReason
         if (payload.usage) lastUsage = payload.usage
+        // Turn done; the next model turn (if any) is the waiting window.
+        betweenSteps = true
       }
 
       if (mapped.kind === 'run.error') {
@@ -540,6 +596,9 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
         },
       ),
     )
+    } finally {
+      clearInterval(waitHeartbeat)
+    }
 
     // Drain the final token batch BEFORE publishing run.finished so a
     // subscriber reading events in order sees the last tokens first.

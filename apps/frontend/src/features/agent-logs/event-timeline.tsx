@@ -287,7 +287,18 @@ interface TokenRollItem {
   /** Combined raw count of `run.token` + `run.token.batch` events. */
   count: number
 }
-type TimelineItem = PairItem | SingleItem | TokenRollItem
+/** Folded `run.model.waiting` heartbeats — the "model is thinking" gap
+ *  before a step streams. Consecutive heartbeats collapse into one row that
+ *  shows the latest elapsed, so the gap reads as one ticking marker. */
+interface WaitingRollItem {
+  readonly kind: 'waiting-roll'
+  readonly id: string
+  /** When the wait began (the heartbeat's `sinceTs`), for the row clock. */
+  readonly firstTs: string
+  /** Latest reported wait duration, ms. */
+  elapsedMs: number
+}
+type TimelineItem = PairItem | SingleItem | TokenRollItem | WaitingRollItem
 
 interface StepSection {
   readonly kind: 'step'
@@ -419,6 +430,27 @@ function pairAndRoll(events: ReadonlyArray<TimelineEvent>): TimelineItem[] {
       continue
     }
 
+    // "Model is thinking" heartbeats: fold the run of them into one row
+    // showing the latest elapsed. Anchor the clock to when the wait began
+    // (`sinceTs`) rather than the heartbeat's own ts.
+    if (e.kind === 'run.model.waiting') {
+      const p = isObj(e.payload) ? e.payload : {}
+      const elapsedMs = numField(p['elapsedMs']) ?? 0
+      const sinceMs = numField(p['sinceTs'])
+      const last = out[out.length - 1]
+      if (last && last.kind === 'waiting-roll') {
+        last.elapsedMs = Math.max(last.elapsedMs, elapsedMs)
+        continue
+      }
+      out.push({
+        kind: 'waiting-roll',
+        id: `wait-${e.id}`,
+        firstTs: sinceMs !== null ? new Date(sinceMs).toISOString() : e.ts,
+        elapsedMs,
+      })
+      continue
+    }
+
     const info = pairInfo(e)
     if (!info) {
       out.push({ kind: 'single', id: `s-${e.id}`, event: e })
@@ -507,7 +539,8 @@ function key(
 
 function matchesFilter(item: TimelineItem, filter: TimelineFilter): boolean {
   if (filter === 'all') return true
-  if (item.kind === 'token-roll') return false
+  // Roll-ups are status markers, not discrete events — only in the All view.
+  if (item.kind === 'token-roll' || item.kind === 'waiting-roll') return false
   const ev = item.kind === 'pair' ? item.called : item.event
   const summary = summarizeEvent(ev.kind, ev.payload)
   if (filter === 'errors') {
@@ -538,6 +571,8 @@ function countItems(items: ReadonlyArray<TimelineItem>): number {
   let n = 0
   for (const it of items) {
     if (it.kind === 'token-roll') n += it.count
+    // waiting-roll is a status marker, not an event — don't count it.
+    else if (it.kind === 'waiting-roll') continue
     else n += 1
   }
   return n
@@ -640,8 +675,26 @@ function ItemList({ items }: { items: ReadonlyArray<TimelineItem> }) {
 
 function ItemRow({ item }: { item: TimelineItem }) {
   if (item.kind === 'token-roll') return <TokenRollRow item={item} />
+  if (item.kind === 'waiting-roll') return <WaitingRow item={item} />
   if (item.kind === 'pair') return <PairRow item={item} />
   return <SingleRow item={item} />
+}
+
+/**
+ * "Model is thinking" gap marker — the folded `run.model.waiting`
+ * heartbeats. A pulsing dot + the running wait duration give the long
+ * pre-step silence a live signal instead of dead air.
+ */
+function WaitingRow({ item }: { item: WaitingRollItem }) {
+  return (
+    <div className="ab-tl-row">
+      <div className="ab-tl-waiting">
+        <span className="ab-pulse-dot" />
+        <span>Waiting on model · {formatDurationMs(item.elapsedMs)}</span>
+        <RelTime iso={item.firstTs} className="ab-tl-clock" />
+      </div>
+    </div>
+  )
 }
 
 function TokenRollRow({ item }: { item: TokenRollItem }) {

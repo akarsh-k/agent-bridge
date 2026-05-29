@@ -38,6 +38,16 @@ export const runEventKinds = [
    */
   'run.model.called',
   'run.model.result',
+  /**
+   * Heartbeat emitted by the dispatcher while a model turn is in flight
+   * but the provider has not yet streamed its first chunk — i.e. the gap
+   * between one step's `run.model.result` and the next `run.step.started`,
+   * which on big contexts / local models can run 30-90s. SSE-ONLY (never
+   * persisted): it exists so a live watcher sees "model is thinking… 43s"
+   * instead of dead air. The timeline folds consecutive heartbeats into a
+   * single ticking row. Payload: `RunModelWaitingPayload`.
+   */
+  'run.model.waiting',
   'run.tool.called',
   'run.tool.result',
   /**
@@ -556,6 +566,22 @@ export interface RunStepFinishedPayload {
     readonly outputTokens: number | null
     readonly totalTokens: number | null
   }
+}
+
+/**
+ * `run.model.waiting` payload. SSE-only heartbeat for the silent gap
+ * before a model turn produces its first chunk. `sinceTs` is when the
+ * wait began (the last activity, ms epoch); `elapsedMs` is the wait so
+ * far at emit time. The UI shows elapsed and folds repeats into one row.
+ */
+export interface RunModelWaitingPayload {
+  readonly runId: string
+  /** The step the model is about to produce (1-based, best effort). */
+  readonly stepIndex: number
+  /** ms epoch when the wait began (last stream activity). */
+  readonly sinceTs: number
+  /** Wait duration so far at emit time, in ms. */
+  readonly elapsedMs: number
 }
 
 /**

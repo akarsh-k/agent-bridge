@@ -133,6 +133,21 @@ export function summarizeEvent(
         isError: false,
       }
     }
+    case 'run.model.waiting': {
+      const elapsed = num(p['elapsedMs'])
+      return {
+        title: 'Waiting on model',
+        summary:
+          elapsed !== null
+            ? `thinking · ${formatDurationMs(elapsed)}`
+            : 'thinking…',
+        // `lifecycle` keeps these heartbeats out of the Tool/Model/Inspector
+        // chip counts; they're a status indicator, not a discrete event.
+        tone: 'neutral',
+        group: 'lifecycle',
+        isError: false,
+      }
+    }
     case 'run.token': {
       const idx = num(p['index'])
       const text = str(p['text'])
