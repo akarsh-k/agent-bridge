@@ -20,11 +20,12 @@
   --surface-hover: rgba(126, 168, 243, 0.07);
   /* Recessed well for code / JSON payloads — the page tone, clearly
    * below the lifted panel/surface it sits on so the well reads as a
-   * contained block, but not the near-black canvas (no hole). The
-   * well's own border is brighter than --border-strong so the edge
-   * reads against the dark fill (dark-on-dark hides a faint hairline). */
+   * contained block, but not the near-black canvas (no hole). The well
+   * is already a tonal step below its panel, so the edge reads from that
+   * contrast; the border stays at the strong-hairline weight rather than
+   * a brighter value that would draw the eye to the frame, not the code. */
   --code-well: #0d0e13;
-  --code-well-border: rgba(255, 255, 255, 0.24);
+  --code-well-border: rgba(255, 255, 255, 0.16);
 
   /* Borders — hairline by default; brighter on focus */
   --border: rgba(255, 255, 255, 0.09);

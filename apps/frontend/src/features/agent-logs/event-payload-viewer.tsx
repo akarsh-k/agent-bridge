@@ -421,7 +421,10 @@ function StringValue({ value }: { value: string }) {
       <pre
         style={{
           margin: 0,
-          padding: 0,
+          padding: '8px 10px',
+          background: 'var(--code-well)',
+          border: '1px solid var(--code-well-border)',
+          borderRadius: 'var(--radius)',
           fontFamily: 'var(--font-mono)',
           fontSize: 11.5,
           color: 'var(--text)',
@@ -458,7 +461,10 @@ function NestedJson({ value }: { value: unknown }) {
       <pre
         style={{
           margin: 0,
-          padding: 0,
+          padding: '8px 10px',
+          background: 'var(--code-well)',
+          border: '1px solid var(--code-well-border)',
+          borderRadius: 'var(--radius)',
           fontFamily: 'var(--font-mono)',
           fontSize: 11.5,
           color: 'var(--text)',

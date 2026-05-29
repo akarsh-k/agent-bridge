@@ -19,8 +19,10 @@ import type {
   RunDetailResponse,
   WorkerJobDetailResponse,
 } from '@agent-bridge/shared'
+import { stripPromptEnrichments } from '@agent-bridge/shared'
 import { Pill } from '../../ui/pill'
 import { CloseIcon } from '../../ui/icons'
+import { Markdown } from '../../ui/markdown'
 import { ApiError, fetchRun, fetchWorkerJob } from '../../lib/rpc'
 import { formatDurationMs } from './event-labels'
 import { EventTimeline } from './event-timeline'
@@ -203,21 +205,31 @@ function RunSubtitle({ run }: { run: RunDetailResponse['run'] }) {
  * naturally with whatever metadata they carried. Stays platform-
  * agnostic — no special-casing for any specific MCP client.
  */
-function CallsiteBadge({
-  callsite,
-}: {
-  callsite: NonNullable<RunDetailResponse['run']['callsite']>
-}) {
-  const clientLabel = callsite.client.version
+type RunCallsite = NonNullable<RunDetailResponse['run']['callsite']>
+
+/** `web-chat v1.2` style label for the calling client. */
+function callsiteClientLabel(callsite: RunCallsite): string {
+  return callsite.client.version
     ? `${callsite.client.name} v${callsite.client.version}`
     : callsite.client.name
-  const repoLabel =
+}
+
+/** Best human-readable repo label from whatever the callsite carried,
+ *  or null when the run supplied no repo hint (e.g. web-chat). */
+function callsiteRepoLabel(callsite: RunCallsite): string | null {
+  return (
     callsite.repo?.label ||
     (callsite.repo?.remote_url
       ? callsite.repo.remote_url.replace(/^https?:\/\/[^/]+\//, '')
       : null) ||
     callsite.repo?.local_folder ||
     null
+  )
+}
+
+function CallsiteBadge({ callsite }: { callsite: RunCallsite }) {
+  const clientLabel = callsiteClientLabel(callsite)
+  const repoLabel = callsiteRepoLabel(callsite)
 
   const tooltipParts: string[] = [
     `client: ${clientLabel}`,
@@ -298,9 +310,16 @@ function RunDetailBody({ data }: { data: RunDetailResponse }) {
       <div className="ab-detail-main">
         {run.errorMessage && <RunErrorCard message={run.errorMessage} />}
         {stepLimit?.exhausted && <StepLimitNotice stepLimit={stepLimit} />}
-        <CollapsibleBody title="Input prompt" body={run.inputPrompt} />
+        <CollapsibleBody
+          title="Input prompt"
+          body={stripPromptEnrichments(run.inputPrompt)}
+        />
         {run.outputSummary !== null && (
-          <CollapsibleBody title="Output summary" body={run.outputSummary} />
+          <CollapsibleBody
+            title="Output summary"
+            body={run.outputSummary}
+            render="markdown"
+          />
         )}
         <EventTimeline
           events={events}
@@ -356,6 +375,20 @@ function RunMetaRail({
           <Metric key={m.label} label={m.label} value={m.value} />
         ))}
       </div>
+      {run.callsite && (
+        <div className="ab-detail-rail-group">
+          <div className="ab-detail-rail-label">Origin</div>
+          <DebugCell label="Client" value={callsiteClientLabel(run.callsite)} />
+          <DebugCell label="Agent" value={run.callsite.agent.slug} />
+          <DebugCell label="Tool" value={run.callsite.tool.name} />
+          {callsiteRepoLabel(run.callsite) && (
+            <DebugCell
+              label="Repo"
+              value={callsiteRepoLabel(run.callsite) as string}
+            />
+          )}
+        </div>
+      )}
       <div className="ab-detail-rail-group">
         <div className="ab-detail-rail-label">Timing</div>
         <DebugCell label="Started" value={formatTs(run.startedAt)} />
@@ -595,8 +628,21 @@ function RunErrorCard({ message }: { message: string }) {
   )
 }
 
-function CollapsibleBody({ title, body }: { title: string; body: string }) {
-  const isJson = useMemo(() => looksLikeJson(body), [body])
+function CollapsibleBody({
+  title,
+  body,
+  render = 'raw',
+}: {
+  title: string
+  body: string
+  /** `raw` shows literal preformatted text (prompts, JSON); `markdown`
+   * parses the body so headings and prose read as written. */
+  render?: 'raw' | 'markdown'
+}) {
+  const isJson = useMemo(
+    () => render === 'raw' && looksLikeJson(body),
+    [body, render],
+  )
   const pretty = useMemo(() => {
     if (!isJson) return null
     try {
@@ -625,25 +671,37 @@ function CollapsibleBody({ title, body }: { title: string; body: string }) {
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <pre
+      <div
         style={{
-          margin: 0,
-          padding: '10px 12px',
           background: 'var(--code-well)',
           border: '1px solid var(--code-well-border)',
           borderRadius: 'var(--radius)',
-          fontFamily: 'var(--font-mono)',
-          fontSize: 12,
-          color: 'var(--text)',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          overflowWrap: 'anywhere',
           maxHeight: 480,
           overflow: 'auto',
+          // Markdown carries its own block margins, so it needs less vertical
+          // padding; both modes share 16px horizontal so column-0 lines don't
+          // hug the border and the two stacked wells align their left edge.
+          padding: render === 'markdown' ? '2px 16px' : '10px 16px',
         }}
       >
-        {pretty ?? body}
-      </pre>
+        {render === 'markdown' ? (
+          <Markdown source={body} />
+        ) : (
+          <pre
+            style={{
+              margin: 0,
+              fontFamily: 'var(--font-mono)',
+              fontSize: 12,
+              color: 'var(--text)',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              overflowWrap: 'anywhere',
+            }}
+          >
+            {pretty ?? body}
+          </pre>
+        )}
+      </div>
     </div>
   )
 }
