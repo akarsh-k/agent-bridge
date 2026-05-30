@@ -134,6 +134,13 @@
       "when": 1779700000000,
       "tag": "0018_rename_minirepo_to_codebase_inspection_report",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1780125625633,
+      "tag": "0019_omniscient_magneto",
+      "breakpoints": true
     }
   ]
 }

@@ -43,9 +43,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type {
+  RunAuthorizeRequiredConnection,
   RunErrorPayload,
   RunEvent,
   RunFinishedPayload,
+  RunMcpAuthorizeRequiredPayload,
   RunMcpLogPayload,
   RunStartedPayload,
   RunStepFinishedPayload,
@@ -66,6 +68,7 @@ import {
   apiBaseUrl,
   callApi,
   deleteAgentThread as rpcDeleteAgentThread,
+  fetchRunsAuthorizeRequired as rpcFetchRunsAuthorizeRequired,
   getActiveRunForThread as rpcGetActiveRunForThread,
   getAgentThreadMessages as rpcGetAgentThreadMessages,
   listAgentThreads as rpcListAgentThreads,
@@ -143,6 +146,18 @@ export interface ChatMessage {
    * block at the bottom of the message.
    */
   readonly mcpLogs: ChatMcpLog[]
+  /**
+   * External MCP connections this run discovered with an expired OAuth
+   * session and skipped (non-fatal — the run still completes, just
+   * without that connection's tools). Each entry drives a small inline
+   * "Reconnect" affordance under the assistant bubble. Deduped by
+   * `connectionId`; only set on assistant-role messages, and only when
+   * a `run.mcp.authorize_required` event arrived for this run.
+   */
+  readonly authorizeRequired?: ReadonlyArray<{
+    readonly connectionId: string
+    readonly connectionName: string
+  }>
   readonly finishReason?: string | null
   readonly durationMs?: number
   readonly usage?: TokenUsage
@@ -645,10 +660,11 @@ export function useChat(input: UseChatInput): UseChatResult {
       ) {
         return
       }
+      const recoveredRunId = activeRunId
       setActiveRunFor(threadId, null)
       setMessagesFor(threadId, (prev) =>
         prev.map((m) =>
-          m.runId === activeRunId && m.status === 'streaming'
+          m.runId === recoveredRunId && m.status === 'streaming'
             ? { ...m, status: 'done' }
             : m,
         ),
@@ -666,6 +682,30 @@ export function useChat(input: UseChatInput): UseChatResult {
       // effect's `if (activeRunId) return` gate (derived from the
       // map) is open by the time it re-evaluates.
       setMessagesLoadedFor(null)
+      // The same warm-cache race that drops token frames also drops the
+      // run's `run.mcp.authorize_required` frame (published right after
+      // run.started, before the EventSource connects; the SSE endpoint
+      // does not replay). Reconstruct the "Reconnect" notice from the
+      // persisted events so it isn't lost. Idempotent: reuses the
+      // reducer's connectionId dedupe, so a frame that DID arrive live
+      // won't double-render. Best-effort — a network blip just leaves
+      // the notice absent (the next recovery tick can retry).
+      try {
+        const byRun = await rpcFetchRunsAuthorizeRequired([recoveredRunId])
+        if (cancelled) return
+        const connections = byRun[recoveredRunId]
+        if (connections && connections.length > 0) {
+          setMessagesFor(threadId, (prev) =>
+            prev.map((m) =>
+              m.runId === recoveredRunId && m.role === 'assistant'
+                ? applyAuthorizeRequiredList(m, connections)
+                : m,
+            ),
+          )
+        }
+      } catch {
+        // Ignore — the notice stays absent until the next reconcile.
+      }
     }
 
     const initial = window.setTimeout(recover, 2_000)
@@ -1014,6 +1054,40 @@ export function useChat(input: UseChatInput): UseChatResult {
           // via the reducer.
           setActiveRunFor(threadId, active.runId)
         }
+        // Durably reconstruct the "Reconnect" notice. `applyAuthorizeRequired`
+        // only ever sets `authorizeRequired` from the live SSE frame, which
+        // is never replayed — so on a reload / thread-switch the notice would
+        // be lost. Batch-fetch the persisted flags for every assistant
+        // message that carries a runId and fold them back on. The replayed
+        // Mastra rows don't carry a runId (only the resumed in-flight run
+        // does), so `fetchRunsAuthorizeRequired` short-circuits to `{}` with
+        // no request when there's nothing to look up. Idempotent: reuses the
+        // reducer's connectionId dedupe. Guarded by `alive` so a thread
+        // switched away before this resolves doesn't write stale state.
+        const runIds = Array.from(
+          new Set(
+            mapped
+              .filter((m) => m.role === 'assistant' && m.runId)
+              .map((m) => m.runId as string),
+          ),
+        )
+        if (runIds.length > 0) {
+          try {
+            const byRun = await rpcFetchRunsAuthorizeRequired(runIds)
+            if (!alive) return
+            setMessagesFor(threadId, (prev) =>
+              prev.map((m) => {
+                if (m.role !== 'assistant' || !m.runId) return m
+                const connections = byRun[m.runId]
+                return connections && connections.length > 0
+                  ? applyAuthorizeRequiredList(m, connections)
+                  : m
+              }),
+            )
+          } catch {
+            // Best-effort — leave the notice absent on a network blip.
+          }
+        }
       } catch (err) {
         if (alive) {
           setSendError(
@@ -1351,7 +1425,20 @@ function reconcileLoaded(
       }
     }
     if (allRolesMatch) {
-      return mapped.map((m, i) => ({ ...m, id: prev[i]!.id }))
+      // The post-finish refetch (the run-termination effect's 250ms
+      // `setMessagesLoadedFor(null)`) exists ONLY to repair assistant text a
+      // missed SSE frame left truncated. It must NOT discard the client-only
+      // enrichments the canonical Mastra row doesn't carry — tool/step cards,
+      // MCP logs, and the "Reconnect" notice (`run.mcp.authorize_required`),
+      // all derived from the live event stream and never replayed. (The
+      // persisted row also has no runId, so the event-replay reconstruction
+      // can't reattach them.) So keep the in-memory message and adopt only the
+      // canonical text + terminal status.
+      return mapped.map((m, i) => ({
+        ...prev[i]!,
+        text: m.text,
+        status: m.status,
+      }))
     }
   }
   return mapped
@@ -1376,6 +1463,11 @@ function applyEvent(msg: ChatMessage, event: RunEvent): ChatMessage {
       return applyToolResult(msg, event.data as RunToolResultPayload, event.ts)
     case 'run.mcp.log':
       return applyMcpLog(msg, event.data as RunMcpLogPayload, event.ts)
+    case 'run.mcp.authorize_required':
+      return applyAuthorizeRequired(
+        msg,
+        event.data as RunMcpAuthorizeRequiredPayload,
+      )
     case 'run.error':
       return applyRunError(msg, event.data as RunErrorPayload)
     case 'run.finished':
@@ -1401,6 +1493,60 @@ function applyMcpLog(
         level: payload.level,
         line: payload.line,
       },
+    ],
+  }
+}
+
+function applyAuthorizeRequired(
+  msg: ChatMessage,
+  payload: RunMcpAuthorizeRequiredPayload,
+): ChatMessage {
+  // Dedupe by connectionId — the dispatcher emits once per connection,
+  // but a late subscriber replaying `run_events` could see the same
+  // frame twice. Don't surface two notices for the same connection.
+  const existing = msg.authorizeRequired ?? []
+  if (existing.some((c) => c.connectionId === payload.connectionId)) return msg
+  return {
+    ...msg,
+    authorizeRequired: [
+      ...existing,
+      {
+        connectionId: payload.connectionId,
+        connectionName: payload.connectionName,
+      },
+    ],
+  }
+}
+
+/**
+ * Reconstruction sibling of `applyAuthorizeRequired`: folds a whole list
+ * of flagged connections (from the `/api/runs/authorize-required`
+ * endpoint, which carries no `runId` per entry) onto a message, reusing
+ * the SAME connectionId dedupe as the live reducer so it stays
+ * idempotent against frames that did arrive over SSE. Used by the two
+ * reconciliation paths (missed-event recovery + thread load) where the
+ * live frame was missed or never replayed. Returns the same message
+ * reference when nothing changed, so an already-applied bubble keeps its
+ * identity (the caller still maps over the list, so the array itself is
+ * new — this only stabilises the individual message, not the whole list).
+ */
+function applyAuthorizeRequiredList(
+  msg: ChatMessage,
+  connections: ReadonlyArray<RunAuthorizeRequiredConnection>,
+): ChatMessage {
+  const existing = msg.authorizeRequired ?? []
+  const additions = connections.filter(
+    (conn) => !existing.some((c) => c.connectionId === conn.connectionId),
+  )
+  if (additions.length === 0) return msg
+  return {
+    ...msg,
+    authorizeRequired: [
+      ...existing,
+      ...additions.map((conn) => ({
+        connectionId: conn.connectionId,
+        connectionName: conn.connectionName,
+      })),
     ],
   }
 }

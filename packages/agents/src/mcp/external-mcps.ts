@@ -4,16 +4,20 @@
  * For every `agent_mcp_tools` row pointing at a `mcp_connections` the agent
  * opted into, this module:
  *
- *   1. Spins up ONE `@mastra/mcp` `MCPClient` per connection (stdio or
- *      http/sse) — same one-client-per-out-of-process-resource pattern as
- *      `gitnexus-mcp.ts`.
- *   2. Pulls the raw tool dict for that connection via `listToolsets()`
- *      (which, unlike `listTools()`, does NOT apply the SDK's
- *      `serverName_rawName` auto-prefix — see
+ *   1. For a connection whose selected tools are ALL present in the stored
+ *      catalog (`mcp_connection_tools`), builds LAZY proxy tools from those
+ *      schemas via `createTool` — no `MCPClient`, no socket at build. The
+ *      connection opens (one `@mastra/mcp` `MCPClient`, `listToolsets()`)
+ *      only on the first invocation of any of its tools, then is cached for
+ *      the run. Connections the model never calls never spawn.
+ *   2. For a connection with a missing/incomplete catalog, falls back to the
+ *      EAGER path: spin up the `MCPClient` now and pull its tool dict via
+ *      `listToolsets()` (which, unlike `listTools()`, does NOT apply the
+ *      SDK's `serverName_rawName` auto-prefix — see
  *      `packages/agents/node_modules/@mastra/mcp/dist/index.js:1667-1693` vs
  *      `:1717` — so we keep full control over the user-visible name).
- *   3. Filters each connection's tools against the allowlist for this
- *      agent + connection, rewrites the keys to
+ *   3. Either way, filters tools against the allowlist for this agent +
+ *      connection, rewrites the keys to
  *      `${slugify(connection.name)}__${rawName}`, and merges every
  *      connection's dict into one `Record<string, Tool>`.
  *
@@ -40,22 +44,32 @@
  *   envelope (see `docs/ARCHITECTURE.md` §4 and §8). If a third caller
  *   ever appears, treat it as a review regression.
  *
- * Loud-failure contract:
- *   An allowlisted connection that can't start OR whose upstream tool
- *   list is missing every allowlisted tool throws synchronously. This
- *   matches the gitnexus mount: misconfiguration surfaces at
- *   `buildAgent` time, not at first tool call. Partial-failure
- *   semantics ("one connection failed, keep the others") are NOT
- *   supported — the operator opted in to N connections and a silent N-1
- *   outcome is a worse UX than a clear error.
+ * Failure contract:
+ *   A connection that can't start OR whose upstream tool list is missing
+ *   every allowlisted tool throws — misconfiguration surfaces loudly at
+ *   `buildAgent` time (eager) or first tool call (lazy), never silently. The
+ *   ONE recoverable exception is an OAuth connection whose session needs
+ *   re-authorization (`ExternalMcpAuthRequiredError`): that connection is
+ *   skipped, the others still mount, and it is reported via `meta.needsAuth`
+ *   so the chat can prompt a reconnect. A hard misconfiguration is otherwise
+ *   still a clear error, not a silent N-1.
  */
 
-import type { AgentBridgeDb } from '@agent-bridge/db'
-import { schema } from '@agent-bridge/db'
+import type { AgentBridgeDb, ConnectionToolSchema } from '@agent-bridge/db'
+import { schema, mcpToolsRepo } from '@agent-bridge/db'
 import { decryptSecret } from '@agent-bridge/shared/crypto'
 import { buildSandboxedEnv } from '@agent-bridge/shared/spawn'
-import type { McpAuthKind, McpTransport } from '@agent-bridge/shared'
-import type { Tool } from '@mastra/core/tools'
+import type {
+  McpAuthKind,
+  McpTransport,
+  RunMcpAuthorizeRequiredPayload,
+} from '@agent-bridge/shared'
+import {
+  emitInspectorEvent,
+  getInspectorRunContext,
+} from '../inspector/run-context.js'
+import { createTool, type Tool } from '@mastra/core/tools'
+import { toStandardSchema } from '@mastra/core/schema'
 import { MCPClient, MCPOAuthClientProvider } from '@mastra/mcp'
 import { FixedMCPOAuthClientProvider } from './oauth-provider-fix.js'
 import { and, asc, eq } from 'drizzle-orm'
@@ -100,6 +114,17 @@ export interface MountedConnectionMeta {
   readonly mountedToolCount: number
 }
 
+/**
+ * A connection that failed to mount because its OAuth session is
+ * unauthorized (expired refresh token, or the upstream advertised zero
+ * tools). Recoverable: the operator re-authorizes via the chat/connections
+ * re-auth flow. Surfaced instead of failing the whole agent build.
+ */
+export interface ExternalMcpNeedsAuth {
+  readonly id: string
+  readonly name: string
+}
+
 export interface ExternalMcpsMountMeta {
   /** `true` iff at least one connection mounted at least one tool. */
   readonly mounted: boolean
@@ -109,6 +134,35 @@ export interface ExternalMcpsMountMeta {
   readonly toolCount: number
   /** Per-connection breakdown, in DB insertion order. */
   readonly perConnection: readonly MountedConnectionMeta[]
+  /**
+   * OAuth connections skipped because they need re-authorization. The
+   * dispatcher emits a `run.mcp.authorize_required` event per entry so the
+   * chat can offer a "Reconnect" button. Empty in the happy path.
+   */
+  readonly needsAuth: readonly ExternalMcpNeedsAuth[]
+}
+
+/**
+ * Thrown by `mountOneConnection` when an OAuth-backed connection cannot
+ * produce its tools because the upstream session is unauthorized (expired
+ * refresh token, or the server advertised zero tools). Distinct from a
+ * misconfiguration: this is user-recoverable, so `mountExternalMcps` catches
+ * it, mounts the other connections, and reports it via `meta.needsAuth`
+ * instead of failing the whole build.
+ */
+export class ExternalMcpAuthRequiredError extends Error {
+  readonly connectionId: string
+  readonly connectionName: string
+  constructor(args: {
+    connectionId: string
+    connectionName: string
+    message: string
+  }) {
+    super(args.message)
+    this.name = 'ExternalMcpAuthRequiredError'
+    this.connectionId = args.connectionId
+    this.connectionName = args.connectionName
+  }
 }
 
 /**
@@ -177,16 +231,317 @@ export function emptyExternalMcpsMountMeta(): ExternalMcpsMountMeta {
     connectionCount: 0,
     toolCount: 0,
     perConnection: [],
+    needsAuth: [],
   }
 }
 
+export interface LazyPrepared {
+  readonly connectionId: string
+  readonly connectionName: string
+  readonly transport: McpTransport
+  readonly authKind: McpAuthKind
+  readonly serverDef: ServerDef
+}
+
+/** Minimal surface a proxy tool needs to lazily reach its connection's live
+ *  toolset. `LazyMcpConnections` implements it; tests stub it directly. */
+export interface LazyToolsetSource {
+  getToolset(
+    connectionId: string,
+  ): Promise<Record<string, Tool<any, any, any, any>>>
+}
+
+/** Opens a prepared connection and returns its raw toolset + a teardown.
+ *  Injectable so tests exercise the open-once / cache / auth logic without a
+ *  real MCP subprocess. */
+export type LazyConnectionOpener = (prep: LazyPrepared) => Promise<{
+  toolset: Record<string, Tool<any, any, any, any>>
+  disconnect: () => Promise<void>
+}>
+
 /**
- * Fetch the agent's allowlist, decrypt per-connection secrets, spawn one
- * `MCPClient` per connection, and return a merged tool dict keyed by
- * `${slug}__${rawName}`. Returns `null` when there's nothing to mount
- * (no allowlist rows, or caller passed `disabled: true`).
+ * Per-build manager for connections mounted LAZILY. The connection is opened
+ * (`listToolsets()`) on the FIRST invocation of any tool on it, then cached
+ * for the rest of the run. Connections whose tools the model never calls never
+ * open a socket — the whole point of lazy mount.
  *
- * Throws loudly on any mount failure. See module docstring.
+ * Prepared (decrypted, no-I/O) server defs are captured at build time via
+ * `register`; opening is deferred to `getToolset`. The `opener` is injectable
+ * for testing; production uses `defaultLazyOpener`.
+ */
+export class LazyMcpConnections implements LazyToolsetSource {
+  private readonly prepared = new Map<string, LazyPrepared>()
+  private readonly disconnects = new Map<string, () => Promise<void>>()
+  private readonly toolsets = new Map<
+    string,
+    Promise<Record<string, Tool<any, any, any, any>>>
+  >()
+  private readonly opener: LazyConnectionOpener
+
+  constructor(
+    agentId: string,
+    logBroker: LogBroker,
+    opener?: LazyConnectionOpener,
+  ) {
+    this.opener = opener ?? defaultLazyOpener(agentId, logBroker)
+  }
+
+  /** Register a prepared connection (build time, no I/O). */
+  register(prep: LazyPrepared): void {
+    this.prepared.set(prep.connectionId, prep)
+  }
+
+  /**
+   * Open the connection on first use and return its raw toolset (keyed by
+   * upstream tool name). Cached + de-duped per connection for the run. Throws
+   * `ExternalMcpAuthRequiredError` when an OAuth session is dead — same
+   * classification as the eager mount — so the proxy tool can surface a
+   * reconnect prompt.
+   */
+  getToolset(
+    connectionId: string,
+  ): Promise<Record<string, Tool<any, any, any, any>>> {
+    const existing = this.toolsets.get(connectionId)
+    if (existing) return existing
+    const opening = this.open(connectionId)
+    this.toolsets.set(connectionId, opening)
+    return opening
+  }
+
+  private async open(
+    connectionId: string,
+  ): Promise<Record<string, Tool<any, any, any, any>>> {
+    const prep = this.prepared.get(connectionId)
+    if (!prep) {
+      throw new Error(
+        `[external-mcps] no prepared lazy connection for ${connectionId}`,
+      )
+    }
+    try {
+      const { toolset, disconnect } = await this.opener(prep)
+      // A connection that opens but exposes ZERO tools, on an OAuth server, is
+      // almost always an expired/unauthorized session (the upstream hides its
+      // tools until authorized) rather than a genuinely empty server. Reject
+      // it as auth-required — the same classification as the eager mount's
+      // zero-tools branch — so the proxy tool prompts a reconnect instead of
+      // failing later with a confusing "no longer advertises tool" error.
+      if (prep.authKind === 'oauth' && Object.keys(toolset).length === 0) {
+        await disconnect().catch(() => {})
+        throw new ExternalMcpAuthRequiredError({
+          connectionId,
+          connectionName: prep.connectionName,
+          message:
+            `[external-mcps] connection "${prep.connectionName}" advertised no ` +
+            `tools; its OAuth session looks unauthorized and needs re-authorization.`,
+        })
+      }
+      this.disconnects.set(connectionId, disconnect)
+      return toolset
+    } catch (err) {
+      this.toolsets.delete(connectionId) // let a later call retry post-reconnect
+      if (err instanceof ExternalMcpAuthRequiredError) throw err
+      if (prep.authKind === 'oauth') {
+        throw new ExternalMcpAuthRequiredError({
+          connectionId,
+          connectionName: prep.connectionName,
+          message:
+            `[external-mcps] connection "${prep.connectionName}" (${prep.transport}) ` +
+            `could not list tools (OAuth session likely expired): ${errMsg(err)}`,
+        })
+      }
+      throw new Error(
+        `[external-mcps] connection "${prep.connectionName}" (${prep.transport}) ` +
+          `failed to list tools: ${errMsg(err)}`,
+      )
+    }
+  }
+
+  /** Disconnect every lazily-opened client. Idempotent. The shared log broker
+   *  is owned by the caller and destroyed separately. */
+  async disconnectClients(): Promise<void> {
+    const live = [...this.disconnects.values()]
+    this.disconnects.clear()
+    this.toolsets.clear()
+    await Promise.allSettled(live.map((d) => d()))
+  }
+}
+
+/** Production opener: spins up the real `MCPClient`, pipes stdio stderr to the
+ *  broker, and lists its toolset. Cleans up the client if listing fails. */
+function defaultLazyOpener(
+  agentId: string,
+  logBroker: LogBroker,
+): LazyConnectionOpener {
+  return async (prep) => {
+    const client = new MCPClient({
+      id: `external-${prep.connectionId}-${agentId}-lazy`,
+      servers: { ext: prep.serverDef },
+      timeout: 30_000,
+    })
+    try {
+      const toolsets = await client.listToolsets()
+      // stderr piping needs the client CONNECTED, which only happens inside
+      // `listToolsets()` above — so attach the reader here, AFTER the connect,
+      // not before it. (The eager path does the same; see attachStderrReader's
+      // note. Attaching pre-connect made `getServerStderr` return null and the
+      // reader silently no-op, dropping every lazy stdio MCP's logs.)
+      if (prep.transport === 'stdio') {
+        attachStderrReader({
+          broker: logBroker,
+          client,
+          connectionId: prep.connectionId,
+          connectionName: prep.connectionName,
+        })
+      }
+      return {
+        toolset: toolsets.ext ?? {},
+        disconnect: () => safeDisconnect(client),
+      }
+    } catch (err) {
+      await safeDisconnect(client)
+      throw err
+    }
+  }
+}
+
+/** Hard ceiling for a single MCP tool invocation (connection open + upstream
+ *  call). A hung/unresponsive server must not wedge the agent step forever: on
+ *  timeout we resolve with an error RESULT (not a throw) so the step completes,
+ *  the model gets feedback, and the run's `maxSteps` can bound any retry loop.
+ *  Generous enough for legitimately slow tools; the MCP client's own 30s
+ *  timeout normally fires first — this is the backstop for when it doesn't. */
+const MCP_TOOL_CALL_TIMEOUT_MS = 60_000
+
+async function withMcpCallTimeout(
+  connectionName: string,
+  rawName: string,
+  timeoutMs: number,
+  work: () => Promise<unknown>,
+): Promise<unknown> {
+  return new Promise<unknown>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      resolve({
+        status: 'error',
+        message:
+          `The "${connectionName}" tool "${rawName}" did not respond within ` +
+          `${Math.round(timeoutMs / 1000)}s and was aborted. Do ` +
+          `not retry it immediately; verify the arguments are valid and the ` +
+          `connection is reachable.`,
+      })
+    }, timeoutMs)
+    work().then(
+      (v) => {
+        clearTimeout(timer)
+        resolve(v)
+      },
+      (e) => {
+        clearTimeout(timer)
+        reject(e)
+      },
+    )
+  })
+}
+
+/**
+ * Build a proxy Mastra tool from a STORED schema. The model sees the schema
+ * verbatim; the upstream MCP connection is only opened (via `manager`) when
+ * the model actually invokes the tool.
+ */
+export function buildLazyTool(args: {
+  readonly slug: string
+  readonly connectionId: string
+  readonly connectionName: string
+  readonly rawName: string
+  readonly stored: ConnectionToolSchema
+  readonly manager: LazyToolsetSource
+  /** Override the per-call timeout (ms). Defaults to MCP_TOOL_CALL_TIMEOUT_MS;
+   *  injectable so tests can exercise the hang path without waiting 60s. */
+  readonly timeoutMs?: number
+}): Tool<any, any, any, any> {
+  const { slug, connectionId, connectionName, rawName, stored, manager } = args
+  const callTimeoutMs = args.timeoutMs ?? MCP_TOOL_CALL_TIMEOUT_MS
+  return createTool({
+    id: `${slug}__${rawName}`,
+    description: stored.description ?? '',
+    inputSchema: toStandardSchema(stored.inputSchema),
+    execute: (input, ctx) =>
+      // Bound the whole invocation (connection open + upstream call) so a hung
+      // MCP server can't wedge the step forever. On timeout this resolves with
+      // an error result instead of hanging.
+      withMcpCallTimeout(connectionName, rawName, callTimeoutMs, async () => {
+        let toolset: Record<string, Tool<any, any, any, any>>
+        try {
+          toolset = await manager.getToolset(connectionId)
+        } catch (err) {
+          if (err instanceof ExternalMcpAuthRequiredError) {
+            // The lazy connection's OAuth session is dead. Prompt the chat to
+            // reconnect (non-fatal) and hand the model a clear message instead
+            // of crashing the run.
+            const runCtx = getInspectorRunContext()
+            if (runCtx) {
+              await emitInspectorEvent('run.mcp.authorize_required', {
+                runId: runCtx.runId,
+                connectionId: err.connectionId,
+                connectionName: err.connectionName,
+              } satisfies RunMcpAuthorizeRequiredPayload)
+            }
+            return {
+              status: 'authorize_required',
+              message:
+                `The "${connectionName}" connection needs re-authorization before ` +
+                `this tool can run. The user has been shown a Reconnect button; ` +
+                `ask them to reconnect, then retry.`,
+            }
+          }
+          throw err
+        }
+        const real = toolset[rawName]
+        if (!real || typeof real.execute !== 'function') {
+          throw new Error(
+            `[external-mcps] connection "${connectionName}" no longer advertises ` +
+              `tool "${rawName}"; re-discover its tools.`,
+          )
+        }
+        return real.execute(input, ctx)
+      }),
+  }) as Tool<any, any, any, any>
+}
+
+/** Whether a stored catalog schema is rich enough to drive a LAZY proxy tool.
+ *  Rejects Mastra's empty StandardSchema wrapper (`~standard`) and an
+ *  unconstrained `{}` (a capture miss) — both advertise NO arguments to the
+ *  model, so it would call the tool with `{}` and the call would hang. A real
+ *  MCP input schema is an object schema (has `type` / `properties` / a
+ *  combinator / `$ref`). When this returns false the connection falls back to
+ *  eager mount, which serves the model a real schema from the live tool. */
+function isUsableLazySchema(schema: unknown): boolean {
+  if (typeof schema !== 'object' || schema === null || Array.isArray(schema)) {
+    return false
+  }
+  const s = schema as Record<string, unknown>
+  if ('~standard' in s) return false
+  return (
+    'type' in s ||
+    'properties' in s ||
+    '$ref' in s ||
+    'anyOf' in s ||
+    'allOf' in s ||
+    'oneOf' in s
+  )
+}
+
+/**
+ * Fetch the agent's allowlist + per-connection tool catalog and return a
+ * merged tool dict keyed by `${slug}__${rawName}`. Returns `null` when
+ * there's nothing to mount (no allowlist rows, or caller passed
+ * `disabled: true`).
+ *
+ * Hybrid mount: a connection whose selected tools are all present in the
+ * stored catalog (`mcp_connection_tools`) is mounted LAZILY — proxy tools
+ * built from the stored schemas, no socket opened until the model calls one.
+ * A connection with a missing/incomplete catalog falls back to the EAGER
+ * `mountOneConnection` (which also degrades on expired OAuth). Decryption of
+ * secrets happens at build either way so the run-redactor stays correct.
  */
 export async function mountExternalMcps(
   input: MountExternalMcpsInput,
@@ -200,21 +555,120 @@ export async function mountExternalMcps(
 
   const grouped = groupByConnection(allowlist)
 
-  const clients: MCPClient[] = []
+  const clients: MCPClient[] = [] // eagerly-mounted live clients
   const mergedTools: Record<string, Tool<any, any, any, any>> = {}
   const perConnection: MountedConnectionMeta[] = []
+  const needsAuth: ExternalMcpNeedsAuth[] = []
   const secrets: string[] = []
   const logBroker = new LogBroker()
+  const lazy = new LazyMcpConnections(agentId, logBroker)
+
+  // Merge with a collision guard. Defence in depth: `${slug}__${rawName}`
+  // keying + globally-unique connection names make a clash near-impossible
+  // (needs a slug collapse AND a matching raw tool name). Surface loudly
+  // rather than silently shadowing one connection's tool with another's.
+  const addTool = (key: string, tool: Tool<any, any, any, any>): void => {
+    if (key in mergedTools) {
+      throw new Error(
+        `[external-mcps] tool key collision on "${key}" between two ` +
+          `connections — rename one of the mcp_connections so their ` +
+          `slugs differ.`,
+      )
+    }
+    mergedTools[key] = tool
+  }
+
+  // Idempotent teardown: eager + lazily-opened clients, then the log broker.
+  // Used on build failure and as the returned `disconnect`. Lazy clients
+  // accumulate during the run (on first tool call), so this reads the live
+  // sets at teardown time.
+  let tornDown = false
+  const teardown = async (): Promise<void> => {
+    if (tornDown) return
+    tornDown = true
+    // Stop fanning out stderr before killing the children, so we don't
+    // dispatch log events to subscribers mid-teardown.
+    logBroker.destroy()
+    await Promise.allSettled([
+      ...clients.map((c) => safeDisconnect(c)),
+      lazy.disconnectClients(),
+    ])
+  }
 
   try {
     for (const group of grouped) {
-      const mounted = await mountOneConnection({ db, agentId, group, secrets })
-      clients.push(mounted.client)
-      perConnection.push(mounted.meta)
+      const catalog = await mcpToolsRepo.loadConnectionToolCatalog(
+        db.db,
+        group.connectionId,
+      )
+      const byName = new Map(catalog.map((t) => [t.name, t]))
+      // Lazy-eligible only when EVERY selected tool has a USABLE stored schema.
+      // A poisoned catalog (Mastra's empty `~standard` wrapper, or an
+      // unconstrained `{}` from a capture miss) would advertise no arguments to
+      // the model — it would call the tool with `{}` and the call would hang.
+      // Treat such a connection as un-cataloged so it falls back to EAGER mount,
+      // which keeps the live Zod-backed tool and a real model-facing schema.
+      // A discover/reconnect with the fixed capture path rewrites the catalog,
+      // and the next build goes lazy.
+      const allCataloged =
+        group.selectedTools.length > 0 &&
+        group.selectedTools.every((name) => {
+          const stored = byName.get(name)
+          return stored !== undefined && isUsableLazySchema(stored.inputSchema)
+        })
 
-      // Only stdio clients produce stderr output. http/sse transports
-      // go over the wire and any diagnostics come back through the
-      // JSON-RPC error path — there's nothing to pipe.
+      if (allCataloged) {
+        // LAZY: proxy tools from stored schemas; the socket waits for the
+        // model to actually call one of them.
+        const { slug, serverDef } = prepareConnection(group, db, secrets)
+        lazy.register({
+          connectionId: group.connectionId,
+          connectionName: group.connectionName,
+          transport: group.transport,
+          authKind: group.authKind,
+          serverDef,
+        })
+        for (const rawName of group.selectedTools) {
+          addTool(
+            `${slug}__${rawName}`,
+            buildLazyTool({
+              slug,
+              connectionId: group.connectionId,
+              connectionName: group.connectionName,
+              rawName,
+              stored: byName.get(rawName)!,
+              manager: lazy,
+            }),
+          )
+        }
+        perConnection.push({
+          id: group.connectionId,
+          name: group.connectionName,
+          slug,
+          transport: group.transport,
+          selectedTools: [...group.selectedTools],
+          missingTools: [],
+          mountedToolCount: group.selectedTools.length,
+        })
+        continue
+      }
+
+      // EAGER fallback: catalog missing/incomplete → open the connection now
+      // (a discover/reconnect populates the catalog and the next build goes
+      // lazy). Still degrades on expired OAuth via the typed error.
+      let mounted: MountedConnection
+      try {
+        mounted = await mountOneConnection({ db, agentId, group, secrets })
+      } catch (err) {
+        if (err instanceof ExternalMcpAuthRequiredError) {
+          needsAuth.push({ id: err.connectionId, name: err.connectionName })
+          continue
+        }
+        throw err
+      }
+      clients.push(mounted.client)
+      // Only stdio clients produce stderr output. http/sse diagnostics come
+      // back through the JSON-RPC error path — nothing to pipe.
       if (group.transport === 'stdio') {
         attachStderrReader({
           broker: logBroker,
@@ -223,27 +677,13 @@ export async function mountExternalMcps(
           connectionName: group.connectionName,
         })
       }
-
       for (const [key, tool] of Object.entries(mounted.tools)) {
-        if (key in mergedTools) {
-          // Defence in depth. Given the `${slug}__${rawName}` keying and
-          // the fact that `mcp_connections.name` is globally unique, a
-          // collision here implies a slug collapse ("Notion A" vs "Notion
-          // B" both slugify to `notion_a`/`notion_b`) AND a matching raw
-          // tool name. Rare but surface it loudly rather than letting one
-          // silently replace the other.
-          throw new Error(
-            `[external-mcps] tool key collision on "${key}" between two ` +
-              `connections — rename one of the mcp_connections so their ` +
-              `slugs differ.`,
-          )
-        }
-        mergedTools[key] = tool
+        addTool(key, tool)
       }
+      perConnection.push(mounted.meta)
     }
   } catch (err) {
-    logBroker.destroy()
-    await Promise.allSettled(clients.map((c) => safeDisconnect(c)))
+    await teardown()
     throw err
   }
 
@@ -254,13 +694,14 @@ export async function mountExternalMcps(
     tools: mergedTools,
     secrets,
     meta: {
-      mounted: true,
-      connectionCount: perConnection.length,
+      mounted: perConnection.length > 0,
+      connectionCount: grouped.length,
       toolCount,
       perConnection,
+      needsAuth,
     },
     subscribeLogs: (handler) => logBroker.subscribe(handler),
-    disconnect: buildMergedDisconnect(clients, logBroker),
+    disconnect: teardown,
   }
 }
 
@@ -301,23 +742,28 @@ interface MountedConnection {
   readonly meta: MountedConnectionMeta
 }
 
-async function mountOneConnection(args: {
-  readonly db: AgentBridgeDb
-  readonly agentId: string
-  readonly group: ConnectionGroup
-  readonly secrets: string[]
-}): Promise<MountedConnection> {
-  const { db, agentId, group, secrets } = args
+/**
+ * Decrypt a connection's secrets (collecting them for the run-redactor),
+ * build its OAuth provider if needed, and assemble the `MCPClient` server
+ * definition — everything EXCEPT opening the connection. Shared by the eager
+ * `mountOneConnection` and the lazy connection manager so the two never drift
+ * on secret handling or transport config.
+ */
+function prepareConnection(
+  group: ConnectionGroup,
+  db: AgentBridgeDb,
+  secrets: string[],
+): { slug: string; serverDef: ServerDef } {
   const slug = slugifyConnectionName(group.connectionName)
 
-  // Decrypt exactly what the transport needs. Keeping the decryption
-  // transport-conditional avoids building a bag of plaintext for http
-  // rows (which have no `env`) or stdio rows (which have no `headers`),
-  // which in turn keeps the `secrets` list minimal.
+  // Decrypt exactly what the transport needs (http rows have no env, stdio
+  // rows have no headers), keeping the `secrets` list minimal.
   const isHttp = group.transport === 'http' || group.transport === 'sse'
-
   const decryptedEnv = !isHttp
-    ? decryptMapEnvelope(group.envEnvelope, `connection ${group.connectionName} env`)
+    ? decryptMapEnvelope(
+        group.envEnvelope,
+        `connection ${group.connectionName} env`,
+      )
     : null
   const decryptedHeaders = isHttp
     ? decryptMapEnvelope(
@@ -325,22 +771,13 @@ async function mountOneConnection(args: {
         `connection ${group.connectionName} headers`,
       )
     : null
-
   collectSecretsFromMap(decryptedEnv, secrets)
   collectSecretsFromMap(decryptedHeaders, secrets)
 
-  // OAuth provider for HTTP/SSE connections that the operator authorized
-  // via the discover/test flow. Without this, runtime calls send NO
-  // `Authorization` header (or send a stale token from `headers`) and
-  // the server 401s — the operator would have to re-run the test flow
-  // every time the access token expires (typically 1h on Notion / 24h
-  // on Atlassian). With it: Mastra's provider reads the access token
-  // from `mcp_oauth_state`, transparently refreshes via the persisted
-  // refresh-token when expired, and writes the new tokens back to the
-  // same scope_key. The operator only sees a re-auth prompt when the
-  // refresh-token itself dies (rare; most providers issue long-lived
-  // ones), and that surfaces here as a thrown error from the
-  // `onRedirectToAuthorization` hook.
+  // OAuth provider for HTTP/SSE connections the operator authorized via the
+  // discover/test flow: Mastra reads the access token from `mcp_oauth_state`
+  // and transparently refreshes it. A dead refresh-token surfaces as a throw
+  // from `onRedirectToAuthorization` at list/call time.
   const authProvider = buildOauthProviderIfNeeded({
     db,
     transport: group.transport,
@@ -358,6 +795,18 @@ async function mountOneConnection(args: {
     allowHostHome: group.allowHostHome,
     authProvider,
   })
+
+  return { slug, serverDef }
+}
+
+async function mountOneConnection(args: {
+  readonly db: AgentBridgeDb
+  readonly agentId: string
+  readonly group: ConnectionGroup
+  readonly secrets: string[]
+}): Promise<MountedConnection> {
+  const { db, agentId, group, secrets } = args
+  const { slug, serverDef } = prepareConnection(group, db, secrets)
 
   // ID combines connection + agent: Mastra hashes config internally and
   // would otherwise share an `InternalMastraMCPClient` between two agents
@@ -381,6 +830,19 @@ async function mountOneConnection(args: {
     toolsets = await client.listToolsets()
   } catch (err) {
     await safeDisconnect(client)
+    // For an OAuth connection, a list-tools failure is overwhelmingly the
+    // provider's re-auth redirect firing (a dead refresh token; see the
+    // `buildOauthProviderIfNeeded` note above) rather than a network blip.
+    // Treat it as recoverable so the chat can offer a reconnect.
+    if (group.authKind === 'oauth') {
+      throw new ExternalMcpAuthRequiredError({
+        connectionId: group.connectionId,
+        connectionName: group.connectionName,
+        message:
+          `[external-mcps] connection "${group.connectionName}" (${group.transport}) ` +
+          `could not list tools (OAuth session likely expired): ${errMsg(err)}`,
+      })
+    }
     throw new Error(
       `[external-mcps] connection "${group.connectionName}" (${group.transport}) ` +
         `failed to list tools: ${errMsg(err)}`,
@@ -403,6 +865,20 @@ async function mountOneConnection(args: {
   const mountedToolCount = Object.keys(mountedTools).length
   if (mountedToolCount === 0) {
     await safeDisconnect(client)
+    // An OAuth connection that advertised ZERO tools is almost always an
+    // expired/absent session (the upstream hides its tools until authorized),
+    // not a bad allowlist. Surface it as recoverable so the chat prompts a
+    // reconnect. A name mismatch (advertised > 0 but none allowlisted) stays
+    // a loud config error.
+    if (group.authKind === 'oauth' && rawNames.size === 0) {
+      throw new ExternalMcpAuthRequiredError({
+        connectionId: group.connectionId,
+        connectionName: group.connectionName,
+        message:
+          `[external-mcps] connection "${group.connectionName}" advertised no ` +
+          `tools; its OAuth session looks unauthorized and needs re-authorization.`,
+      })
+    }
     throw new Error(
       `[external-mcps] connection "${group.connectionName}" advertised ` +
         `${rawNames.size} tool(s) but none matched the allowlist ` +
@@ -748,28 +1224,6 @@ async function safeDisconnect(client: MCPClient): Promise<void> {
     // Swallow — if `disconnect()` itself errors we have bigger problems,
     // and we don't want the disconnect-time failure to mask the original
     // error that led us here (matches the gitnexus mount's policy).
-  }
-}
-
-function buildMergedDisconnect(
-  clients: readonly MCPClient[],
-  broker: LogBroker,
-): () => Promise<void> {
-  let done = false
-  return async () => {
-    if (done) return
-    done = true
-    // Tear down stderr readers BEFORE disconnecting clients — the
-    // readline interfaces close naturally when `disconnect()` kills
-    // the child and the stderr stream ends, but calling it first
-    // ensures we stop dispatching log events to subscribers the
-    // instant teardown begins.
-    broker.destroy()
-    // `Promise.allSettled` so one failing client's disconnect doesn't
-    // leave the others running. We swallow rejections from each — the
-    // caller's `finally` expects teardown to always succeed from its
-    // perspective.
-    await Promise.allSettled(clients.map((c) => safeDisconnect(c)))
   }
 }
 

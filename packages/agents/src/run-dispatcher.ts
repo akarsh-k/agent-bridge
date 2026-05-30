@@ -78,6 +78,7 @@ import {
   type RunEventKind,
   type RunFinishedPayload,
   type RunMcpLogPayload,
+  type RunMcpAuthorizeRequiredPayload,
   type RunModelCalledPayload,
   type RunModelResultPayload,
   type RunModelWaitingPayload,
@@ -324,6 +325,32 @@ export async function dispatchRun(input: DispatchRunInput): Promise<void> {
       runId,
       startedEvent,
     )
+
+    // Surface any OAuth connections skipped at build time because they need
+    // re-authorization (the resilient external-MCP mount collected them).
+    // Non-fatal: the run proceeds without those tools; the chat renders a
+    // "Reconnect" button per entry and re-auths via the existing flow.
+    for (const conn of built.meta.externalMcps.needsAuth) {
+      const authEvent: RunEvent = {
+        kind: 'run.mcp.authorize_required',
+        ts: Date.now(),
+        streamId,
+        data: {
+          runId,
+          connectionId: conn.id,
+          connectionName: conn.name,
+        } satisfies RunMcpAuthorizeRequiredPayload,
+      }
+      await publishAndAudit(
+        db,
+        eventBus,
+        redactor,
+        streamId,
+        agentStreamId,
+        runId,
+        authEvent,
+      )
+    }
 
     batcher = new TokenBatcher({
       db,

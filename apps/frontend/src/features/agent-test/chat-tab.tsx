@@ -19,13 +19,15 @@ import { Markdown } from '../../ui/markdown'
 import {
   ArrowRightIcon,
   FileIcon,
+  PlugIcon,
   PlusIcon,
   RefreshIcon,
   SearchIcon,
   TrashIcon,
 } from '../../ui/icons'
+import { Button } from '../../ui/button'
 import { toast } from '../../ui/toast-store'
-import { ApiError } from '../../lib/rpc'
+import { ApiError, discoverMcpTools, pollMcpTest } from '../../lib/rpc'
 import type { ChatThreadMeta } from '../../lib/use-chat'
 
 interface MentionItem {
@@ -780,6 +782,13 @@ function MessageRow({
             {msg.errorMessage}
           </div>
         )}
+        {msg.authorizeRequired?.map((conn) => (
+          <McpReconnectNotice
+            key={conn.connectionId}
+            connectionId={conn.connectionId}
+            connectionName={conn.connectionName}
+          />
+        ))}
         <div className="ab-msg-meta">
           {formatTime(msg.createdAt)}
           {msg.durationMs !== undefined &&
@@ -795,6 +804,224 @@ function MessageRow({
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Inline "Reconnect" affordance shown under an assistant bubble when the
+ * run discovered an external MCP connection whose OAuth session had
+ * expired (the `run.mcp.authorize_required` event). Non-fatal: the run
+ * completed without that connection's tools, so this is a quiet nudge,
+ * not an error.
+ *
+ * Reuses the EXISTING connection test/authorize machinery — same shape
+ * as `attach-mcp-sheet.tsx` and the MCP detail page: discover, and if
+ * the server says `authorize_required`, open the upstream consent popup
+ * and long-poll until the session goes terminal. The discover server-
+ * side invalidates the agent's tool cache, so on success the user only
+ * needs to resend their message. Popup + poll state is kept local to
+ * this notice so two connections on the same message reconnect
+ * independently.
+ */
+function McpReconnectNotice({
+  connectionId,
+  connectionName,
+}: {
+  connectionId: string
+  connectionName: string
+}) {
+  const [busy, setBusy] = useState(false)
+  const [reconnected, setReconnected] = useState(false)
+  // Live refs so the recursive poll loop + the cross-window message
+  // handler can coordinate the popup without re-subscribing each tick.
+  const popupRef = useRef<Window | null>(null)
+  const aliveRef = useRef(true)
+  // Synchronous in-flight guard. `busy` is React state, so a second
+  // click that lands in the same tick reads the stale render-closure
+  // value (`false`) and slips past `if (busy) return`, kicking off a
+  // second OAuth popup + poll loop. This ref flips true synchronously
+  // at the top of `reconnect()` and clears when the loop ends, so a
+  // second click is a true no-op.
+  const inFlightRef = useRef(false)
+  // Set once we've opened (or attempted to open) the popup for this
+  // reconnect attempt, so the poll loop can watch for the user closing
+  // it before completing OAuth and stop instead of hanging until the
+  // server session TTL.
+  const popupOpenedRef = useRef(false)
+
+  useEffect(() => {
+    aliveRef.current = true
+    // The OAuth callback page posts `mcp-oauth-complete` before closing
+    // itself; close on our side too as a belt-and-suspenders.
+    const onMessage = (e: MessageEvent) => {
+      if (
+        e.data &&
+        typeof e.data === 'object' &&
+        (e.data as { type?: unknown }).type === 'mcp-oauth-complete'
+      ) {
+        if (popupRef.current && !popupRef.current.closed) {
+          popupRef.current.close()
+        }
+        popupRef.current = null
+      }
+    }
+    window.addEventListener('message', onMessage)
+    return () => {
+      aliveRef.current = false
+      inFlightRef.current = false
+      window.removeEventListener('message', onMessage)
+      if (popupRef.current && !popupRef.current.closed) {
+        popupRef.current.close()
+      }
+      popupRef.current = null
+    }
+  }, [])
+
+  const reconnect = async () => {
+    // Synchronous re-entrancy guard (see `inFlightRef`). Must run before
+    // any `await` so two clicks in the same tick can't both proceed.
+    if (inFlightRef.current) return
+    inFlightRef.current = true
+    setBusy(true)
+    popupOpenedRef.current = false
+
+    // Single exit point: close the popup, re-enable the button, and
+    // clear the in-flight guard so a later retry can start fresh. Every
+    // terminal branch below routes through here.
+    const stop = (): void => {
+      if (popupRef.current && !popupRef.current.closed) {
+        popupRef.current.close()
+      }
+      popupRef.current = null
+      popupOpenedRef.current = false
+      inFlightRef.current = false
+      setBusy(false)
+    }
+
+    const apply = async (
+      res: Awaited<ReturnType<typeof discoverMcpTools>>,
+    ): Promise<void> => {
+      if (!aliveRef.current) return
+      if (res.ok) {
+        if (popupRef.current && !popupRef.current.closed) {
+          popupRef.current.close()
+        }
+        popupRef.current = null
+        popupOpenedRef.current = false
+        inFlightRef.current = false
+        setReconnected(true)
+        setBusy(false)
+        toast.success(`Reconnected ${connectionName}`)
+        return
+      }
+      if (res.code === 'authorize_required' && res.sessionId) {
+        if (res.authorizeUrl && !popupRef.current) {
+          const popup = window.open(
+            res.authorizeUrl,
+            'agent-bridge-mcp-oauth',
+            'popup,width=520,height=720',
+          )
+          // Popup blocked: `window.open` returns null. Surface a clear
+          // nudge and STOP — do not let the loop retry `window.open`
+          // every poll tick (it would spam blocked-popup attempts and
+          // never converge).
+          if (!popup) {
+            toast.error(`Allow popups to reconnect ${connectionName}.`)
+            stop()
+            return
+          }
+          popupRef.current = popup
+          popupOpenedRef.current = true
+        }
+        const sessionId = res.sessionId
+        await new Promise((r) => setTimeout(r, 1500))
+        if (!aliveRef.current) return
+        // Abandoned popup: the user closed the consent window before
+        // finishing OAuth. Stop instead of polling until the server
+        // session TTL (~5 min) leaves the button disabled.
+        if (popupOpenedRef.current && popupRef.current?.closed) {
+          stop()
+          return
+        }
+        const next = await pollMcpTest(
+          connectionId,
+          sessionId,
+          'authorize_required',
+        )
+        return apply(next)
+      }
+      // Any other non-ok code is a genuine failure — surface it and
+      // re-enable the button so the user can retry.
+      toast.error(res.message ?? `Reconnect failed (${res.code})`)
+      stop()
+    }
+    try {
+      const res = await discoverMcpTools(connectionId, {})
+      await apply(res)
+    } catch (e) {
+      if (!aliveRef.current) {
+        // Component unmounted mid-flight — still clear the guard so a
+        // remount can reconnect. (No toast: nothing is on screen.)
+        inFlightRef.current = false
+        return
+      }
+      toast.error(
+        e instanceof ApiError
+          ? e.message
+          : e instanceof Error
+            ? e.message
+            : 'Reconnect failed',
+      )
+      stop()
+    }
+  }
+
+  if (reconnected) {
+    return (
+      <div
+        className="ab-msg-bubble"
+        role="status"
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          fontSize: 13,
+          color: 'var(--text-muted)',
+        }}
+      >
+        <PlugIcon strokeWidth={2} />
+        Reconnected. Resend your message to use {connectionName}.
+      </div>
+    )
+  }
+
+  return (
+    <div
+      className="ab-msg-bubble"
+      role="status"
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 10,
+        flexWrap: 'wrap',
+        fontSize: 13,
+        color: 'var(--text-muted)',
+      }}
+    >
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <PlugIcon strokeWidth={2} />
+        {connectionName} needs reconnecting
+      </span>
+      <Button
+        variant="secondary"
+        size="sm"
+        onClick={reconnect}
+        disabled={busy}
+        leading={busy ? <ThinkingDots /> : undefined}
+      >
+        {busy ? 'Reconnecting…' : `Reconnect ${connectionName}`}
+      </Button>
     </div>
   )
 }

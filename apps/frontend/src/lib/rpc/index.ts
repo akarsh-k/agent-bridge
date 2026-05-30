@@ -606,6 +606,36 @@ export async function listRuns(
   return { ok: true, runs: res.runs }
 }
 
+/**
+ * For each run id, the external-MCP connections that run flagged as
+ * needing re-auth (reconstructed server-side from persisted
+ * `run.mcp.authorize_required` events). Powers the chat's durable
+ * "Reconnect" notice — the live SSE frame is often missed on warm-cache
+ * runs and is never replayed, so the chat reconciles against this on
+ * missed-event recovery and on thread load.
+ *
+ * Short-circuits without a request when `runIds` is empty. Same
+ * Hono-mount caveat as `listRuns` — the runs router is a sub-mount, so
+ * we type the response via a cast on `callApi`'s generic.
+ */
+export async function fetchRunsAuthorizeRequired(
+  runIds: string[],
+): Promise<
+  import('@agent-bridge/shared').RunAuthorizeRequiredResponse['byRun']
+> {
+  if (runIds.length === 0) return {}
+  const res = await callApi<
+    import('@agent-bridge/shared').RunAuthorizeRequiredResponse
+  >(
+    fetch(`${apiBaseUrl}/api/runs/authorize-required`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ runIds }),
+    }),
+  )
+  return res.byRun
+}
+
 // ─── LLM provider helpers ────────────────────────────────────────────────
 
 /**

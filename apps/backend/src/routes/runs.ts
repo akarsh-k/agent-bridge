@@ -30,14 +30,17 @@
 
 import { zValidator } from '@hono/zod-validator'
 import { Hono } from 'hono'
-import { and, asc, desc, eq, like } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, like } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   callsiteSchema,
   elideRunEventPayload,
   RUN_LIST_PREVIEW_CHARS,
+  runAuthorizeRequiredQuerySchema,
   runListQuerySchema,
   type Callsite,
+  type RunAuthorizeRequiredConnection,
+  type RunAuthorizeRequiredResponse,
   type RunDetailEvent,
   type RunDetailResponse,
   type RunDetailRow,
@@ -313,6 +316,48 @@ export const runsRouter = new Hono().get(
     }
 
     const body: RunEventPayloadResponse = { ok: true, payload: ev.payloadJson }
+    return c.json(body)
+  },
+).post(
+  '/authorize-required',
+  zValidator('json', runAuthorizeRequiredQuerySchema, (result, c) => {
+    if (!result.success) return httpValidationError(c, result.error)
+  }),
+  async (c) => {
+    const { runIds } = c.req.valid('json')
+    const byRun: Record<string, RunAuthorizeRequiredConnection[]> = {}
+    if (runIds.length > 0) {
+      const handle = getDb()
+      const rows = await handle.db
+        .select({
+          runId: schema.runEvents.runId,
+          payloadJson: schema.runEvents.payloadJson,
+        })
+        .from(schema.runEvents)
+        .where(
+          and(
+            inArray(schema.runEvents.runId, runIds),
+            eq(schema.runEvents.kind, 'run.mcp.authorize_required'),
+          ),
+        )
+        .orderBy(asc(schema.runEvents.id))
+      for (const row of rows) {
+        const p = row.payloadJson as {
+          connectionId?: unknown
+          connectionName?: unknown
+        } | null
+        const connectionId =
+          typeof p?.connectionId === 'string' ? p.connectionId : null
+        const connectionName =
+          typeof p?.connectionName === 'string' ? p.connectionName : null
+        if (!connectionId || !connectionName) continue
+        const list = (byRun[row.runId] ??= [])
+        if (!list.some((existing) => existing.connectionId === connectionId)) {
+          list.push({ connectionId, connectionName })
+        }
+      }
+    }
+    const body: RunAuthorizeRequiredResponse = { ok: true, byRun }
     return c.json(body)
   },
 )

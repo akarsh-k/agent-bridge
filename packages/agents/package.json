@@ -25,7 +25,9 @@
     "typecheck": "tsc --noEmit",
     "smoke": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke.ts",
     "smoke:gitnexus-query": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke-gitnexus-query.ts",
-    "smoke:keyword-search": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke-keyword-search.ts"
+    "smoke:keyword-search": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke-keyword-search.ts",
+    "smoke:lazy-mcp": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke-lazy-mcp.ts",
+    "smoke:mcp-discovery": "NODE_OPTIONS='--conditions=development' tsx scripts/smoke-mcp-discovery.ts"
   },
   "author": "Akarsh K (https://github.com/akarsh-k)",
   "license": "PolyForm-Noncommercial-1.0.0",

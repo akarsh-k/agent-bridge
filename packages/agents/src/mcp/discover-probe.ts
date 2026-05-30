@@ -124,13 +124,7 @@ export async function discoverMcpTools(
     // The Tool object carries `description` and `inputSchema`, but the
     // shape is Mastra's (wraps MCP's). We peel just the pieces the UI
     // renders and the picker sends back to PUT allowlist.
-    const tools: DiscoveredProbeTool[] = Object.entries(raw).map(
-      ([name, tool]) => ({
-        name,
-        description: extractDescription(tool),
-        inputSchema: extractInputSchema(tool),
-      }),
-    )
+    const tools = await buildDiscoveredTools(client, 'ext', raw)
 
     return {
       ok: true,
@@ -287,13 +281,7 @@ export async function discoverMcpToolsOAuth(
     try {
       const toolsets = await client.listToolsets()
       const raw = toolsets.ext ?? {}
-      const tools: DiscoveredProbeTool[] = Object.entries(raw).map(
-        ([name, tool]) => ({
-          name,
-          description: extractDescription(tool),
-          inputSchema: extractInputSchema(tool),
-        }),
-      )
+      const tools = await buildDiscoveredTools(client, 'ext', raw)
       return {
         ok: true,
         kind: 'authorized',
@@ -404,13 +392,81 @@ function extractDescription(tool: unknown): string | null {
 
 function extractInputSchema(tool: unknown): Record<string, unknown> {
   if (!isRecord(tool)) return {}
-  // Mastra's `createTool` converts the upstream JSON schema into a Zod
-  // schema internally, but the original JSON schema is kept on the
-  // wrapping object under `inputSchema` (sometimes as Zod, sometimes
-  // raw). We don't need a strict type here — the UI will render it
-  // best-effort and fall back to "no arguments" when nothing is shaped.
+  // Fallback only. Mastra converts the upstream JSON Schema to Zod and the
+  // listed tool exposes just an EMPTY StandardSchema export
+  // (`{~standard:{...jsonSchema:{}}}`) — useless for the catalog. The real
+  // schema comes from `fetchRawInputSchemas`; this is the last resort when
+  // that internal path is unavailable. Unwrap a StandardSchema to its
+  // jsonSchema rather than returning the wrapper, so we never persist
+  // `~standard` into the catalog.
   const schema = tool['inputSchema']
-  return isRecord(schema) ? schema : {}
+  if (!isRecord(schema)) return {}
+  const std = schema['~standard']
+  if (isRecord(std) && isRecord(std['jsonSchema'])) return std['jsonSchema']
+  if ('~standard' in schema) return {}
+  return schema
+}
+
+/** Mastra (1.x) only exposes an empty StandardSchema export on listed tools
+ *  (`tool.inputSchema == {~standard:{...jsonSchema:{}}}`): it converts the
+ *  upstream JSON Schema to Zod and drops the JSON form. The real schema still
+ *  lives on the underlying MCP SDK client, reachable through Mastra's
+ *  connected-client accessor — we pull it from there so the catalog stores a
+ *  schema the model can actually fill (type/properties/required). */
+interface RawSchemaCapableClient {
+  getConnectedClientForServer?: (
+    serverName: string,
+  ) => Promise<{ client?: RawMcpSdkClient } | null | undefined>
+}
+interface RawMcpSdkClient {
+  listTools?: () => Promise<{ tools?: unknown }>
+}
+
+/** toolName → RAW JSON Schema for the connected server. Best-effort: returns
+ *  an empty map if the internal accessor is gone (Mastra version drift), so
+ *  callers fall back to `extractInputSchema`. The client must already be
+ *  connected (the caller lists toolsets first). */
+async function fetchRawInputSchemas(
+  client: MCPClient,
+  serverName: string,
+): Promise<Map<string, Record<string, unknown>>> {
+  const out = new Map<string, Record<string, unknown>>()
+  try {
+    const capable = client as unknown as RawSchemaCapableClient
+    const inner = await capable.getConnectedClientForServer?.(serverName)
+    const sdk = inner?.client
+    if (!sdk || typeof sdk.listTools !== 'function') return out
+    const res = await sdk.listTools()
+    const tools: unknown[] = Array.isArray(res.tools) ? res.tools : []
+    for (const t of tools) {
+      if (
+        isRecord(t) &&
+        typeof t['name'] === 'string' &&
+        isRecord(t['inputSchema'])
+      ) {
+        out.set(t['name'], t['inputSchema'])
+      }
+    }
+  } catch {
+    // best-effort — caller falls back to per-tool extraction.
+  }
+  return out
+}
+
+/** Build the discovered-tool list, attaching each tool's RAW JSON Schema
+ *  (not Mastra's empty StandardSchema export). Falls back to
+ *  `extractInputSchema` for any tool the raw path didn't cover. */
+async function buildDiscoveredTools(
+  client: MCPClient,
+  serverName: string,
+  rawToolset: Record<string, unknown>,
+): Promise<DiscoveredProbeTool[]> {
+  const rawSchemas = await fetchRawInputSchemas(client, serverName)
+  return Object.entries(rawToolset).map(([name, tool]) => ({
+    name,
+    description: extractDescription(tool),
+    inputSchema: rawSchemas.get(name) ?? extractInputSchema(tool),
+  }))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

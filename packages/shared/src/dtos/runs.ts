@@ -417,3 +417,38 @@ export const runEventPayloadResponseSchema = z.object({
 export type RunEventPayloadResponse = z.infer<
   typeof runEventPayloadResponseSchema
 >
+
+/**
+ * `POST /api/runs/authorize-required` — given a batch of run ids, return the
+ * external-MCP connections each run flagged as needing re-authorization (from
+ * the persisted `run.mcp.authorize_required` events). Lets the chat
+ * reconstruct the "Reconnect" notice durably (after reload) and reliably
+ * (when the live SSE frame was missed on a warm-cache run), without replaying
+ * the whole event stream.
+ */
+export const runAuthorizeRequiredQuerySchema = z.object({
+  runIds: z.array(z.uuid()).max(500),
+})
+export type RunAuthorizeRequiredQuery = z.infer<
+  typeof runAuthorizeRequiredQuerySchema
+>
+
+export const runAuthorizeRequiredConnectionSchema = z.object({
+  connectionId: z.string(),
+  connectionName: z.string(),
+})
+export type RunAuthorizeRequiredConnection = z.infer<
+  typeof runAuthorizeRequiredConnectionSchema
+>
+
+export const runAuthorizeRequiredResponseSchema = z.object({
+  ok: z.literal(true),
+  /** Keyed by runId; only runs with ≥1 flagged connection appear. */
+  byRun: z.record(
+    z.string(),
+    z.array(runAuthorizeRequiredConnectionSchema),
+  ),
+})
+export type RunAuthorizeRequiredResponse = z.infer<
+  typeof runAuthorizeRequiredResponseSchema
+>

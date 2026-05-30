@@ -33,7 +33,7 @@
  * Node-only.
  */
 
-import { and, eq, inArray, sql } from 'drizzle-orm'
+import { and, eq, gt, inArray, lt, notExists, sql } from 'drizzle-orm'
 import type { Callsite } from '@agent-bridge/shared'
 import type { AgentBridgeDb } from './client.js'
 import { runEvents, runs, type RunEventRow, type RunRow } from './schema.js'
@@ -280,6 +280,53 @@ export async function markError(
     .where(and(eq(runs.id, runId), inArray(runs.status, ['pending', 'running'])))
     .returning()
   return row ?? null
+}
+
+/**
+ * Watchdog reaper for runs wedged in a non-terminal state. Marks every run
+ * still `pending`/`running` that has made NO PROGRESS for `olderThanMs` — i.e.
+ * started that long ago AND emitted no `run_events` since the cutoff — as
+ * `error` (with a stamped `finished_at`); returns the count.
+ *
+ * Keying on event activity, not just `started_at`, is deliberate. The backend
+ * dispatches runs fire-and-forget, so a crashed/restarted process leaves runs
+ * stuck in `running` forever — but a LEGITIMATELY long run (high `maxSteps`, a
+ * slow local model) streams tokens the whole time and there is no wall-clock
+ * cap on the stream. Reaping on age alone would kill such a run mid-stream and,
+ * because `markCompleted` is CAS-guarded on `status='running'`, silently
+ * discard its finished answer. The activity guard reaps only runs that have
+ * genuinely stopped making progress (per-call timeouts + `maxSteps` keep a live
+ * run emitting). `error`, not a delete, keeps the run inspectable; resend.
+ */
+export async function reapStaleRunningRuns(
+  handle: AgentBridgeDb,
+  olderThanMs: number,
+): Promise<number> {
+  const cutoff = new Date(Date.now() - olderThanMs)
+  const rows = await handle.db
+    .update(runs)
+    .set({
+      status: 'error',
+      errorMessage:
+        'Run made no progress for too long and was stopped ' +
+        '(stuck, or the dispatching process exited). Resend to try again.',
+      finishedAt: sql`now()`,
+      updatedAt: sql`now()`,
+    })
+    .where(
+      and(
+        inArray(runs.status, ['pending', 'running']),
+        lt(runs.startedAt, cutoff),
+        notExists(
+          handle.db
+            .select({ one: sql`1` })
+            .from(runEvents)
+            .where(and(eq(runEvents.runId, runs.id), gt(runEvents.ts, cutoff))),
+        ),
+      ),
+    )
+    .returning({ id: runs.id })
+  return rows.length
 }
 
 // ─── event audit ────────────────────────────────────────────────────────

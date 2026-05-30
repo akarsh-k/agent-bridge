@@ -3,6 +3,7 @@ import { env } from './env.js'
 import {
   reposRepo,
   runMigrations,
+  runsRepo,
   workerJobsRepo,
 } from '@agent-bridge/db'
 import { assertExpectedGitnexusVersion } from '@agent-bridge/shared/gitnexus'
@@ -38,6 +39,12 @@ import { closeProducerQueues } from './jobs/enqueue.js'
  * Anything here that fails exits non-zero: dev script relies on that to
  * surface boot errors immediately.
  */
+
+/** A run streams for at most a few minutes; one still in `running` past this
+ *  is a crashed/abandoned dispatch (the backend dispatches fire-and-forget). */
+const RUN_STALE_CEILING_MS = 15 * 60_000
+/** How often the worker sweeps for orphaned runs while it stays up. */
+const RUN_WATCHDOG_INTERVAL_MS = 5 * 60_000
 
 async function main(): Promise<void> {
   const buildInfo = getAgentBridgeVersion()
@@ -85,10 +92,19 @@ async function main(): Promise<void> {
   try {
     const reapedJobs = await workerJobsRepo.reapStaleRunningJobs(getDb())
     const reapedRepos = await reposRepo.reapStuckTransitionalRepos(getDb())
-    if (reapedJobs > 0 || reapedRepos > 0) {
+    // Age-gated (unlike the blanket job/repo reap): runs are dispatched by the
+    // BACKEND, not the worker, so a worker restart must NOT kill a run the
+    // backend is legitimately streaming right now. Only runs older than the
+    // ceiling are orphans.
+    const reapedRuns = await runsRepo.reapStaleRunningRuns(
+      getDb(),
+      RUN_STALE_CEILING_MS,
+    )
+    if (reapedJobs > 0 || reapedRepos > 0 || reapedRuns > 0) {
       console.info(
         `[worker] boot reaper: ${reapedJobs} stale worker_jobs aborted, ` +
-          `${reapedRepos} stuck repos reset to error`,
+          `${reapedRepos} stuck repos reset to error, ` +
+          `${reapedRuns} stale runs errored`,
       )
     }
   } catch (err) {
@@ -361,6 +377,27 @@ async function main(): Promise<void> {
   )
   console.info('[worker] enqueued boot-smoke ping job')
 
+  // Run watchdog: keep sweeping for orphaned runs while the worker stays up.
+  // The boot reap only fires on restart, but a long-lived backend can orphan a
+  // run mid-session (e.g. a crash during a stream). Age-gated, best-effort, and
+  // unref'd so it never holds the process open.
+  const runWatchdog = setInterval(() => {
+    void runsRepo
+      .reapStaleRunningRuns(getDb(), RUN_STALE_CEILING_MS)
+      .then((n) => {
+        if (n > 0) {
+          console.info(`[worker] run watchdog: ${n} stale run(s) errored`)
+        }
+      })
+      .catch((err) => {
+        console.warn(
+          '[worker] run watchdog sweep failed (non-fatal):',
+          err instanceof Error ? err.message : String(err),
+        )
+      })
+  }, RUN_WATCHDOG_INTERVAL_MS)
+  runWatchdog.unref()
+
   let shuttingDown = false
   const shutdown = async (signal: NodeJS.Signals): Promise<void> => {
     if (shuttingDown) return
@@ -374,6 +411,7 @@ async function main(): Promise<void> {
     forceExit.unref()
 
     try {
+      clearInterval(runWatchdog)
       await Promise.all(workers.map((w) => w.close()))
       await Promise.all(queues.map((q) => q.close()))
       await closeProducerQueues()

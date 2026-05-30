@@ -698,6 +698,36 @@ export const agentMcpTools = pgTable(
   ],
 )
 
+// ─── mcp_connection_tools ────────────────────────────────────────────────
+// The tool catalog discovered for a connection: one row per upstream tool
+// (name + description + raw JSON input-schema). Populated whenever a
+// discover/test of the connection succeeds (`lib/mcp-connections/discover.ts`).
+//
+// Lets `buildAgent` construct the agent's external-MCP tools from STORED
+// schemas with NO live connection (lazy mount) — the MCP server is only
+// contacted when the LLM actually invokes a tool. The per-agent allowlist
+// (`agent_mcp_tools`) selects which of these names the agent may call; this
+// table holds the schema each name resolves to. Cascade-deletes with the
+// connection.
+export const mcpConnectionTools = pgTable(
+  'mcp_connection_tools',
+  {
+    mcpConnectionId: uuid('mcp_connection_id')
+      .notNull()
+      .references(() => mcpConnections.id, { onDelete: 'cascade' }),
+    toolName: text('tool_name').notNull(),
+    description: text('description'),
+    /** Raw JSON Schema for the tool's args, verbatim from the MCP server
+     *  (== `DiscoveredMcpTool.inputSchema`). Fed to `createTool` to build the
+     *  proxy tool the model sees. */
+    inputSchema: jsonb('input_schema')
+      .$type<Record<string, unknown>>()
+      .notNull(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [primaryKey({ columns: [t.mcpConnectionId, t.toolName] })],
+)
+
 // ─── bridge_tools ────────────────────────────────────────────────────────
 // Outbound MCP tools an agent exposes to IDEs (Cursor, Claude Code) via
 // `apps/mcp-bridge`. Distinct from `agent_mcp_tools` (which is the
@@ -1042,6 +1072,9 @@ export type McpConnectionInsert = typeof mcpConnections.$inferInsert
 
 export type AgentMcpToolRow = typeof agentMcpTools.$inferSelect
 export type AgentMcpToolInsert = typeof agentMcpTools.$inferInsert
+
+export type McpConnectionToolRow = typeof mcpConnectionTools.$inferSelect
+export type McpConnectionToolInsert = typeof mcpConnectionTools.$inferInsert
 
 export type BridgeToolRow = typeof bridgeTools.$inferSelect
 export type BridgeToolInsert = typeof bridgeTools.$inferInsert

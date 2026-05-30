@@ -27,6 +27,7 @@ import type {
   DiscoverProbeResult,
 } from '@agent-bridge/agents'
 import type { AgentBridgeDb } from '@agent-bridge/db'
+import { mcpToolsRepo } from '@agent-bridge/db'
 import { decryptSecret } from '@agent-bridge/shared/crypto'
 import {
   mcpConnectionDiscoverResponseSchema,
@@ -68,6 +69,73 @@ export interface McpTestContext {
   readonly redirectUrl: string
 }
 
+/**
+ * Cache a connection's discovered tool catalog for the lazy external-MCP
+ * mount (`packages/agents`). Best-effort: a failure here never breaks the
+ * discover response — the lazy mount falls back to a one-time eager fetch.
+ */
+async function persistCatalogBestEffort(
+  ctx: McpTestContext,
+  connectionId: string,
+  tools: readonly DiscoveredMcpTool[],
+): Promise<void> {
+  try {
+    // Never persist Mastra's empty StandardSchema wrapper — unwrap it to its
+    // JSON form so the catalog always holds a real schema the model can fill.
+    const cleaned = tools.map((t) => ({
+      ...t,
+      inputSchema: unwrapJsonSchema(t.inputSchema),
+    }))
+    // Surface a degenerate capture (every tool advertising NO arguments) — the
+    // exact failure that makes a model call MCP tools with empty `{}`. We still
+    // persist (the agent's hybrid mount falls back to eager when a catalog is
+    // unusable), but the operator gets a signal instead of a silent break.
+    const shaped = cleaned.filter((t) => schemaHasArgs(t.inputSchema)).length
+    if (cleaned.length > 0 && shaped === 0) {
+      console.warn(
+        `[mcp-discover] connection ${connectionId}: all ${cleaned.length} ` +
+          `discovered tool schema(s) are empty — lazy tools would advertise no ` +
+          `arguments. The agent will fall back to eager mount until a real ` +
+          `schema is captured. (Likely an MCP-client schema-extraction miss.)`,
+      )
+    }
+    await mcpToolsRepo.replaceConnectionToolCatalog(ctx.db, connectionId, cleaned)
+  } catch (err) {
+    console.error(
+      `[mcp-discover] failed to cache tool catalog for connection ${connectionId}:`,
+      err,
+    )
+  }
+}
+
+/** A raw JSON Schema, or `{}` if handed Mastra's `~standard` wrapper (whose
+ *  `jsonSchema` is empty). Defends the catalog against ever storing the
+ *  wrapper, independent of where the tools came from. */
+function unwrapJsonSchema(
+  schema: Record<string, unknown>,
+): Record<string, unknown> {
+  const std = schema['~standard']
+  if (std && typeof std === 'object' && !Array.isArray(std)) {
+    const inner = (std as Record<string, unknown>)['jsonSchema']
+    return inner && typeof inner === 'object' && !Array.isArray(inner)
+      ? (inner as Record<string, unknown>)
+      : {}
+  }
+  return schema
+}
+
+/** Whether a JSON Schema actually declares arguments (a non-empty
+ *  `properties` map). Used only to detect a degenerate catalog. */
+function schemaHasArgs(schema: Record<string, unknown>): boolean {
+  const props = schema['properties']
+  return (
+    !!props &&
+    typeof props === 'object' &&
+    !Array.isArray(props) &&
+    Object.keys(props as Record<string, unknown>).length > 0
+  )
+}
+
 export async function testMcpConnection(
   stored: StoredMcpConnection,
   override: McpConnectionDiscoverInput,
@@ -82,7 +150,11 @@ export async function testMcpConnection(
     override.auth?.kind ?? stored.authKind
 
   if (effectiveAuthKind === 'oauth') {
-    return runOauthProbe(stored, ctx, started)
+    const response = await runOauthProbe(stored, ctx, started)
+    if (response.ok) {
+      await persistCatalogBestEffort(ctx, stored.id, response.tools)
+    }
+    return response
   }
 
   const resolved = resolveConfig(stored, override)
@@ -110,12 +182,16 @@ export async function testMcpConnection(
     }
   }
 
-  return finalise({
+  const response = finalise({
     transport: stored.transport,
     started,
     probeResult,
     plaintextValues,
   })
+  if (response.ok) {
+    await persistCatalogBestEffort(ctx, stored.id, response.tools)
+  }
+  return response
 }
 
 // ─── OAuth probe ─────────────────────────────────────────────────────────
@@ -340,6 +416,7 @@ export async function completeOauthCallback(args: {
       rawToolCount: result.rawToolCount,
       serverVersion: result.serverVersion,
     })
+    await persistCatalogBestEffort(ctx, stored.id, tools)
     return
   }
 

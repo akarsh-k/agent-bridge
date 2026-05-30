@@ -57,6 +57,15 @@ export const runEventKinds = [
    * late subscribers can reconstruct the log tail.
    */
   'run.mcp.log',
+  /**
+   * An OAuth-backed external MCP connection was skipped at build time
+   * because its session needs re-authorization (expired token / zero tools
+   * advertised). NON-FATAL: the run still completes without that
+   * connection's tools. The chat surfaces a "Reconnect" affordance keyed by
+   * `connectionId`. Persisted so the run-detail page / a late subscriber can
+   * still surface it. Payload: `RunMcpAuthorizeRequiredPayload`.
+   */
+  'run.mcp.authorize_required',
   'run.error',
   'run.finished',
   'worker.progress',
@@ -718,6 +727,19 @@ export interface RunMcpLogPayload {
   readonly connectionName: string
   readonly level: 'info' | 'warn' | 'error'
   readonly line: string
+}
+
+/**
+ * Emitted once per OAuth-backed MCP connection that was skipped at build
+ * time because it needs re-authorization. Non-fatal: the run proceeds
+ * without that connection's tools. The chat reuses the connection's existing
+ * test/authorize flow (keyed by `connectionId`) to re-auth, then prompts the
+ * user to resend.
+ */
+export interface RunMcpAuthorizeRequiredPayload {
+  readonly runId: string
+  readonly connectionId: string
+  readonly connectionName: string
 }
 
 /**
