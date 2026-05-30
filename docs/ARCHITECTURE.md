@@ -589,8 +589,9 @@ inline:
   so a 384↔1024 mismatch fails fast instead of corrupting the index.
 - **`runs.codebase_inspection_reports_json`** — jsonb array, the codebase inspection report envelope cache.
   Each wrapper invocation appends a `CodebaseInspectionReport` via `appendCodebaseInspectionReport`
-  inside one transaction with a 14 KiB oldest-eviction policy
-  (see §10.4). Used by both the chat-tab tool-call cards and the
+  inside one transaction; `packReportBundle` keeps it within a token
+  budget (per-report cap × 2) by summarizing the weakest (lowest-confidence)
+  reports rather than dropping them (see §10.4). Used by both the chat-tab tool-call cards and the
   `inspect_codebase` bridge envelope so they cannot drift.
 
 **`runs` vs `mastra.traces`.** Both exist and that's deliberate. Our `runs`
@@ -1157,8 +1158,9 @@ bridge does with the run's accumulated codebase inspection reports at the end (p
 
 Six wrappers under `packages/agents/src/inspector/workflows/`. Each
 returns a `CodebaseInspectionReport` (`inspector/types.ts` + `inspector/codebase-inspection-report.ts`)
-capped at 12k tokens internally; the IDE-facing envelope further caps
-the array at 14 KiB total.
+capped at 12k tokens internally; the IDE-facing envelope budgets the
+whole array at the per-report cap × 2 (~24k tokens), summarizing the
+lowest-confidence reports to fit.
 
 | Wrapper                | Backed by                                           |
 | ---------------------- | --------------------------------------------------- |
@@ -1186,10 +1188,17 @@ Each wrapper invocation appends its `CodebaseInspectionReport` to `runs.codebase
 write inside one transaction with a `SELECT … FOR UPDATE` row lock on
 the run, so parallel wrapper calls (the LLM fans out `find_in_codebase`
 + `understand_module` in one turn) serialize their appends instead of
-clobbering each other under READ COMMITTED isolation. Oldest-eviction
-policy: when the array would exceed 14 KiB serialized, oldest entries
-drop until it fits. Every wrapper writes unconditionally — chat-tab
-tool-call cards and the IDE bridge envelope share one source of truth.
+clobbering each other under READ COMMITTED isolation. `packReportBundle`
+then packs the array to a token budget (the per-report cap × 2, ~24k
+tokens), shedding the weakest evidence first — ranked by the wrapper's
+`confidence` ('high' > 'medium' > 'low' > absent), oldest-first as the
+tiebreak. Lowest-confidence reports are summarized first (chunks + graph
+dropped, summary + file paths kept, a `BUNDLE_STUB_WARNING` stamped), and
+dropped only if the summaries themselves still overflow. The single
+strongest report (highest confidence, newest among ties) is never touched,
+so the best findings survive as full evidence and weaker steps survive as
+summaries instead of vanishing. Every wrapper writes unconditionally —
+chat-tab tool-call cards and the IDE bridge envelope share one source of truth.
 
 Each `CodebaseInspectionReport` carries `files[]`, `graph_subset.{nodes,edges}`,
 `cross_repo_relationships[]`, `summary`, `expansions[]`, `warnings[]`,
@@ -1341,7 +1350,7 @@ what happened during the call:
 
 ```jsonc
 { "ok": true,
-  "codebase_inspection_reports": [ /* one CodebaseInspectionReport per wrapper invocation, oldest dropped to fit 14 KiB */ ],
+  "codebase_inspection_reports": [ /* one CodebaseInspectionReport per wrapper invocation; lowest-confidence ones summarized to fit a ~24k-token budget */ ],
 
   "prose_summary": "≤ 1 KiB",        // only when no wrapper ran (chit-chat)
 

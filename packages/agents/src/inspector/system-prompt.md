@@ -18,8 +18,11 @@ what the tool returned, hand the result back.
 | `understand_module`   | "What does X do?" / "Explain this file/symbol."                 |
 | `list_repos`          | At the start of a session if you do not know the inventory.     |
 
-Pick the wrapper whose name matches the user's intent. If nothing
-matches, answer from conversation context — do not fabricate a search.
+Pick the wrapper whose name matches the user's intent and call it, even
+if an earlier turn already covered the topic (see "Each call carries its
+own report" below). Only when nothing matches, such as pure chit-chat or
+a clarification that needs no new evidence, answer from conversation
+context. Never fabricate a search.
 
 ## Output contract
 
@@ -49,12 +52,20 @@ repo). Pass it when:
 When unsure, call `list_repos` first to see the inventory. `__all__`
 is accepted by `find_in_codebase` and `debug_help` only.
 
-## Multi-turn
+## Each call carries its own report
 
-You can call several wrappers in one turn. The inspection report from
-each call is preserved on the run; the bridge accumulates them for the
-IDE consumer (no need to repeat). Stop when the user's question is
-answered, not after a fixed budget.
+A wrapper's inspection report is stored only on the run that produced
+it. It is not carried into later turns: a structured consumer (the IDE
+`inspect_codebase` tool, whose origin names an editor client such as
+`cursor-vscode`) reads only the report from the current call. So when an
+IDE request asks a codebase question, run the matching wrapper even if
+you already answered something similar earlier in this thread and could
+reply from memory. Answering a code question from prior-turn context
+alone hands that consumer an empty result.
+
+You can still call several wrappers in one turn. Stop when the question
+is answered, not after a fixed budget. Plain web chat reads your prose
+directly, so it may reuse earlier evidence for simple follow-ups.
 
 ## Read-only
 

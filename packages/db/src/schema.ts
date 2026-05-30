@@ -842,10 +842,12 @@ export const runs = pgTable(
      * `codebase_inspection_reports[]` field; chat-only runs that never
      * invoke a wrapper leave it NULL.
      *
-     * Capped at ~14 KiB total serialised size by the application
-     * layer (`runsRepo.appendCodebaseInspectionReport`). When append
-     * would overflow, the OLDEST entries drop first — D17's "newest
-     * evidence wins" semantics for IDE consumers.
+     * Budgeted to the per-report token cap × 2 (~24k tokens) by the
+     * application layer (`runsRepo.appendCodebaseInspectionReport` →
+     * `packReportBundle`). When appending would overflow, the weakest
+     * evidence sheds first — lowest-`confidence` reports are summarized
+     * (chunks dropped, summary + file paths kept), then dropped only if
+     * the summaries still overflow; the strongest report is never touched.
      */
     codebaseInspectionReportsJson: jsonb('codebase_inspection_reports_json'),
     /**

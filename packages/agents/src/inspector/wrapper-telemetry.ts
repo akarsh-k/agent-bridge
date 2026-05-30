@@ -31,12 +31,16 @@ import {
   type InspectorWrapperName,
 } from '@agent-bridge/shared'
 
+import { packReportBundle } from './codebase-inspection-report.js'
 import {
   emitInspectorEvent,
   getInspectorRunContext,
   previewJson,
 } from './run-context.js'
-import type { CodebaseInspectionReport } from './types.js'
+import {
+  CODEBASE_INSPECTION_REPORT_BUNDLE_CAP_MULTIPLIER,
+  type CodebaseInspectionReport,
+} from './types.js'
 
 // ─── Tool-level open/close ───────────────────────────────────────────────
 
@@ -96,12 +100,34 @@ export async function emitReportBuilt(
   // Persist to `runs.codebase_inspection_reports_json`
   // (`docs/ARCHITECTURE.md §10`). Runs unconditionally — chat-tab
   // tool-call cards consume the same column, and the IDE bridge reads it
-  // directly. Append handles the 14 KiB total cap with oldest-eviction.
-  // Failure is logged but never thrown — telemetry must not take down
-  // the wrapper's main result path.
+  // directly. `packReportBundle` re-packs the array to a token budget (the
+  // per-report cap scaled up); the weakest (lowest-confidence) reports are
+  // summarized first, dropped only in extremis. Failure is logged but never
+  // thrown — telemetry must not take down the wrapper's main result path.
   if (ctx) {
     try {
-      await runsRepo.appendCodebaseInspectionReport(ctx.db, ctx.runId, report)
+      const budget =
+        report.tokens_cap * CODEBASE_INSPECTION_REPORT_BUNDLE_CAP_MULTIPLIER
+      let packStats = { stubbed: 0, dropped: 0 }
+      await runsRepo.appendCodebaseInspectionReport(
+        ctx.db,
+        ctx.runId,
+        report,
+        (reports) => {
+          const packed = packReportBundle(
+            reports as CodebaseInspectionReport[],
+            budget,
+          )
+          packStats = { stubbed: packed.stubbed, dropped: packed.dropped }
+          return packed.reports
+        },
+      )
+      if (packStats.stubbed > 0 || packStats.dropped > 0) {
+        console.warn(
+          `[inspector] codebase_inspection_reports_json packed to ${budget}-token budget: ` +
+            `${packStats.stubbed} summarized, ${packStats.dropped} dropped (run=${ctx.runId})`,
+        )
+      }
     } catch (err) {
       console.error(
         `[inspector] runs.codebase_inspection_reports_json append failed (run=${ctx.runId}, wrapper=${wrapperName}):`,

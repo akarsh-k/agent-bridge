@@ -327,44 +327,40 @@ export async function appendEvent(
 /**
  * Append one codebase inspection report to
  * `runs.codebase_inspection_reports_json` (`docs/ARCHITECTURE.md §10`
- * Phase G G3). The column stores a JSON array. Each inspector wrapper
- * invocation contributes one element. The IDE bridge reads the array
- * verbatim under D17's `codebase_inspection_reports[]` field; the chat
- * tab renders each element as an inline tool-call card.
+ * Phase G G3) and re-pack the bundle. The column stores a JSON array;
+ * each inspector wrapper invocation contributes one element. The IDE
+ * bridge reads the array verbatim under D17's
+ * `codebase_inspection_reports[]` field; the chat tab renders each
+ * element as an inline tool-call card.
  *
- * Hard 14 KiB total cap — when adding the new entry would push past
- * `CODEBASE_INSPECTION_REPORT_MAX_TOTAL_BYTES`, we drop entries from
- * the FRONT (oldest first) until we fit. "Newest evidence wins" matches
- * D17's intent for IDE consumers; multi-turn conversations keep the
- * freshest wrapper output even when earlier turns produced larger
- * payloads.
+ * `pack` receives `[...existing, report]` and returns the array to
+ * persist — it owns the budget + eviction policy (see `packReportBundle`
+ * in the agents package, which keeps the highest-confidence reports full
+ * and summarizes or drops the weakest to fit a token budget). This layer stays
+ * agnostic of the report shape; its only job is to make the
+ * read-pack-write atomic.
  *
- * Read-modify-write inside one transaction. CRITICAL: the SELECT takes
- * a `FOR UPDATE` row lock so concurrent transactions on the same run
- * row serialise instead of racing. The LLM routinely fires multiple
- * wrapper tool calls in parallel within a single step (Mastra's
- * `Promise.all` over tools); each completes its wrapper, each calls
- * `appendCodebaseInspectionReport` against the SAME `runs.id`. Without
- * the row lock, both transactions read the SAME prior
- * `codebaseInspectionReportsJson` array, each appends its own report,
- * and the second commit clobbers the first with a single-append delta.
- * Result: one report silently lost, IDE sees an incomplete evidence
- * set, user perceives the wrapper "didn't include" the file.
+ * CRITICAL: the SELECT takes a `FOR UPDATE` row lock so concurrent
+ * transactions on the same run row serialise instead of racing. The LLM
+ * routinely fires multiple wrapper tool calls in parallel within a
+ * single step (Mastra's `Promise.all` over tools); each completes its
+ * wrapper, each calls this against the SAME `runs.id`. Without the row
+ * lock, both transactions read the SAME prior array, each appends its
+ * own report, and the second commit clobbers the first — one report
+ * silently lost, IDE sees an incomplete evidence set. The lock turns
+ * concurrent appends into a queue: T2 blocks on SELECT until T1 commits,
+ * then reads the post-T1 array and appends correctly.
  *
- * The row lock turns concurrent appends into a queue: T2 blocks on
- * SELECT until T1 commits, then T2 reads the post-T1 array and
- * appends correctly.
- *
- * Failures are returned as warnings on the next read, never thrown
- * here. telemetry must not take down a wrapper's main result path.
+ * Returns the stored array length, or null when the run row is gone.
+ * The telemetry caller wraps this in try/catch so a failed append never
+ * takes down a wrapper's main result path.
  */
-export const CODEBASE_INSPECTION_REPORT_MAX_TOTAL_BYTES = 14 * 1024
-
 export async function appendCodebaseInspectionReport(
   handle: AgentBridgeDb,
   runId: string,
   report: unknown,
-): Promise<{ stored: number; dropped: number } | null> {
+  pack: (reports: readonly unknown[]) => readonly unknown[],
+): Promise<number | null> {
   return handle.db.transaction(async (tx) => {
     const [row] = await tx
       .select({
@@ -377,29 +373,16 @@ export async function appendCodebaseInspectionReport(
     if (!row) return null
 
     const current = Array.isArray(row.codebaseInspectionReportsJson)
-      ? ([...row.codebaseInspectionReportsJson] as unknown[])
+      ? (row.codebaseInspectionReportsJson as unknown[])
       : []
-    current.push(report)
-
-    // Trim from the front until total fits. Stops if even the newest
-    // single entry blows the cap (we keep it anyway — better the IDE
-    // sees one over-cap report than nothing).
-    let dropped = 0
-    while (
-      current.length > 1 &&
-      JSON.stringify(current).length >
-        CODEBASE_INSPECTION_REPORT_MAX_TOTAL_BYTES
-    ) {
-      current.shift()
-      dropped += 1
-    }
+    const next = pack([...current, report])
 
     await tx
       .update(runs)
-      .set({ codebaseInspectionReportsJson: current })
+      .set({ codebaseInspectionReportsJson: next as unknown[] })
       .where(eq(runs.id, runId))
 
-    return { stored: current.length, dropped }
+    return next.length
   })
 }
 

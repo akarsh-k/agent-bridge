@@ -30,6 +30,7 @@
     "test:run-detail-events": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-run-detail-events.ts",
     "test:gitnexus-callers": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-gitnexus-callers.ts",
     "test:codebase-inspection-report-cap": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-codebase-inspection-report-cap.ts",
+    "test:inspector-prompt": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-inspector-system-prompt.ts",
     "test:skill-lazy": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-skill-lazy-loading.ts",
     "test:knowledge": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-knowledge-tool.ts",
     "test:knowledge-e2e": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-knowledge-e2e.ts",

@@ -69,7 +69,15 @@ export type {
   MountInspectorToolsInput,
 } from './inspector/index.js'
 export type { CodebaseInspectionReport, CodebaseInspectionReportFile, CodebaseInspectionReportChunk, CodebaseInspectionReportGraphEdge, CodebaseInspectionReportGraphNode, CodebaseInspectionReportCrossRepoRelationship, InspectorIntent } from './inspector/types.js'
-export { CODEBASE_INSPECTION_REPORT_TOKEN_CAP } from './inspector/types.js'
+export {
+  CODEBASE_INSPECTION_REPORT_TOKEN_CAP,
+  CODEBASE_INSPECTION_REPORT_BUNDLE_CAP_MULTIPLIER,
+} from './inspector/types.js'
+export {
+  packReportBundle,
+  BUNDLE_STUB_WARNING,
+  type PackedBundle,
+} from './inspector/codebase-inspection-report.js'
 export { builtAgentCache } from './built-agent-cache.js'
 export type { GitnexusMountMeta } from './mcp/gitnexus-mcp.js'
 export type {

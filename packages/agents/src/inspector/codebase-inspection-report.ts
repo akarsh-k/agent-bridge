@@ -194,7 +194,166 @@ export function estimateCodebaseInspectionReportTokens(
   })
 }
 
+/**
+ * Warning stamped on a report whose code chunks were dropped to fit the
+ * `codebase_inspection_reports_json` bundle budget. Summary + file paths
+ * survive; the spans don't. Distinct from the per-report "to fit under
+ * N-token cap" warning so consumers (IDE bridge, Logs) can tell a summarized
+ * report apart from a freshly truncated one.
+ */
+export const BUNDLE_STUB_WARNING =
+  'evidence summarized (code chunks dropped) to fit the report bundle'
+
+export interface PackedBundle {
+  readonly reports: readonly CodebaseInspectionReport[]
+  /** Reports kept but reduced to summary + file list (chunks/graph dropped). */
+  readonly stubbed: number
+  /** Whole reports removed — only when summary-only stubs still overflow. */
+  readonly dropped: number
+}
+
+/**
+ * Pack the `codebase_inspection_reports_json` bundle to fit `tokenBudget`
+ * (`docs/ARCHITECTURE.md §10` Phase G G3).
+ *
+ * Sheds the WEAKEST evidence first, ranked by the wrapper's self-reported
+ * `confidence` ('high' > 'medium' > 'low' > absent), with recency as the
+ * tiebreak between equal-confidence reports (older shed first). Two stages:
+ *
+ *   1. Summarize weakest-first: drop the report's chunks + graph subset +
+ *      cross-repo relationships (keep summary + file paths, recompute
+ *      `tokens_used`, stamp `BUNDLE_STUB_WARNING`) until the bundle fits.
+ *   2. If the summaries themselves still overflow, drop weakest-first until
+ *      it fits.
+ *
+ * The single strongest report (highest confidence, newest among ties) is
+ * never summarized or dropped — better the consumer sees one over-budget
+ * report than an empty bundle. The result preserves chronological (append)
+ * order; only the per-report contents change.
+ *
+ * Confidence-ranking keeps the best findings full and sheds the low-signal
+ * ones first; a summarized step still tells the caller the path matched and
+ * why it mattered. Pure function — the caller persists the result under the
+ * row lock in `runsRepo.appendCodebaseInspectionReport`. `stubbed` and
+ * `dropped` are disjoint: a report that is summarized and then dropped counts
+ * only as dropped.
+ */
+export function packReportBundle(
+  reports: readonly CodebaseInspectionReport[],
+  tokenBudget: number,
+): PackedBundle {
+  const out: (CodebaseInspectionReport | null)[] = [...reports]
+  const total = (): number =>
+    out.reduce((sum, r) => sum + (r ? r.tokens_used : 0), 0)
+
+  if (out.length === 0 || total() <= tokenBudget) {
+    return { reports: out.filter(isPresent), stubbed: 0, dropped: 0 }
+  }
+
+  // Weakest evidence first: confidence ascending, then oldest-first as a
+  // tiebreak. The last entry is the strongest report — never touched.
+  const shedOrder = out
+    .map((_, i) => i)
+    .sort((a, b) => {
+      const byConfidence = strengthRank(out[a]!) - strengthRank(out[b]!)
+      return byConfidence !== 0 ? byConfidence : a - b
+    })
+  const strongest = shedOrder[shedOrder.length - 1]!
+
+  // 1. Summarize weakest-first (drop chunks, keep summary) until it fits.
+  //    Skip reports with nothing to shed (e.g. list_repos: no chunks/graph) —
+  //    stubbing them frees no budget and would stamp a misleading warning.
+  const summarized = new Set<number>()
+  for (const i of shedOrder) {
+    if (total() <= tokenBudget) break
+    if (i === strongest) continue
+    if (!isStubbed(out[i]!) && hasShreddableContent(out[i]!)) {
+      out[i] = stubReport(out[i]!)
+      summarized.add(i)
+    }
+  }
+
+  // 2. Summaries still overflow → drop weakest-first, keeping the strongest.
+  let dropped = 0
+  for (const i of shedOrder) {
+    if (total() <= tokenBudget) break
+    if (i === strongest) continue
+    if (out[i] !== null) {
+      out[i] = null
+      summarized.delete(i) // dropped now, no longer counts as a summary
+      dropped += 1
+    }
+  }
+
+  return { reports: out.filter(isPresent), stubbed: summarized.size, dropped }
+}
+
 // ─── Internals ───────────────────────────────────────────────────────────
+
+function isPresent(
+  report: CodebaseInspectionReport | null,
+): report is CodebaseInspectionReport {
+  return report !== null
+}
+
+/**
+ * Evidence strength for bundle packing — higher survives longer. Uses the
+ * wrapper's self-reported `confidence`; absent (e.g. `list_repos`, which does
+ * not assess) ranks weakest so it sheds first.
+ */
+function strengthRank(report: CodebaseInspectionReport): number {
+  switch (report.confidence) {
+    case 'high':
+      return 3
+    case 'medium':
+      return 2
+    case 'low':
+      return 1
+    default:
+      return 0
+  }
+}
+
+function isStubbed(report: CodebaseInspectionReport): boolean {
+  return report.warnings.includes(BUNDLE_STUB_WARNING)
+}
+
+/** Whether `stubReport` would actually free budget — i.e. there are chunks,
+ *  graph nodes/edges, or cross-repo relationships to drop. */
+function hasShreddableContent(report: CodebaseInspectionReport): boolean {
+  return (
+    report.files.some((f) => f.chunks.length > 0) ||
+    report.graph_subset.nodes.length > 0 ||
+    report.graph_subset.edges.length > 0 ||
+    report.cross_repo_relationships.length > 0
+  )
+}
+
+/**
+ * Reduce a report to summary + file metadata: drop every chunk body, the
+ * graph subset, and cross-repo relationships, recompute `tokens_used` against
+ * the shrunken shape, and stamp `BUNDLE_STUB_WARNING`. Idempotent in effect —
+ * `packReportBundle` guards on `isStubbed` so it never runs twice.
+ */
+function stubReport(
+  report: CodebaseInspectionReport,
+): CodebaseInspectionReport {
+  const stub: CodebaseInspectionReport = {
+    ...report,
+    files: report.files.map((f) => ({
+      repo_id: f.repo_id,
+      repo_label: f.repo_label,
+      path: f.path,
+      language: f.language,
+      why: f.why,
+      chunks: [],
+    })),
+    graph_subset: { nodes: [], edges: [] },
+    cross_repo_relationships: [],
+    warnings: [...report.warnings, BUNDLE_STUB_WARNING],
+  }
+  return { ...stub, tokens_used: estimateCodebaseInspectionReportTokens(stub) }
+}
 
 interface EstimateInput {
   summary: string

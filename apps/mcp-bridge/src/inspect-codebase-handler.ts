@@ -116,8 +116,9 @@ export type ToolEntry = InspectCodebaseEntry | BridgeToolEntry
 /**
  * Maximum prose payload per envelope kind. Inspect-codebase fallback
  * (when no wrapper ran) gets 1 KiB; explicit tools that author
- * prose on purpose get 8 KiB. codebase inspection reports themselves are bounded by
- * `runsRepo.appendCodebaseInspectionReport`'s 14 KiB cap.
+ * prose on purpose get 8 KiB. codebase inspection reports themselves are
+ * bounded by `packReportBundle`'s token budget (per-report cap × 2),
+ * applied when `runsRepo.appendCodebaseInspectionReport` persists them.
  */
 const PROSE_CAP_INSPECT_FALLBACK = 1024
 const PROSE_CAP_PHASE7 = 8 * 1024

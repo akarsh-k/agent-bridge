@@ -156,6 +156,16 @@ export interface CodebaseInspectionReport {
 /** Token cap per codebase inspection report (`docs/ARCHITECTURE.md §10` §5). */
 export const CODEBASE_INSPECTION_REPORT_TOKEN_CAP = 12_000 as const
 
+/**
+ * The `codebase_inspection_reports_json` bundle (the evidence array the IDE
+ * bridge + chat-tab cards consume) is budgeted at this multiple of the
+ * per-report cap. At 2× ≈ 24k tokens for the default cap, the bundle holds
+ * roughly two full reports, or one full report plus many summary-only stubs:
+ * older evidence is kept as a summary rather than dropped wholesale. See
+ * `packReportBundle`.
+ */
+export const CODEBASE_INSPECTION_REPORT_BUNDLE_CAP_MULTIPLIER = 2 as const
+
 /** Char ≈ token estimator constant. Same approximation Mastra uses internally. */
 export const CHARS_PER_TOKEN = 4 as const
 
