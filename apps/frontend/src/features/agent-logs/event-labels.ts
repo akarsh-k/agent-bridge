@@ -47,6 +47,39 @@ export interface EventSummary {
 }
 
 /**
+ * The "initiated by" tag for a row — the event's parent in the call tree.
+ * The agent's own calls (model / tool / `search_knowledge`) → `agent`; the
+ * inspector wrapper span → `inspector wrapper`; a wrapper's nested gitnexus /
+ * keyword / llm / report sub-calls → their parent wrapper (the payload's
+ * `wrapperName`). Null where the row title is already unambiguous.
+ */
+export function originForKind(kind: string, payload: unknown): string | null {
+  // Nested inspector sub-calls attribute to their parent wrapper.
+  if (
+    kind.startsWith('inspector.gitnexus') ||
+    kind.startsWith('inspector.keyword') ||
+    kind.startsWith('inspector.llm') ||
+    kind.startsWith('inspector.report') ||
+    kind.startsWith('inspector.fallback')
+  ) {
+    const p = isObject(payload) ? payload : {}
+    return str(p['wrapperName']) ?? 'inspector wrapper'
+  }
+  // Distinct from the agent's `run.tool` row so the two same-named rows differ.
+  if (kind.startsWith('inspector.tool')) return 'inspector wrapper'
+  // Eager pre-fetch is system-initiated, not an agent call.
+  if (kind.startsWith('knowledge.prefetch')) return 'auto prefetch'
+  if (
+    kind.startsWith('run.model') ||
+    kind.startsWith('run.tool') ||
+    kind.startsWith('knowledge.search')
+  ) {
+    return 'agent'
+  }
+  return null
+}
+
+/**
  * Map a `(kind, payload)` pair to a row-ready descriptor. Always returns
  * something — unknown kinds get a sensible fallback so the timeline keeps
  * rendering even when a new event ships before the labels table is updated.

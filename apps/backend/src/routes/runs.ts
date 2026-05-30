@@ -34,12 +34,14 @@ import { and, asc, desc, eq, like } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   callsiteSchema,
+  elideRunEventPayload,
   RUN_LIST_PREVIEW_CHARS,
   runListQuerySchema,
   type Callsite,
   type RunDetailEvent,
   type RunDetailResponse,
   type RunDetailRow,
+  type RunEventPayloadResponse,
   type RunListResponse,
   type RunListRow,
   type RunSource,
@@ -265,10 +267,52 @@ export const runsRouter = new Hono().get(
       id: e.id.toString(),
       ts: e.ts.toISOString(),
       kind: e.kind,
-      payload: e.payloadJson,
+      payload: elideRunEventPayload(e.payloadJson, e.kind),
     }))
 
     const body: RunDetailResponse = { ok: true, run, events }
+    return c.json(body)
+  },
+).get(
+  // Lazy-load the FULL payload for one event (the run-detail list elides
+  // large ones). Keyed by the `run_events` bigserial id the list handed
+  // out; scoped to the run so a caller can't read another run's events.
+  '/:id/events/:eventId/payload',
+  zValidator(
+    'param',
+    z.object({ id: z.uuid(), eventId: z.string().regex(/^\d+$/) }),
+    (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    },
+  ),
+  async (c) => {
+    const { id, eventId } = c.req.valid('param')
+    const handle = getDb()
+
+    const [ev] = await handle.db
+      .select({ payloadJson: schema.runEvents.payloadJson })
+      .from(schema.runEvents)
+      .where(
+        and(
+          eq(schema.runEvents.runId, id),
+          eq(schema.runEvents.id, BigInt(eventId)),
+        ),
+      )
+      .limit(1)
+
+    if (!ev) {
+      return c.json(
+        {
+          ok: false as const,
+          code: 'not_found' as const,
+          message: `Event ${eventId} not found for run ${id}`,
+        },
+        404,
+      )
+    }
+
+    const body: RunEventPayloadResponse = { ok: true, payload: ev.payloadJson }
     return c.json(body)
   },
 )

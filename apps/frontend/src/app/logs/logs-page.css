@@ -614,6 +614,17 @@
   font-style: italic;
   color: var(--text-muted);
 }
+/* "Initiated by" source tag — disambiguates same-named tool / wrapper rows. */
+.ab-tl-origin {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-dim);
+  background: var(--surface-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  padding: 1px 7px;
+  white-space: nowrap;
+}
 .ab-tl-summary {
   margin-top: 5px;
   font-size: 11.5px;

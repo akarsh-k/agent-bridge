@@ -27,6 +27,7 @@
     "test:resolver": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-resolver.ts",
     "test:worker-jobs": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-worker-jobs.ts",
     "test:dispatcher-mapper": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-dispatcher-mapper.ts",
+    "test:run-detail-events": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-run-detail-events.ts",
     "test:gitnexus-callers": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-gitnexus-callers.ts",
     "test:codebase-inspection-report-cap": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-codebase-inspection-report-cap.ts",
     "test:skill-lazy": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-skill-lazy-loading.ts",

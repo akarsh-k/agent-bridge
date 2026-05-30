@@ -435,6 +435,28 @@ ioredis pub/sub — one subscriber connection per SSE client.
 tokens into `run.token.batch` rows in the audit log, so a late subscriber
 can fetch a compact history without replaying thousands of token deltas.
 
+**Run-detail read compaction (payload elision + lazy load).** The Logs UI
+loads a run's full transcript via `GET /api/runs/:id` (the `runs` router).
+Rows are stored full in `run_events`, but a single run can carry several
+inspection-report tool results and full model-request bodies (tens of KB
+each), so the route would otherwise ship hundreds of KB up front. Before the
+response is serialised, any single event payload over
+`RUN_EVENT_PAYLOAD_INLINE_MAX_BYTES` (2 KiB) is replaced by an elision marker
+— `{ __abElided: true, bytes, kind, …preserved }` — via the shared,
+pure `elideRunEventPayload` (`@agent-bridge/shared`, so the route and tests
+use one implementation). The marker keeps the small STRUCTURAL fields the
+timeline pairs and labels on (`ELIDE_PRESERVE_KEYS`: `stepIndex` for model
+turns, `toolCallId` for tool calls, `wrapperName` / `tool` / `purpose` /
+`repoLabel` for the inspector layers); without them an elided event would
+render as an unpaired orphan row instead of a paired one. The frontend
+lazy-loads the full payload only when the operator expands such a row, via
+`GET /api/runs/:id/events/:eventId/payload` — keyed by the `run_events`
+bigserial id and **scoped to the run** (the query filters on `run_id`, so a
+caller cannot read another run's events). Worker-event timelines
+(`worker_events`) are NOT elided. `pnpm test:run-detail-events` locks the
+"`ELIDE_PRESERVE_KEYS` ⊇ everything `pairInfo` reads" invariant so the
+orphan-row regression can't return.
+
 **Per-agent fan-out (Activity panel).** Every dispatcher event is published
 to TWO channels: the per-run channel `run:<runId>` (chat panel subscribes
 here) AND a per-agent channel `agent:<agentId>` (right-rail Activity

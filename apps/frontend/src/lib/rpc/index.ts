@@ -560,6 +560,24 @@ export async function fetchRun(
 }
 
 /**
+ * Fetch the FULL payload for one run event on demand. The run-detail
+ * response elides large payloads (inspection reports, model bodies) to a
+ * marker; the timeline calls this when the operator opens such a row.
+ */
+export async function fetchRunEventPayload(
+  runId: string,
+  eventId: string,
+): Promise<unknown> {
+  const url =
+    `${apiBaseUrl}/api/runs/${encodeURIComponent(runId)}` +
+    `/events/${encodeURIComponent(eventId)}/payload`
+  const res = await callApi<
+    import('@agent-bridge/shared').RunEventPayloadResponse
+  >(fetch(url))
+  return res.payload
+}
+
+/**
  * Fetch the global runs feed. Powers the bridge view (filters
  * `source=bridge`) and a future UI-runs view (`source=ui`).
  */

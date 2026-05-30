@@ -106,10 +106,275 @@ export function EventPayloadBody({ payload }: { payload: unknown }) {
       </div>
     )
   }
+  if (looksLikeInspectionReport(payload)) {
+    return <CodebaseInspectionReportView report={payload} />
+  }
+  // A `run.tool.result` wraps the report under `output`; the rest of the
+  // envelope (runId / toolName / stepIndex / toolCallId) is already on the
+  // row header, so surface the report itself as the block's main content.
+  if (isPlainObject(payload) && looksLikeInspectionReport(payload['output'])) {
+    return <CodebaseInspectionReportView report={payload['output']} />
+  }
   return isPlainObject(payload) ? (
     <ObjectKeyValueList obj={payload} />
   ) : (
     <ValueBlock value={payload} />
+  )
+}
+
+/** Caption above a formatted report, framing it as evidence (not the answer). */
+const INSPECTION_REPORT_EXPLAINER =
+  'Research evidence from one step, capped at ~12k tokens. The agent reads ' +
+  'it to ground its answer, and the accumulated reports are returned to the ' +
+  'caller (e.g. your IDE agent) as the citations behind that answer.'
+
+/** Structural sniff for a `CodebaseInspectionReport` (see
+ *  `packages/agents/src/inspector/types.ts`). Loose on purpose, the
+ *  payload is `unknown` over the wire. */
+function looksLikeInspectionReport(p: unknown): p is Record<string, unknown> {
+  return (
+    isPlainObject(p) &&
+    typeof p['wrapper'] === 'string' &&
+    typeof p['summary'] === 'string' &&
+    Array.isArray(p['files']) &&
+    typeof p['tokens_used'] === 'number' &&
+    isPlainObject(p['graph_subset'])
+  )
+}
+
+/**
+ * Formatted inspection-report view, with a "Raw JSON" toggle so nothing the
+ * formatter doesn't surface is hidden.
+ */
+function CodebaseInspectionReportView({
+  report,
+}: {
+  report: Record<string, unknown>
+}) {
+  const [showRaw, setShowRaw] = useState(false)
+  const wrapper =
+    typeof report['wrapper'] === 'string' ? report['wrapper'] : 'report'
+  const summary = typeof report['summary'] === 'string' ? report['summary'] : ''
+  const tokensUsed =
+    typeof report['tokens_used'] === 'number' ? report['tokens_used'] : null
+  const tokensCap =
+    typeof report['tokens_cap'] === 'number' ? report['tokens_cap'] : null
+  const warnings = Array.isArray(report['warnings'])
+    ? report['warnings'].filter((w): w is string => typeof w === 'string')
+    : []
+  const truncated = warnings.some((w) => w.includes('to fit under'))
+  const files = Array.isArray(report['files']) ? report['files'] : []
+  const resolved = isPlainObject(report['resolved_repo'])
+    ? report['resolved_repo']
+    : null
+  const resolvedLabel =
+    resolved && typeof resolved['label'] === 'string' ? resolved['label'] : null
+  const resolvedSignal =
+    resolved && typeof resolved['matched_signal'] === 'string'
+      ? resolved['matched_signal']
+      : null
+
+  const toggle = (
+    <button
+      type="button"
+      className="ab-inline-action"
+      onClick={() => setShowRaw((v) => !v)}
+    >
+      {showRaw ? 'Formatted' : 'Raw JSON'}
+    </button>
+  )
+
+  if (showRaw) {
+    return (
+      <div>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            marginBottom: 6,
+          }}
+        >
+          {toggle}
+        </div>
+        <pre
+          style={{
+            margin: 0,
+            padding: '8px 10px',
+            background: 'var(--code-well)',
+            border: '1px solid var(--code-well-border)',
+            borderRadius: 'var(--radius)',
+            fontFamily: 'var(--font-mono)',
+            fontSize: 11.5,
+            color: 'var(--text)',
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+            overflowWrap: 'anywhere',
+            maxHeight: 360,
+            overflow: 'auto',
+          }}
+        >
+          {safeStringify(report)}
+        </pre>
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          flexWrap: 'wrap',
+        }}
+      >
+        <span
+          className="ab-mono"
+          style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}
+        >
+          {wrapper}
+        </span>
+        {tokensUsed !== null && (
+          <span
+            className="ab-mono"
+            style={{
+              fontSize: 11,
+              color: 'var(--text-dim)',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          >
+            {tokensUsed.toLocaleString()}
+            {tokensCap !== null ? ` / ${tokensCap.toLocaleString()}` : ''} tok
+          </span>
+        )}
+        {truncated && (
+          <span
+            style={{
+              fontSize: 10.5,
+              fontWeight: 600,
+              color: 'var(--warn)',
+              background: 'var(--warn-bg)',
+              border: '1px solid var(--warn-border)',
+              borderRadius: 'var(--radius-pill)',
+              padding: '1px 7px',
+            }}
+          >
+            truncated
+          </span>
+        )}
+        <span style={{ marginLeft: 'auto' }}>{toggle}</span>
+      </div>
+
+      <div
+        style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}
+      >
+        {INSPECTION_REPORT_EXPLAINER}
+      </div>
+
+      {summary && (
+        <div style={{ fontSize: 12.5, color: 'var(--text)', lineHeight: 1.5 }}>
+          {summary}
+        </div>
+      )}
+
+      {resolvedLabel && (
+        <div style={{ fontSize: 11.5, color: 'var(--text-dim)' }}>
+          Repo: <span className="ab-mono">{resolvedLabel}</span>
+          {resolvedSignal ? ` · matched ${resolvedSignal}` : ''}
+        </div>
+      )}
+
+      {warnings.length > 0 && (
+        <ul
+          style={{
+            margin: 0,
+            paddingLeft: 16,
+            fontSize: 11.5,
+            color: 'var(--warn)',
+          }}
+        >
+          {warnings.map((w, i) => (
+            <li key={i}>{w}</li>
+          ))}
+        </ul>
+      )}
+
+      <div>
+        <div className="ab-field-label" style={{ marginBottom: 6 }}>
+          Files ({files.length})
+        </div>
+        {files.length === 0 ? (
+          <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+            No files in this report.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {files.map((f, i) => (
+              <ReportFileRow key={i} file={f} />
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ReportFileRow({ file }: { file: unknown }) {
+  if (!isPlainObject(file)) return null
+  const path =
+    typeof file['path'] === 'string' ? file['path'] : '(unknown path)'
+  const repoLabel =
+    typeof file['repo_label'] === 'string' ? file['repo_label'] : null
+  const language =
+    typeof file['language'] === 'string' ? file['language'] : null
+  const why = typeof file['why'] === 'string' ? file['why'] : null
+  const chunks = Array.isArray(file['chunks']) ? file['chunks'].length : 0
+  const meta = [
+    repoLabel,
+    language,
+    `${chunks} chunk${chunks === 1 ? '' : 's'}`,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 2,
+        padding: '6px 8px',
+        background: 'var(--code-well)',
+        border: '1px solid var(--code-well-border)',
+        borderRadius: 'var(--radius)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'baseline',
+          gap: 8,
+          flexWrap: 'wrap',
+        }}
+      >
+        <span
+          className="ab-mono"
+          style={{
+            fontSize: 11.5,
+            color: 'var(--text)',
+            wordBreak: 'break-all',
+          }}
+        >
+          {path}
+        </span>
+        <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+          {meta}
+        </span>
+      </div>
+      {why && (
+        <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{why}</div>
+      )}
+    </div>
   )
 }
 
@@ -377,6 +642,12 @@ function ValueBlock({ value }: { value: unknown }) {
 
   if (typeof value === 'number' || typeof value === 'boolean') {
     return <Atom>{String(value)}</Atom>
+  }
+
+  // A nested inspection report (e.g. the `output` of a `run.tool.result`)
+  // renders formatted, not as raw JSON.
+  if (looksLikeInspectionReport(value)) {
+    return <CodebaseInspectionReportView report={value} />
   }
 
   // Object or array: render as compact JSON in its own pane.

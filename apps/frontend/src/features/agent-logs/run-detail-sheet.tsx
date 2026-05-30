@@ -14,7 +14,7 @@
  * when `target` is non-null; close clears the prop.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
   RunDetailResponse,
   WorkerJobDetailResponse,
@@ -23,7 +23,12 @@ import { stripPromptEnrichments } from '@agent-bridge/shared'
 import { Pill } from '../../ui/pill'
 import { CloseIcon } from '../../ui/icons'
 import { Markdown } from '../../ui/markdown'
-import { ApiError, fetchRun, fetchWorkerJob } from '../../lib/rpc'
+import {
+  ApiError,
+  fetchRun,
+  fetchRunEventPayload,
+  fetchWorkerJob,
+} from '../../lib/rpc'
 import { formatDurationMs } from './event-labels'
 import { EventTimeline } from './event-timeline'
 
@@ -302,6 +307,12 @@ function RunDetailBody({ data }: { data: RunDetailResponse }) {
   // so the rail can render "Steps N/M" and the main can show the
   // truncation notice without a schema round-trip onto the `runs` table.
   const stepLimit = extractStepLimit(events)
+  // Stable identity so the timeline's lazy-payload effect doesn't re-fetch
+  // on every re-render (the SSE tail re-renders a live run constantly).
+  const loadEventPayload = useCallback(
+    (eventId: string) => fetchRunEventPayload(run.id, eventId),
+    [run.id],
+  )
   return (
     <div className="ab-detail-modal-body">
       <aside className="ab-detail-rail">
@@ -325,6 +336,7 @@ function RunDetailBody({ data }: { data: RunDetailResponse }) {
           events={events}
           source="run_events"
           liveStreamId={run.status === 'running' ? run.streamId : null}
+          loadEventPayload={loadEventPayload}
         />
       </div>
     </div>

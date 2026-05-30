@@ -27,15 +27,21 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useMemo,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
-import type { RunEvent } from '@agent-bridge/shared'
+import {
+  isElidedRunEventPayload,
+  type ElidedRunEventPayload,
+  type RunEvent,
+} from '@agent-bridge/shared'
 import { Pill, type PillKind } from '../../ui/pill'
 import { useSSE } from '../../lib/use-sse'
 import {
   formatDurationMs,
+  originForKind,
   summarizeEvent,
   type EventGroup,
 } from './event-labels'
@@ -67,6 +73,12 @@ export interface EventTimelineProps {
    * Pass null to disable (terminal status, worker job, etc.).
    */
   liveStreamId: string | null
+  /**
+   * Fetch the full payload for an elided event on demand. Provided for run
+   * timelines (where large payloads are elided server-side); omit for
+   * worker timelines, whose payloads are never elided.
+   */
+  loadEventPayload?: (eventId: string) => Promise<unknown>
 }
 
 /**
@@ -77,10 +89,18 @@ export interface EventTimelineProps {
  */
 const TimelineAnchorContext = createContext<number>(0)
 
+/**
+ * Loader for an elided payload, called by `PayloadBlock` when such a row
+ * opens. `null` (worker timelines) disables it — those payloads aren't elided.
+ */
+type PayloadLoader = ((eventId: string) => Promise<unknown>) | null
+const TimelinePayloadLoaderContext = createContext<PayloadLoader>(null)
+
 export function EventTimeline({
   events,
   source,
   liveStreamId,
+  loadEventPayload,
 }: EventTimelineProps) {
   const [filter, setFilter] = useState<TimelineFilter>('all')
 
@@ -125,61 +145,63 @@ export function EventTimeline({
 
   return (
     <TimelineAnchorContext.Provider value={runStart}>
-      <div className="ab-card ab-card-pad ab-form-section">
-        <div className="ab-section-head">
-          <div className="ab-section-title">
-            Event timeline{' '}
-            <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
-              ({allEvents.length} event{allEvents.length === 1 ? '' : 's'}
-              {liveEvents.length > 0 ? ` · +${liveEvents.length} live` : ''})
-            </span>
+      <TimelinePayloadLoaderContext.Provider value={loadEventPayload ?? null}>
+        <div className="ab-card ab-card-pad ab-form-section">
+          <div className="ab-section-head">
+            <div className="ab-section-title">
+              Event timeline{' '}
+              <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                ({allEvents.length} event{allEvents.length === 1 ? '' : 's'}
+                {liveEvents.length > 0 ? ` · +${liveEvents.length} live` : ''})
+              </span>
+            </div>
+            <div className="ab-section-sub">
+              From <code className="ab-mono">{source}</code>, oldest first;
+              clocks are offsets from run start.
+              {tailing && (
+                <>
+                  {' '}
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      color: sse.connected
+                        ? 'var(--success)'
+                        : 'var(--text-muted)',
+                    }}
+                  >
+                    {sse.connected && <span className="ab-pulse-dot" />}
+                    {sse.connected ? 'Live' : 'Connecting…'}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
-          <div className="ab-section-sub">
-            From <code className="ab-mono">{source}</code>, oldest first; clocks
-            are offsets from run start.
-            {tailing && (
-              <>
-                {' '}
-                <span
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 4,
-                    color: sse.connected
-                      ? 'var(--success)'
-                      : 'var(--text-muted)',
-                  }}
-                >
-                  {sse.connected && <span className="ab-pulse-dot" />}
-                  {sse.connected ? 'Live' : 'Connecting…'}
-                </span>
-              </>
-            )}
-          </div>
-        </div>
 
-        <div className="ab-tl-filter">
-          <TimelineFilterChips
-            value={filter}
-            onChange={setFilter}
-            events={allEvents}
-          />
-        </div>
+          <div className="ab-tl-filter">
+            <TimelineFilterChips
+              value={filter}
+              onChange={setFilter}
+              events={allEvents}
+            />
+          </div>
 
-        {sections.length === 0 ? (
-          <div className="ab-field-help">
-            {totalShown === 0 && allEvents.length > 0
-              ? 'No events match this filter.'
-              : 'No events recorded.'}
-          </div>
-        ) : (
-          <div className="ab-tl">
-            {sections.map((s, i) => (
-              <SectionBlock key={`${s.kind}-${i}`} section={s} />
-            ))}
-          </div>
-        )}
-      </div>
+          {sections.length === 0 ? (
+            <div className="ab-field-help">
+              {totalShown === 0 && allEvents.length > 0
+                ? 'No events match this filter.'
+                : 'No events recorded.'}
+            </div>
+          ) : (
+            <div className="ab-tl">
+              {sections.map((s, i) => (
+                <SectionBlock key={`${s.kind}-${i}`} section={s} />
+              ))}
+            </div>
+          )}
+        </div>
+      </TimelinePayloadLoaderContext.Provider>
     </TimelineAnchorContext.Provider>
   )
 }
@@ -726,10 +748,15 @@ function SingleRow({ item }: { item: SingleItem }) {
         tone={summary.tone}
         open={open}
         onToggle={expandable ? () => setOpen((o) => !o) : null}
+        origin={originForKind(item.event.kind, item.event.payload)}
       />
       {open && expandable && (
         <div className="ab-tl-expand">
-          <PayloadBlock label="Payload" payload={item.event.payload} />
+          <PayloadBlock
+            label="Payload"
+            payload={item.event.payload}
+            eventId={item.event.id}
+          />
         </div>
       )}
     </div>
@@ -765,6 +792,7 @@ function PairRow({ item }: { item: PairItem }) {
         inFlight={isInFlight}
         open={open}
         onToggle={() => setOpen((o) => !o)}
+        origin={originForKind(item.called.kind, item.called.payload)}
       />
       {open && (
         <div className="ab-tl-expand">
@@ -773,6 +801,7 @@ function PairRow({ item }: { item: PairItem }) {
             tone="input"
             ts={item.called.ts}
             payload={item.called.payload}
+            eventId={item.called.id}
           />
           {item.result ? (
             <PayloadBlock
@@ -780,6 +809,7 @@ function PairRow({ item }: { item: PairItem }) {
               tone={resultSummary?.isError ? 'error' : 'output'}
               ts={item.result.ts}
               payload={item.result.payload}
+              eventId={item.result.id}
             />
           ) : (
             <div className="ab-tl-await">
@@ -804,12 +834,44 @@ function PayloadBlock({
   tone,
   ts,
   payload,
+  eventId,
 }: {
   label: string
   tone?: 'input' | 'output' | 'error'
   ts?: string
   payload: unknown
+  /** Event id for lazy-loading an elided payload. Omitted for live (SSE)
+   *  events, whose payloads arrive full and are never elided. */
+  eventId?: string
 }) {
+  const loadPayload = useContext(TimelinePayloadLoaderContext)
+  const elided = isElidedRunEventPayload(payload)
+  const canLazyLoad = elided && loadPayload !== null && eventId !== undefined
+  // Boxed so a fetched `null`/`undefined` is distinguishable from "not loaded".
+  const [fetched, setFetched] = useState<{ value: unknown } | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!canLazyLoad || !loadPayload || eventId === undefined) return
+    let cancelled = false
+    loadPayload(eventId)
+      .then((value) => {
+        if (!cancelled) setFetched({ value })
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e))
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [canLazyLoad, eventId, loadPayload])
+
+  const loading = canLazyLoad && fetched === null && error === null
+  // The fetched payload once loaded, else the original (or the marker itself
+  // as a fallback if no loader is wired).
+  const shown = !elided ? payload : fetched ? fetched.value : payload
+  const bytes = elided ? (payload as ElidedRunEventPayload).bytes : 0
+
   return (
     <div className="ab-tl-block">
       <div className="ab-tl-block-head">
@@ -817,13 +879,26 @@ function PayloadBlock({
           {label}
         </span>
         {ts && <RelTime iso={ts} className="ab-tl-block-clock" />}
-        <span className="ab-tl-block-actions">
-          <ViewJsonButton payload={payload} />
-          <CopyJsonButton payload={payload} />
-        </span>
+        {!loading && error === null && (
+          <span className="ab-tl-block-actions">
+            <ViewJsonButton payload={shown} />
+            <CopyJsonButton payload={shown} />
+          </span>
+        )}
       </div>
       <div className="ab-tl-block-body">
-        <EventPayloadBody payload={payload} />
+        {loading ? (
+          <div className="ab-tl-await">
+            <span className="ab-pulse-dot" />
+            Loading payload ({(bytes / 1024).toFixed(1)} KB)…
+          </div>
+        ) : error !== null ? (
+          <div style={{ color: 'var(--danger)', fontSize: 12 }}>
+            Failed to load payload: {error}
+          </div>
+        ) : (
+          <EventPayloadBody payload={shown} />
+        )}
       </div>
     </div>
   )
@@ -852,6 +927,7 @@ function RowHeader({
   open,
   onToggle,
   inFlight,
+  origin,
 }: {
   ts: string
   title: string
@@ -863,6 +939,9 @@ function RowHeader({
   open: boolean
   onToggle: (() => void) | null
   inFlight?: boolean
+  /** "Initiated by" source tag (`originForKind`), computed by the caller
+   *  since it needs the payload (parent wrapper name). */
+  origin?: string | null
 }) {
   const interactive = onToggle !== null
   const handleKey = (e: ReactKeyboardEvent) => {
@@ -898,6 +977,11 @@ function RowHeader({
             <span className="ab-tl-kind">{titleParts.prefix}</span>
           )}
           <span className="ab-tl-name">{titleParts.body}</span>
+          {origin && (
+            <span className="ab-tl-origin" title={`Initiated by ${origin}`}>
+              {origin}
+            </span>
+          )}
           {inFlight && <span className="ab-tl-running">running…</span>}
         </div>
         {summary && <div className="ab-tl-summary">{summary}</div>}

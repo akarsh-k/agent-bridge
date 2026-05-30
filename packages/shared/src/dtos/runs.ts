@@ -331,3 +331,89 @@ export const runDetailResponseSchema = z.object({
 })
 
 export type RunDetailResponse = z.infer<typeof runDetailResponseSchema>
+
+/**
+ * Run-detail responses elide any single event payload larger than this
+ * (serialized bytes) to a {@link ElidedRunEventPayload} marker, so a run
+ * with several full inspection reports / model-request bodies doesn't ship
+ * hundreds of KB up front. The UI fetches the full payload on demand via
+ * `GET /api/runs/:id/events/:eventId/payload`.
+ */
+export const RUN_EVENT_PAYLOAD_INLINE_MAX_BYTES = 2048 as const
+
+/**
+ * Placeholder swapped in for an over-cap event payload in the run-detail
+ * list. The distinctive `__abElided` key can't collide with a real producer
+ * payload (no wrapper writes it); `bytes` is the full serialized size for the
+ * UI. The index signature carries the preserved structural fields (see
+ * {@link ELIDE_PRESERVE_KEYS}).
+ */
+export interface ElidedRunEventPayload {
+  readonly __abElided: true
+  readonly bytes: number
+  readonly kind: string
+  readonly [key: string]: unknown
+}
+
+/**
+ * Small structural fields kept inline when a payload is elided, so the
+ * timeline's pairing (`stepIndex` for model turns, `toolCallId` for tool
+ * calls) and labels survive. Everything else is dropped and lazy-loaded.
+ */
+export const ELIDE_PRESERVE_KEYS = [
+  'stepIndex',
+  'toolCallId',
+  'toolName',
+  'wrapperName',
+  'tool',
+  'purpose',
+  'repoLabel',
+  'model',
+  'finishReason',
+] as const
+
+/** Narrow an event payload to the elided-marker shape. */
+export function isElidedRunEventPayload(
+  payload: unknown,
+): payload is ElidedRunEventPayload {
+  return (
+    typeof payload === 'object' &&
+    payload !== null &&
+    (payload as { __abElided?: unknown }).__abElided === true
+  )
+}
+
+/**
+ * Elide an over-cap run-event `payload` to an {@link ElidedRunEventPayload}
+ * marker (payloads at or under {@link RUN_EVENT_PAYLOAD_INLINE_MAX_BYTES} pass
+ * through unchanged), keeping the {@link ELIDE_PRESERVE_KEYS} fields. Pure; in
+ * shared so the backend route and the smoke share one implementation.
+ */
+export function elideRunEventPayload(payload: unknown, kind: string): unknown {
+  if (payload === null || payload === undefined) return payload
+  const bytes = JSON.stringify(payload).length
+  if (bytes <= RUN_EVENT_PAYLOAD_INLINE_MAX_BYTES) return payload
+  const preserved: Record<string, unknown> = {}
+  if (typeof payload === 'object' && !Array.isArray(payload)) {
+    const obj = payload as Record<string, unknown>
+    for (const k of ELIDE_PRESERVE_KEYS) {
+      if (k in obj) preserved[k] = obj[k]
+    }
+  }
+  return {
+    __abElided: true,
+    bytes,
+    kind,
+    ...preserved,
+  } satisfies ElidedRunEventPayload
+}
+
+/** `GET /api/runs/:id/events/:eventId/payload` response. */
+export const runEventPayloadResponseSchema = z.object({
+  ok: z.literal(true),
+  payload: z.unknown().nullable(),
+})
+
+export type RunEventPayloadResponse = z.infer<
+  typeof runEventPayloadResponseSchema
+>
