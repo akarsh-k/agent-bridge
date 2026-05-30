@@ -674,6 +674,30 @@ each tagged with its own mount condition (`group: 'inspector'|'builtin'`,
 `mountWhen` description) so operators can see the full picture of what the
 LLM has available without spelunking the source.
 
+**Lazy vs eager mount.** `mountExternalMcps` is hybrid. A connection whose
+allowlisted tools all have a stored schema in `mcp_connection_tools` (the
+_catalog_, populated whenever a discover / test / reconnect succeeds) is mounted
+**lazily**: the LLM-facing proxy tools are built from the cached schemas and the
+transport is opened — and OAuth performed — only when the model actually calls
+one. A connection with a missing or unusable catalog falls back to the **eager**
+mount (open + `listToolsets()` at build). The build hashes
+`MAX(mcp_connections.updated_at)` over the agent's connections, so a reconnect
+(which bumps `updated_at`) invalidates the cached agent and the next build picks
+up the refreshed catalog.
+
+**Catalog schemas are RAW JSON Schema — do not regress.** The catalog stores the
+upstream tool's JSON Schema **verbatim**, pulled from the MCP SDK client
+(`getConnectedClientForServer(name).client.listTools()` in `discover-probe.ts`).
+Mastra's `listToolsets()` converts each schema to Zod and exposes only an
+_empty_ `~standard` StandardSchema export; persisting that wrapper advertises
+**no arguments** to the model, which then calls the tool with `{}` and the call
+hangs. `isUsableLazySchema` refuses to lazy-mount a connection whose stored
+schema is a wrapper or empty (it routes to eager, which serves the model a real
+schema from the live Zod tool), and the discover path warns when a freshly
+captured catalog is degenerate. At build time `toStandardSchema(rawSchema)`
+round-trips faithfully — `standardSchemaToJSONSchema` reconstructs the full
+schema for the model.
+
 **Tool-name namespacing.** Two MCPs in the same agent can easily
 both expose `search` or `query`. To keep the keys of `new Agent({ tools })`
 unique — and give the LLM an unambiguous name to call — `mountExternalMcps`
@@ -726,6 +750,21 @@ ephemeral callback port, no browser-polled stderr. The flow is:
    `DrizzleOAuthStorage`, then runs `listToolsets()` and flips the
    session to `ok` (or `failed`).
 4. The polling UI wakes up on that flip and renders the tool list.
+
+**Run-time reconnect (distinct from the flow above).** The flow above is the
+_settings-page_ discover / reauthorize path. A lazily-mounted connection can
+also go stale _mid-run_: when the model calls a tool whose OAuth session is
+dead, the proxy tool's `execute` emits a `run.mcp.authorize_required` run event
+(non-fatal — the run continues without that tool) and returns a friendly result
+telling the model to ask the user to reconnect. The chat reconstructs a durable
+"Reconnect" button from the persisted `run_events` rather than the live SSE
+frame, which is missed on warm-cache runs (Redis pub/sub never replays);
+clicking it runs the same discover / OAuth flow, after which the user resends.
+Two robustness backstops bound a run regardless of MCP health: each tool call
+has a per-call timeout (a hung upstream returns an error result instead of
+wedging the step), and an activity-based reaper (`reapStaleRunningRuns`, run on
+worker boot + a periodic sweep) marks runs that stop emitting `run_events` as
+`error`, so a crashed dispatch can't leave a run `running` forever.
 
 The callback URL is pinned to
 `http://localhost:${BACKEND_PORT}/oauth/mcp/:connectionId/callback`
