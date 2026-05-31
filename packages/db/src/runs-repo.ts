@@ -33,10 +33,16 @@
  * Node-only.
  */
 
-import { and, eq, gt, inArray, lt, notExists, sql } from 'drizzle-orm'
+import { and, eq, gt, inArray, lt, lte, notExists, sql } from 'drizzle-orm'
 import type { Callsite } from '@agent-bridge/shared'
 import type { AgentBridgeDb } from './client.js'
-import { runEvents, runs, type RunEventRow, type RunRow } from './schema.js'
+import {
+  mcpConnections,
+  runEvents,
+  runs,
+  type RunEventRow,
+  type RunRow,
+} from './schema.js'
 
 // ─── creation ────────────────────────────────────────────────────────────
 
@@ -327,6 +333,53 @@ export async function reapStaleRunningRuns(
     )
     .returning({ id: runs.id })
   return rows.length
+}
+
+/**
+ * The external-MCP connections THIS THREAD has used that are currently
+ * disconnected (need re-authorization). The chat pins ONE reconnect bar above
+ * the composer for these and keeps it until the connection is reconnected, so
+ * it survives a reload and the model giving up on a dead connection (no fresh
+ * `authorize_required` event is needed — the earlier one still counts).
+ *
+ * "Disconnected" is a connection-level state, not a per-turn one: returns the
+ * DISTINCT connections that ANY of the thread's runs flagged via
+ * `run.mcp.authorize_required`, EXCLUDING any reconnected since (its
+ * `updated_at` is newer than the flagging event) or deleted. A thread can have
+ * several disconnected at once; each is returned once, with its CURRENT name.
+ */
+export async function getThreadAuthorizeRequiredConnections(
+  handle: AgentBridgeDb,
+  mastraThreadId: string,
+): Promise<Array<{ connectionId: string; connectionName: string }>> {
+  const rows = await handle.db
+    .select({
+      connectionId: mcpConnections.id,
+      connectionName: mcpConnections.name,
+    })
+    .from(runEvents)
+    .innerJoin(runs, eq(runs.id, runEvents.runId))
+    .innerJoin(
+      mcpConnections,
+      sql`${mcpConnections.id} = (${runEvents.payloadJson} ->> 'connectionId')::uuid`,
+    )
+    .where(
+      and(
+        eq(runs.mastraThreadId, mastraThreadId),
+        eq(runEvents.kind, 'run.mcp.authorize_required'),
+        lte(mcpConnections.updatedAt, runEvents.ts),
+      ),
+    )
+  // The thread can flag the same connection across several runs; dedupe to one
+  // entry per connection (distinct connections are all preserved).
+  const seen = new Set<string>()
+  const out: Array<{ connectionId: string; connectionName: string }> = []
+  for (const r of rows) {
+    if (seen.has(r.connectionId)) continue
+    seen.add(r.connectionId)
+    out.push({ connectionId: r.connectionId, connectionName: r.connectionName })
+  }
+  return out
 }
 
 // ─── event audit ────────────────────────────────────────────────────────

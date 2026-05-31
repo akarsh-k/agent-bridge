@@ -69,6 +69,7 @@ import {
   callApi,
   deleteAgentThread as rpcDeleteAgentThread,
   fetchRunsAuthorizeRequired as rpcFetchRunsAuthorizeRequired,
+  fetchThreadAuthorizeRequired as rpcFetchThreadAuthorizeRequired,
   getActiveRunForThread as rpcGetActiveRunForThread,
   getAgentThreadMessages as rpcGetAgentThreadMessages,
   listAgentThreads as rpcListAgentThreads,
@@ -1054,40 +1055,13 @@ export function useChat(input: UseChatInput): UseChatResult {
           // via the reducer.
           setActiveRunFor(threadId, active.runId)
         }
-        // Durably reconstruct the "Reconnect" notice. `applyAuthorizeRequired`
-        // only ever sets `authorizeRequired` from the live SSE frame, which
-        // is never replayed — so on a reload / thread-switch the notice would
-        // be lost. Batch-fetch the persisted flags for every assistant
-        // message that carries a runId and fold them back on. The replayed
-        // Mastra rows don't carry a runId (only the resumed in-flight run
-        // does), so `fetchRunsAuthorizeRequired` short-circuits to `{}` with
-        // no request when there's nothing to look up. Idempotent: reuses the
-        // reducer's connectionId dedupe. Guarded by `alive` so a thread
-        // switched away before this resolves doesn't write stale state.
-        const runIds = Array.from(
-          new Set(
-            mapped
-              .filter((m) => m.role === 'assistant' && m.runId)
-              .map((m) => m.runId as string),
-          ),
-        )
-        if (runIds.length > 0) {
-          try {
-            const byRun = await rpcFetchRunsAuthorizeRequired(runIds)
-            if (!alive) return
-            setMessagesFor(threadId, (prev) =>
-              prev.map((m) => {
-                if (m.role !== 'assistant' || !m.runId) return m
-                const connections = byRun[m.runId]
-                return connections && connections.length > 0
-                  ? applyAuthorizeRequiredList(m, connections)
-                  : m
-              }),
-            )
-          } catch {
-            // Best-effort — leave the notice absent on a network blip.
-          }
-        }
+        // The "Reconnect" notice is reconstructed in a SEPARATE effect below
+        // (keyed on this load finishing), NOT inline here. This effect sets
+        // `messagesLoadedFor` (one of its own deps) a few lines up, so it tears
+        // itself down on the next render — which would flip `alive` to false
+        // and abort an inline reconstruction's in-flight fetch before it could
+        // attach. A dedicated effect keeps its `alive` guard valid through the
+        // fetch.
       } catch (err) {
         if (alive) {
           setSendError(
@@ -1106,6 +1080,40 @@ export function useChat(input: UseChatInput): UseChatResult {
       alive = false
     }
   }, [agentId, threadId, threads, threadsLoaded, activeRunId, messagesLoadedFor])
+
+  // Durably reconstruct the "Reconnect" notice once a thread's messages have
+  // loaded. `applyAuthorizeRequired` only ever sets `authorizeRequired` from
+  // the live SSE frame, which is never replayed, so on a reload or thread/tab
+  // switch the notice would otherwise be lost. The reloaded Mastra rows carry
+  // no runId, so ask the backend which of THIS THREAD's connections are still
+  // flagged (and not reconnected since) and fold them onto the last assistant
+  // bubble. Best-effort + idempotent (reuses the reducer's connectionId
+  // dedupe). Deliberately NOT folded into the load effect above: that effect
+  // sets `messagesLoadedFor` (its own dep) and so tears itself down on the next
+  // render, which would flip its `alive` flag and abort this fetch before it
+  // could attach. Gated on the load having finished (`messagesLoadedFor ===
+  // threadId`), this effect's `alive` only flips on a real agent/thread change.
+  useEffect(() => {
+    if (!agentId) return
+    if (messagesLoadedFor !== threadId) return
+    let alive = true
+    void (async () => {
+      try {
+        const connections = await rpcFetchThreadAuthorizeRequired(threadId)
+        if (!alive) return
+        if (connections.length > 0) {
+          setMessagesFor(threadId, (prev) =>
+            attachAuthorizeRequiredToLastAssistant(prev, connections),
+          )
+        }
+      } catch {
+        // Best-effort — leave the notice absent on a network blip.
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [agentId, threadId, messagesLoadedFor, setMessagesFor])
 
   // After a run terminates, refresh the thread list — the new thread
   // (if it was first message of a fresh conversation) needs to show
@@ -1549,6 +1557,34 @@ function applyAuthorizeRequiredList(
       })),
     ],
   }
+}
+
+/**
+ * Stash the reconstructed flagged connections on the LAST assistant message
+ * (the most recent run's bubble) on thread load. The chat aggregates
+ * `authorizeRequired` across ALL messages into the single pinned reconnect bar,
+ * so the exact message it lands on does not matter; the last bubble is just a
+ * stable home for the durable reconstruction (which has no per-message runId).
+ * Returns the same array reference when nothing changed so `setMessagesFor` can
+ * no-op.
+ */
+function attachAuthorizeRequiredToLastAssistant(
+  prev: ChatMessage[],
+  connections: ReadonlyArray<RunAuthorizeRequiredConnection>,
+): ChatMessage[] {
+  let idx = -1
+  for (let i = prev.length - 1; i >= 0; i--) {
+    if (prev[i]!.role === 'assistant') {
+      idx = i
+      break
+    }
+  }
+  if (idx === -1) return prev
+  const updated = applyAuthorizeRequiredList(prev[idx]!, connections)
+  if (updated === prev[idx]) return prev
+  const next = prev.slice()
+  next[idx] = updated
+  return next
 }
 
 function applyRunStarted(

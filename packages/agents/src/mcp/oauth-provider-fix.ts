@@ -110,6 +110,62 @@ export class FixedMCPOAuthClientProvider extends MCPOAuthClientProvider {
       }
     }
   }
+
+  /**
+   * The MCP SDK's `selectResourceURL` calls this (when present) instead of its
+   * built-in RFC 9728 resource check, letting same-origin servers like Notion's
+   * SSE endpoint work despite a declared resource path the default check
+   * rejects. Delegates to {@link resolveMcpOAuthResource}; uses no `this`, so
+   * the SDK's plain `provider.validateResourceURL(...)` call needs no binding.
+   */
+  async validateResourceURL(
+    serverUrl: string | URL,
+    resource?: string,
+  ): Promise<URL | undefined> {
+    return resolveMcpOAuthResource(serverUrl, resource)
+  }
+}
+
+/**
+ * Resolve the OAuth `resource` parameter for an MCP connection, relaxing the
+ * MCP SDK's strict RFC 9728 path check while keeping its security boundary.
+ *
+ * The SDK's `selectResourceURL` (via `checkResourceAllowed`) only accepts a
+ * declared protected-resource whose path the connection URL sits AT or BELOW.
+ * Some OAuth MCP servers invert that: Notion's SSE endpoint connects at
+ * `https://mcp.notion.com/sse` but advertises its resource as
+ * `https://mcp.notion.com/sse/message` (a deeper path), so the default check
+ * throws "Protected resource ... does not match expected ...". We trust a
+ * declared resource as long as it is SAME-origin as the connection (the origin
+ * is what protects the token from being minted for a different host); a
+ * cross-origin resource is still rejected.
+ *
+ * @returns the resource URL to request a token for, or `undefined` when there
+ *   is no usable declared resource (so the SDK omits the `resource` param).
+ * @throws when the declared resource is on a different origin than the server.
+ */
+export function resolveMcpOAuthResource(
+  serverUrl: string | URL,
+  resource?: string,
+): URL | undefined {
+  if (!resource) return undefined
+  let resourceUrl: URL
+  let serverOrigin: string
+  try {
+    resourceUrl = new URL(resource)
+    serverOrigin = new URL(serverUrl).origin
+  } catch {
+    // Malformed input: omit the `resource` param rather than crash the run.
+    return undefined
+  }
+  if (resourceUrl.origin !== serverOrigin) {
+    throw new Error(
+      `[external-mcps] MCP server declared an OAuth resource on a different ` +
+        `origin (${resourceUrl.origin}) than the connection (${serverOrigin}); ` +
+        `refusing to request a token for it.`,
+    )
+  }
+  return resourceUrl
 }
 
 /**

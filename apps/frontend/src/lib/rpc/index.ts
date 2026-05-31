@@ -636,6 +636,28 @@ export async function fetchRunsAuthorizeRequired(
   return res.byRun
 }
 
+/**
+ * The external-MCP connections an open chat thread should still show a
+ * "Reconnect" notice for (its runs flagged them and they haven't been
+ * reconnected since). Rebuilds the notice durably on a thread/tab switch,
+ * where the reloaded messages carry no runId for `fetchRunsAuthorizeRequired`.
+ * Same Hono sub-mount caveat as `listRuns` — typed via a cast on `callApi`.
+ */
+export async function fetchThreadAuthorizeRequired(
+  threadId: string,
+): Promise<import('@agent-bridge/shared').RunAuthorizeRequiredConnection[]> {
+  const res = await callApi<
+    import('@agent-bridge/shared').ThreadAuthorizeRequiredResponse
+  >(
+    fetch(`${apiBaseUrl}/api/runs/thread-authorize-required`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ threadId }),
+    }),
+  )
+  return res.connections
+}
+
 // ─── LLM provider helpers ────────────────────────────────────────────────
 
 /**

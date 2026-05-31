@@ -17,7 +17,9 @@ import { useWorkspace } from '../../lib/workspace-context'
 import { useChat, type ChatMessage } from '../../lib/use-chat'
 import { Markdown } from '../../ui/markdown'
 import {
+  AlertIcon,
   ArrowRightIcon,
+  CheckIcon,
   FileIcon,
   PlugIcon,
   PlusIcon,
@@ -386,6 +388,26 @@ export function ChatTab({
   const showThinkingBubble =
     chat.sending && chat.activeRunId === null && chat.messages.length > 0
 
+  // External-MCP connections still disconnected in this thread, deduped to one
+  // entry each. Collected across ALL messages: the live SSE frames attach per
+  // run and the on-load reconstruction folds in the backend's
+  // persist-while-broken set, so the bar stays up until the connection is
+  // reconnected and does NOT depend on the latest turn re-flagging it (the
+  // model often stops retrying a dead connection). Rendered once, pinned above
+  // the composer, never under a message.
+  const threadReconnects = useMemo(() => {
+    const seen = new Set<string>()
+    const out: { connectionId: string; connectionName: string }[] = []
+    for (const m of chat.messages) {
+      for (const conn of m.authorizeRequired ?? []) {
+        if (seen.has(conn.connectionId)) continue
+        seen.add(conn.connectionId)
+        out.push(conn)
+      }
+    }
+    return out
+  }, [chat.messages])
+
   return (
     <div className="ab-chat-shell">
       <div className="ab-chat-with-threads">
@@ -482,7 +504,14 @@ export function ChatTab({
               {chat.sendError}
             </div>
           )}
+
         </div>
+
+        {threadReconnects.length > 0 && (
+          <div className="ab-mcp-reconnect-dock">
+            <McpReconnectBar connections={threadReconnects} />
+          </div>
+        )}
 
         <div className="ab-chat-input-bar">
           <div className="ab-chat-input-pill">
@@ -782,13 +811,6 @@ function MessageRow({
             {msg.errorMessage}
           </div>
         )}
-        {msg.authorizeRequired?.map((conn) => (
-          <McpReconnectNotice
-            key={conn.connectionId}
-            connectionId={conn.connectionId}
-            connectionName={conn.connectionName}
-          />
-        ))}
         <div className="ab-msg-meta">
           {formatTime(msg.createdAt)}
           {msg.durationMs !== undefined &&
@@ -809,30 +831,21 @@ function MessageRow({
 }
 
 /**
- * Inline "Reconnect" affordance shown under an assistant bubble when the
- * run discovered an external MCP connection whose OAuth session had
- * expired (the `run.mcp.authorize_required` event). Non-fatal: the run
- * completed without that connection's tools, so this is a quiet nudge,
- * not an error.
- *
- * Reuses the EXISTING connection test/authorize machinery — same shape
- * as `attach-mcp-sheet.tsx` and the MCP detail page: discover, and if
- * the server says `authorize_required`, open the upstream consent popup
- * and long-poll until the session goes terminal. The discover server-
- * side invalidates the agent's tool cache, so on success the user only
- * needs to resend their message. Popup + poll state is kept local to
- * this notice so two connections on the same message reconnect
- * independently.
+ * The reconnect flow for ONE disconnected external-MCP connection (surfaced by
+ * a `run.mcp.authorize_required` event). Reuses the existing connection
+ * test/authorize machinery, same shape as `attach-mcp-sheet.tsx` and the MCP
+ * detail page: discover, and if the server says `authorize_required`, open the
+ * upstream consent popup and long-poll until the session goes terminal. The
+ * discover server-side invalidates the agent's tool cache, so on success the
+ * user only needs to resend. Popup + poll state is local to each row, so
+ * connections reconnect independently.
  */
-function McpReconnectNotice({
-  connectionId,
-  connectionName,
-}: {
-  connectionId: string
-  connectionName: string
-}) {
+function useMcpReconnect(connectionId: string, connectionName: string) {
   const [busy, setBusy] = useState(false)
   const [reconnected, setReconnected] = useState(false)
+  // Inline failure state (replaces ephemeral toasts): a failed reconnect stays
+  // visible with a retry instead of vanishing after a few seconds.
+  const [failed, setFailed] = useState<string | null>(null)
   // Live refs so the recursive poll loop + the cross-window message
   // handler can coordinate the popup without re-subscribing each tick.
   const popupRef = useRef<Window | null>(null)
@@ -884,6 +897,7 @@ function McpReconnectNotice({
     if (inFlightRef.current) return
     inFlightRef.current = true
     setBusy(true)
+    setFailed(null)
     popupOpenedRef.current = false
 
     // Single exit point: close the popup, re-enable the button, and
@@ -912,7 +926,6 @@ function McpReconnectNotice({
         inFlightRef.current = false
         setReconnected(true)
         setBusy(false)
-        toast.success(`Reconnected ${connectionName}`)
         return
       }
       if (res.code === 'authorize_required' && res.sessionId) {
@@ -927,7 +940,7 @@ function McpReconnectNotice({
           // every poll tick (it would spam blocked-popup attempts and
           // never converge).
           if (!popup) {
-            toast.error(`Allow popups to reconnect ${connectionName}.`)
+            setFailed('Allow pop-ups for this site, then reconnect.')
             stop()
             return
           }
@@ -951,9 +964,9 @@ function McpReconnectNotice({
         )
         return apply(next)
       }
-      // Any other non-ok code is a genuine failure — surface it and
-      // re-enable the button so the user can retry.
-      toast.error(res.message ?? `Reconnect failed (${res.code})`)
+      // Any other non-ok code is a genuine failure. Surface it inline (with a
+      // retry) so it persists, and re-enable the button.
+      setFailed(res.message ?? `Couldn't reconnect ${connectionName}.`)
       stop()
     }
     try {
@@ -962,66 +975,173 @@ function McpReconnectNotice({
     } catch (e) {
       if (!aliveRef.current) {
         // Component unmounted mid-flight — still clear the guard so a
-        // remount can reconnect. (No toast: nothing is on screen.)
+        // remount can reconnect. (No inline error: nothing is on screen.)
         inFlightRef.current = false
         return
       }
-      toast.error(
+      setFailed(
         e instanceof ApiError
           ? e.message
           : e instanceof Error
             ? e.message
-            : 'Reconnect failed',
+            : `Couldn't reconnect ${connectionName}.`,
       )
       stop()
     }
   }
 
-  if (reconnected) {
+  return { busy, reconnected, failed, reconnect }
+}
+
+/**
+ * One connection's reconnect control. `solo` renders the standalone
+ * single-connection line in its own tinted box; otherwise it is a compact row
+ * inside the multi-connection list, sharing the list's container.
+ */
+function McpReconnectRow({
+  connectionId,
+  connectionName,
+  solo = false,
+}: {
+  connectionId: string
+  connectionName: string
+  solo?: boolean
+}) {
+  const { busy, reconnected, failed, reconnect } = useMcpReconnect(
+    connectionId,
+    connectionName,
+  )
+
+  const action = !reconnected && (
+    <Button
+      className="ab-mcp-reconnect-action"
+      variant="secondary"
+      size="sm"
+      onClick={reconnect}
+      disabled={busy}
+      leading={
+        failed ? (
+          <RefreshIcon strokeWidth={2} />
+        ) : busy ? (
+          <ThinkingDots />
+        ) : undefined
+      }
+      aria-label={
+        busy
+          ? undefined
+          : failed
+            ? `Try reconnecting ${connectionName} again`
+            : `Reconnect ${connectionName}`
+      }
+    >
+      {failed ? 'Try again' : busy ? 'Reconnecting…' : 'Reconnect'}
+    </Button>
+  )
+
+  if (solo) {
+    const cls = reconnected
+      ? 'ab-mcp-reconnect ab-mcp-reconnect--ok'
+      : failed
+        ? 'ab-mcp-reconnect ab-mcp-reconnect--err'
+        : 'ab-mcp-reconnect'
     return (
-      <div
-        className="ab-msg-bubble"
-        role="status"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          fontSize: 13,
-          color: 'var(--text-muted)',
-        }}
-      >
-        <PlugIcon strokeWidth={2} />
-        Reconnected. Resend your message to use {connectionName}.
+      <div className={cls} role="status">
+        <span className="ab-mcp-reconnect-label">
+          <span className="ab-mcp-reconnect-icon" aria-hidden="true">
+            {reconnected ? (
+              <CheckIcon strokeWidth={2} />
+            ) : failed ? (
+              <AlertIcon strokeWidth={2} />
+            ) : (
+              <PlugIcon strokeWidth={2} />
+            )}
+          </span>
+          {reconnected ? (
+            <span>
+              Reconnected. Resend to use{' '}
+              <span className="ab-mcp-reconnect-name">{connectionName}</span>.
+            </span>
+          ) : failed ? (
+            <span>{failed}</span>
+          ) : (
+            <span>
+              <span className="ab-mcp-reconnect-name">{connectionName}</span>{' '}
+              needs reconnecting
+            </span>
+          )}
+        </span>
+        {action}
       </div>
     )
   }
 
+  const cls = reconnected
+    ? 'ab-mcp-reconnect-row ab-mcp-reconnect-row--ok'
+    : failed
+      ? 'ab-mcp-reconnect-row ab-mcp-reconnect-row--err'
+      : 'ab-mcp-reconnect-row'
   return (
-    <div
-      className="ab-msg-bubble"
-      role="status"
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: 10,
-        flexWrap: 'wrap',
-        fontSize: 13,
-        color: 'var(--text-muted)',
-      }}
-    >
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-        <PlugIcon strokeWidth={2} />
-        {connectionName} needs reconnecting
+    <div className={cls}>
+      <span className="ab-mcp-reconnect-label">
+        <span className="ab-mcp-reconnect-name">{connectionName}</span>
+        {failed && (
+          <span className="ab-mcp-reconnect-msg" title={failed}>
+            {failed}
+          </span>
+        )}
       </span>
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={reconnect}
-        disabled={busy}
-        leading={busy ? <ThinkingDots /> : undefined}
-      >
-        {busy ? 'Reconnecting…' : `Reconnect ${connectionName}`}
-      </Button>
+      {reconnected ? (
+        <span className="ab-mcp-reconnect-done">
+          <span className="ab-mcp-reconnect-icon" aria-hidden="true">
+            <CheckIcon strokeWidth={2} />
+          </span>
+          Reconnected
+        </span>
+      ) : (
+        action
+      )}
+    </div>
+  )
+}
+
+/**
+ * Pinned bar above the composer listing the external-MCP connections this
+ * thread still needs reconnected. One connection collapses to a single line;
+ * several stack under a count, each reconnecting on its own.
+ */
+function McpReconnectBar({
+  connections,
+}: {
+  connections: ReadonlyArray<{ connectionId: string; connectionName: string }>
+}) {
+  if (connections.length === 0) return null
+  if (connections.length === 1) {
+    return (
+      <McpReconnectRow
+        connectionId={connections[0]!.connectionId}
+        connectionName={connections[0]!.connectionName}
+        solo
+      />
+    )
+  }
+  return (
+    <div className="ab-mcp-reconnect ab-mcp-reconnect--multi" role="status">
+      <p className="ab-mcp-reconnect-summary">
+        <span className="ab-mcp-reconnect-icon" aria-hidden="true">
+          <PlugIcon strokeWidth={2} />
+        </span>
+        {connections.length} connections need reconnecting
+      </p>
+      <ul className="ab-mcp-reconnect-list">
+        {connections.map((c) => (
+          <li key={c.connectionId}>
+            <McpReconnectRow
+              connectionId={c.connectionId}
+              connectionName={c.connectionName}
+            />
+          </li>
+        ))}
+      </ul>
     </div>
   )
 }

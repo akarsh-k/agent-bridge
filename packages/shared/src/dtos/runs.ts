@@ -452,3 +452,25 @@ export const runAuthorizeRequiredResponseSchema = z.object({
 export type RunAuthorizeRequiredResponse = z.infer<
   typeof runAuthorizeRequiredResponseSchema
 >
+
+/**
+ * `POST /api/runs/thread-authorize-required` — given a chat thread id (its
+ * Mastra thread id), return the external-MCP connections that thread's runs
+ * flagged as needing re-authorization and that haven't been reconnected since.
+ * Lets the chat rebuild the "Reconnect" notice on a thread/tab switch, where
+ * the reloaded messages carry no runId to key the per-run endpoint on.
+ */
+export const threadAuthorizeRequiredQuerySchema = z.object({
+  threadId: z.string().min(1).max(200),
+})
+export type ThreadAuthorizeRequiredQuery = z.infer<
+  typeof threadAuthorizeRequiredQuerySchema
+>
+
+export const threadAuthorizeRequiredResponseSchema = z.object({
+  ok: z.literal(true),
+  connections: z.array(runAuthorizeRequiredConnectionSchema),
+})
+export type ThreadAuthorizeRequiredResponse = z.infer<
+  typeof threadAuthorizeRequiredResponseSchema
+>

@@ -38,6 +38,7 @@ import {
   RUN_LIST_PREVIEW_CHARS,
   runAuthorizeRequiredQuerySchema,
   runListQuerySchema,
+  threadAuthorizeRequiredQuerySchema,
   type Callsite,
   type RunAuthorizeRequiredConnection,
   type RunAuthorizeRequiredResponse,
@@ -49,8 +50,9 @@ import {
   type RunListRow,
   type RunSource,
   type RunStatus,
+  type ThreadAuthorizeRequiredResponse,
 } from '@agent-bridge/shared'
-import { schema } from '@agent-bridge/db'
+import { runsRepo, schema } from '@agent-bridge/db'
 import { getDb } from '../db.js'
 import { httpValidationError } from '../lib/errors.js'
 
@@ -358,6 +360,20 @@ export const runsRouter = new Hono().get(
       }
     }
     const body: RunAuthorizeRequiredResponse = { ok: true, byRun }
+    return c.json(body)
+  },
+).post(
+  '/thread-authorize-required',
+  zValidator('json', threadAuthorizeRequiredQuerySchema, (result, c) => {
+    if (!result.success) return httpValidationError(c, result.error)
+  }),
+  async (c) => {
+    const { threadId } = c.req.valid('json')
+    const connections = await runsRepo.getThreadAuthorizeRequiredConnections(
+      getDb(),
+      threadId,
+    )
+    const body: ThreadAuthorizeRequiredResponse = { ok: true, connections }
     return c.json(body)
   },
 )

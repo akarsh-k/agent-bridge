@@ -29,6 +29,8 @@
     "test:dispatcher-mapper": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-dispatcher-mapper.ts",
     "test:run-detail-events": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-run-detail-events.ts",
     "test:run-reaper": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-run-reaper.ts",
+    "test:mcp-oauth-resource": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-mcp-oauth-resource.ts",
+    "test:thread-authorize-required": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-thread-authorize-required.ts",
     "test:gitnexus-callers": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-gitnexus-callers.ts",
     "test:codebase-inspection-report-cap": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-codebase-inspection-report-cap.ts",
     "test:inspector-prompt": "NODE_OPTIONS='--conditions=development' pnpm --filter @agent-bridge/tests exec tsx smoke-inspector-system-prompt.ts",
