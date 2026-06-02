@@ -690,6 +690,11 @@
   background: var(--surface);
   border-color: var(--accent-border);
 }
+/* Hover lift for an unselected template card; never overrides the selected
+   card's accent border (that was the bug when this was an inline style). */
+.ab-template-card:not(.ab-card-featured):hover {
+  border-color: var(--border-strong);
+}
 .ab-grid-cards {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

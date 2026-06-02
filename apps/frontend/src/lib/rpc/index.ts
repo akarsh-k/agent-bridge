@@ -586,12 +586,14 @@ export async function listRuns(
     readonly source?: 'ui' | 'bridge'
     readonly limit?: number
     readonly agentId?: string
+    readonly mastraThreadId?: string
   } = {},
 ): Promise<import('@agent-bridge/shared').RunListResponse> {
   const params = new URLSearchParams()
   if (query.source) params.set('source', query.source)
   if (query.limit !== undefined) params.set('limit', String(query.limit))
   if (query.agentId) params.set('agentId', query.agentId)
+  if (query.mastraThreadId) params.set('mastraThreadId', query.mastraThreadId)
   const qs = params.toString()
   const url =
     `${apiBaseUrl}/api/runs` + (qs.length > 0 ? `?${qs}` : '')

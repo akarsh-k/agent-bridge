@@ -757,3 +757,90 @@
   color: var(--text-muted);
   font-size: 12px;
 }
+
+/* ─── Conversation affordances ───────────────────────────────────────────────
+   Following one thread's turns inside the run-detail sheet: a conversation strip
+   showing which turn this run is, with a prev / next turn stepper. (The run
+   row's own "Turn N of M" tag is a plain pill, styled in shell.css.) */
+
+/* Sub-header strip in the run-detail sheet: which turn of the conversation this
+   run is, plus a prev / next turn stepper. Mirrors the header's 18px gutter and
+   bottom border so it reads as native chrome, not an overlay. */
+.ab-detail-convbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 18px;
+  background: var(--surface-hi);
+  border-bottom: 1px solid var(--border);
+}
+.ab-detail-convbar-label {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.ab-detail-convbar-label svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+}
+.ab-detail-convbar-turn {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* Prev / next turn stepper — one joined control: two buttons sharing a
+   single border with a hairline divider, so it reads as a single pager
+   unit rather than two loose buttons. Two equal 1fr columns keep both
+   halves the same width despite "Previous" being longer than "Next".
+   Sits slightly inset (--surface) on the lighter --surface-hi strip. */
+.ab-turnnav {
+  flex: none;
+  display: inline-grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  overflow: hidden;
+}
+.ab-turnnav-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 11px;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition:
+    color var(--dur-1) var(--ease-out),
+    background-color var(--dur-1) var(--ease-out);
+}
+.ab-turnnav-btn + .ab-turnnav-btn {
+  border-left: 1px solid var(--border);
+}
+.ab-turnnav-btn svg {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+.ab-turnnav-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--surface-hover);
+}
+.ab-turnnav-btn:disabled {
+  color: var(--text-muted);
+  opacity: 0.45;
+  cursor: default;
+}

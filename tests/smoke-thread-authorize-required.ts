@@ -49,6 +49,26 @@ const getThreadAuth = (
     ) => Promise<Array<{ connectionId: string; connectionName: string }>>
   }
 ).getThreadAuthorizeRequiredConnections
+const getThreadReconnected = (
+  dbMod.runsRepo as {
+    getThreadReconnectedConnections?: (
+      handle: ReturnType<typeof createDb>,
+      mastraThreadId: string,
+    ) => Promise<Array<{ connectionId: string; connectionName: string }>>
+  }
+).getThreadReconnectedConnections
+
+async function safeReconn(
+  mastraThreadId: string,
+): Promise<Array<{ connectionId: string; connectionName: string }>> {
+  if (typeof getThreadReconnected !== 'function') return []
+  try {
+    return await getThreadReconnected(db, mastraThreadId)
+  } catch (e) {
+    console.log('  (threw)', e instanceof Error ? e.message : String(e))
+    return []
+  }
+}
 
 // ─── harness ────────────────────────────────────────────────────────────────
 
@@ -273,6 +293,26 @@ try {
       other.rows.length === 1 &&
       other.rows[0]?.connectionId === connD,
     `rows=${other.rows.map((r) => r.connectionName).join(',') || '(none)'}`,
+  )
+
+  // Inverse query: the RECONNECTED set (drives the "X is authenticated again"
+  // note). It is the complement of the still-needs-auth set: B reconnected,
+  // A + C still down.
+  const recon = await safeReconn(THREAD)
+  check(
+    'reconnected set is exactly the reconnected connection (B)',
+    recon.length === 1 && recon[0]?.connectionId === connB,
+    `rows=${recon.map((r) => r.connectionName).join(',') || '(none)'}`,
+  )
+  check(
+    'reconnected set excludes the still-down connections (A, C)',
+    !recon.some((r) => r.connectionId === connA || r.connectionId === connC),
+  )
+  const t3recon = await safeReconn(THREAD_3)
+  check(
+    'a still-down connection (E) is NOT in the reconnected set',
+    t3recon.length === 0,
+    `rows=${t3recon.map((r) => r.connectionName).join(',') || '(none)'}`,
   )
 } finally {
   await db.db.delete(schema.runs).where(eq(schema.runs.agentId, agentId))

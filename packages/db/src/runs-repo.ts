@@ -382,6 +382,49 @@ export async function getThreadAuthorizeRequiredConnections(
   return out
 }
 
+/**
+ * The inverse of {@link getThreadAuthorizeRequiredConnections}: connections this
+ * thread flagged with `run.mcp.authorize_required` that have since been
+ * RECONNECTED (a discover/reconnect bumped `mcp_connections.updated_at` past the
+ * most recent flag) and not been re-flagged. Lets the dispatcher inject a
+ * one-turn "X is authenticated and available again" note, so the model stops
+ * deferring to the now-stale authorize-required message left in the conversation
+ * history and uses the connection's tools when the next message calls for them.
+ *
+ * Complementary to the "still needs auth" query above: a flagged connection is
+ * in exactly one of the two sets (still-needs-auth vs reconnected), keyed on
+ * `updated_at` vs the latest flag's timestamp.
+ */
+export async function getThreadReconnectedConnections(
+  handle: AgentBridgeDb,
+  mastraThreadId: string,
+): Promise<Array<{ connectionId: string; connectionName: string }>> {
+  const rows = await handle.db
+    .select({
+      connectionId: mcpConnections.id,
+      connectionName: mcpConnections.name,
+    })
+    .from(runEvents)
+    .innerJoin(runs, eq(runs.id, runEvents.runId))
+    .innerJoin(
+      mcpConnections,
+      sql`${mcpConnections.id} = (${runEvents.payloadJson} ->> 'connectionId')::uuid`,
+    )
+    .where(
+      and(
+        eq(runs.mastraThreadId, mastraThreadId),
+        eq(runEvents.kind, 'run.mcp.authorize_required'),
+      ),
+    )
+    .groupBy(mcpConnections.id, mcpConnections.name, mcpConnections.updatedAt)
+    // reconnected AFTER the most recent flag in this thread (not re-flagged).
+    .having(sql`${mcpConnections.updatedAt} > max(${runEvents.ts})`)
+  return rows.map((r) => ({
+    connectionId: r.connectionId,
+    connectionName: r.connectionName,
+  }))
+}
+
 // ─── event audit ────────────────────────────────────────────────────────
 
 export interface AppendEventInput {

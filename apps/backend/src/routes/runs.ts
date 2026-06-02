@@ -30,7 +30,7 @@
 
 import { zValidator } from '@hono/zod-validator'
 import { Hono } from 'hono'
-import { and, asc, desc, eq, inArray, like } from 'drizzle-orm'
+import { and, asc, desc, eq, inArray, like, sql } from 'drizzle-orm'
 import { z } from 'zod'
 import {
   callsiteSchema,
@@ -119,6 +119,9 @@ export const runsRouter = new Hono().get(
     if (q.agentId) {
       filters.push(eq(schema.runs.agentId, q.agentId))
     }
+    if (q.mastraThreadId) {
+      filters.push(eq(schema.runs.mastraThreadId, q.mastraThreadId))
+    }
 
     // Drizzle's `where(and(...))` spread requires at least 2 args; for
     // single-filter queries we pass the predicate directly. Using
@@ -144,6 +147,18 @@ export const runsRouter = new Hono().get(
         promptTokens: schema.runs.promptTokens,
         completionTokens: schema.runs.completionTokens,
         callsiteJson: schema.runs.callsiteJson,
+        mastraThreadId: schema.runs.mastraThreadId,
+        // Turn position within the thread. Window functions run over the
+        // WHERE-matched set BEFORE the LIMIT, so a row in the returned page
+        // still gets the thread's true 1..N (not just among the loaded rows).
+        // NULL-thread runs would all collapse into one partition, so CASE
+        // them out. `::int` keeps bigint counts off the JSON wire as numbers.
+        turnIndex: sql<
+          number | null
+        >`CASE WHEN ${schema.runs.mastraThreadId} IS NULL THEN NULL ELSE (row_number() OVER (PARTITION BY ${schema.runs.mastraThreadId} ORDER BY ${schema.runs.startedAt}, ${schema.runs.id}))::int END`,
+        turnTotal: sql<
+          number | null
+        >`CASE WHEN ${schema.runs.mastraThreadId} IS NULL THEN NULL ELSE (count(*) OVER (PARTITION BY ${schema.runs.mastraThreadId}))::int END`,
         agentSlug: schema.agents.slug,
         agentName: schema.agents.name,
       })
@@ -167,6 +182,9 @@ export const runsRouter = new Hono().get(
         agentId: r.agentId,
         agentSlug: r.agentSlug ?? '<deleted>',
         agentName: r.agentName ?? '(deleted agent)',
+        mastraThreadId: r.mastraThreadId,
+        turnIndex: r.turnIndex,
+        turnTotal: r.turnTotal,
         status: r.status as RunStatus,
         source: deriveSource(r.streamId),
         streamId: r.streamId,
@@ -215,6 +233,7 @@ export const runsRouter = new Hono().get(
         promptTokens: schema.runs.promptTokens,
         completionTokens: schema.runs.completionTokens,
         callsiteJson: schema.runs.callsiteJson,
+        mastraThreadId: schema.runs.mastraThreadId,
         agentSlug: schema.agents.slug,
         agentName: schema.agents.name,
       })
@@ -252,6 +271,7 @@ export const runsRouter = new Hono().get(
       agentId: row.agentId,
       agentSlug: row.agentSlug ?? '<deleted>',
       agentName: row.agentName ?? '(deleted agent)',
+      mastraThreadId: row.mastraThreadId,
       status: row.status as RunStatus,
       source: deriveSource(row.streamId),
       streamId: row.streamId,

@@ -245,6 +245,37 @@ async function buildPromptEnrichments(args: {
     }
   }
 
+  // ── Synthetic system note for connections re-authenticated this thread ──
+  // After a dead external-MCP connection is reconnected, the model otherwise
+  // keeps reading the stale "needs re-authorization" tool message left in the
+  // conversation history and answers "not authenticated" without retrying. A
+  // factual status note (no action requested, the user drives what happens
+  // next) lets it use the tools when the next message calls for them. Persists
+  // until the connection is re-flagged.
+  if (threadId) {
+    const reconnected = await runsRepo.getThreadReconnectedConnections(
+      db,
+      threadId,
+    )
+    if (reconnected.length > 0) {
+      const names = reconnected
+        .map((c) => `\`${c.connectionName}\``)
+        .join(', ')
+      sections.push(
+        wrapPromptEnrichment(
+          'mcp-reconnected',
+          reconnected.length === 1
+            ? `_The ${names} connection was re-authenticated and is available ` +
+                `again. Any earlier message that it needs re-authorization is ` +
+                `now out of date._`
+            : `_These connections were re-authenticated and are available ` +
+                `again: ${names}. Any earlier message that they need ` +
+                `re-authorization is now out of date._`,
+        ),
+      )
+    }
+  }
+
   // ── Eager pre-fetch for short single-@-mention prompts ────────────
   // Heuristic: short user text (≤120 chars after trim) AND exactly
   // one @-mention. Skip when the message ends in a question word —

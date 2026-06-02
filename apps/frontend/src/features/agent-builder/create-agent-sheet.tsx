@@ -114,7 +114,10 @@ function TemplateCard({
       role="radio"
       aria-checked={selected}
       onClick={onSelect}
-      className={'ab-card ab-card-pad' + (selected ? ' ab-card-featured' : '')}
+      className={
+        'ab-card ab-card-pad ab-template-card' +
+        (selected ? ' ab-card-featured' : '')
+      }
       style={{
         width: '100%',
         textAlign: 'left',
@@ -122,19 +125,11 @@ function TemplateCard({
         font: 'inherit',
         display: 'block',
         position: 'relative',
-        // Subtle lift on hover for unselected cards. Selected cards already
-        // carry the accent glow via `ab-card-featured`.
+        // Hover lift for unselected cards is CSS-driven (`.ab-template-card`).
+        // Doing it imperatively here left an inline border-color that overrode
+        // the selected card's accent border, so a clicked card never lit up.
         transition:
           'border-color var(--dur-2) var(--ease-out), background var(--dur-2) var(--ease-out)',
-      }}
-      onMouseEnter={(e) => {
-        if (!selected)
-          (e.currentTarget as HTMLElement).style.borderColor =
-            'var(--border-strong)'
-      }}
-      onMouseLeave={(e) => {
-        if (!selected)
-          (e.currentTarget as HTMLElement).style.borderColor = 'var(--border)'
       }}
     >
       <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>

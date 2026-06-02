@@ -17,17 +17,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
   RunDetailResponse,
+  RunListRow,
   WorkerJobDetailResponse,
 } from '@agent-bridge/shared'
 import { stripPromptEnrichments } from '@agent-bridge/shared'
 import { Pill } from '../../ui/pill'
-import { CloseIcon } from '../../ui/icons'
+import { ChatIcon, CloseIcon } from '../../ui/icons'
 import { Markdown } from '../../ui/markdown'
 import {
   ApiError,
   fetchRun,
   fetchRunEventPayload,
   fetchWorkerJob,
+  listRuns,
 } from '../../lib/rpc'
 import { formatDurationMs } from './event-labels'
 import { EventTimeline } from './event-timeline'
@@ -41,6 +43,8 @@ interface RunDetailSheetProps {
   /** When non-null, modal is open and loads detail for that target. */
   target: DetailTarget | null
   onClose: () => void
+  /** Open another run in place. Drives the thread turn-nav (prev/next). */
+  onNavigate?: (runId: string) => void
 }
 
 interface FetchedDetail {
@@ -49,10 +53,40 @@ interface FetchedDetail {
   worker?: WorkerJobDetailResponse
 }
 
-export function RunDetailSheet({ target, onClose }: RunDetailSheetProps) {
+/** Compact chevron for the turn-nav prev/next buttons. */
+function TurnChevron({ dir }: { dir: 'left' | 'right' }) {
+  return (
+    <svg
+      width={14}
+      height={14}
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path
+        d={
+          dir === 'left' ? 'M10 3.5 L5.5 8 L10 12.5' : 'M6 3.5 L10.5 8 L6 12.5'
+        }
+      />
+    </svg>
+  )
+}
+
+export function RunDetailSheet({
+  target,
+  onClose,
+  onNavigate,
+}: RunDetailSheetProps) {
   const [data, setData] = useState<FetchedDetail | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // The sibling runs of this run's thread (its conversation's turns), oldest
+  // first, so the header can show "Turn N of M" and step prev/next.
+  const [threadRuns, setThreadRuns] = useState<readonly RunListRow[]>([])
 
   // Fetch on open. Cleared on close so the next open shows a spinner
   // instead of stale content. Capture the discriminator fields once so
@@ -104,6 +138,30 @@ export function RunDetailSheet({ target, onClose }: RunDetailSheetProps) {
     }
   }, [targetKind, targetId])
 
+  // Load the thread's turns once the run detail resolves, for the turn-nav.
+  const runThreadId =
+    data?.kind === 'run' ? (data.run?.run.mastraThreadId ?? null) : null
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      if (!runThreadId) {
+        if (alive) setThreadRuns([])
+        return
+      }
+      try {
+        const res = await listRuns({ mastraThreadId: runThreadId, limit: 100 })
+        if (!alive) return
+        // listRuns is newest-first; a conversation reads oldest-first.
+        setThreadRuns([...res.runs].reverse())
+      } catch {
+        if (alive) setThreadRuns([])
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [runThreadId])
+
   // Esc to close while open.
   useEffect(() => {
     if (target === null) return
@@ -115,6 +173,17 @@ export function RunDetailSheet({ target, onClose }: RunDetailSheetProps) {
   }, [target, onClose])
 
   if (target === null) return null
+
+  // Turn-nav: where this run sits among its thread's turns (oldest = 1).
+  const currentRunId = data?.kind === 'run' ? (data.run?.run.id ?? null) : null
+  const turnIdx = currentRunId
+    ? threadRuns.findIndex((r) => r.id === currentRunId)
+    : -1
+  const turnTotal = threadRuns.length
+  const prevRun = turnIdx > 0 ? threadRuns[turnIdx - 1] : null
+  const nextRun =
+    turnIdx >= 0 && turnIdx < turnTotal - 1 ? threadRuns[turnIdx + 1] : null
+  const showTurnNav = Boolean(onNavigate) && turnIdx >= 0 && turnTotal > 1
 
   const title = (() => {
     if (data?.kind === 'run' && data.run) {
@@ -157,6 +226,45 @@ export function RunDetailSheet({ target, onClose }: RunDetailSheetProps) {
             <CloseIcon />
           </button>
         </div>
+
+        {showTurnNav && (
+          <div
+            className="ab-detail-convbar"
+            role="group"
+            aria-label="Conversation turns"
+          >
+            <span className="ab-detail-convbar-label">
+              <ChatIcon />
+              <span>
+                Turn{' '}
+                <span className="ab-detail-convbar-turn">{turnIdx + 1}</span> of{' '}
+                {turnTotal} in this conversation
+              </span>
+            </span>
+            <div className="ab-turnnav">
+              <button
+                type="button"
+                className="ab-turnnav-btn"
+                disabled={!prevRun}
+                onClick={() => prevRun && onNavigate?.(prevRun.id)}
+                title="Previous turn (older)"
+              >
+                <TurnChevron dir="left" />
+                Previous
+              </button>
+              <button
+                type="button"
+                className="ab-turnnav-btn"
+                disabled={!nextRun}
+                onClick={() => nextRun && onNavigate?.(nextRun.id)}
+                title="Next turn (newer)"
+              >
+                Next
+                <TurnChevron dir="right" />
+              </button>
+            </div>
+          </div>
+        )}
 
         {error && (
           <div className="ab-detail-modal-state" role="alert">

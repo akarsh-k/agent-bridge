@@ -402,7 +402,11 @@ export function LogsPage() {
         />
       </div>
 
-      <RunDetailSheet target={openTarget} onClose={closeDetail} />
+      <RunDetailSheet
+        target={openTarget}
+        onClose={closeDetail}
+        onNavigate={openRun}
+      />
     </div>
   )
 }
@@ -813,6 +817,11 @@ function RunRow({
           <span className="ab-run-name">{row.agentName}</span>
           <span className="ab-run-slug">{row.agentSlug}</span>
           <SourcePill source={row.source} />
+          {row.turnTotal !== null && row.turnTotal > 1 && (
+            <Pill kind="neutral">
+              Turn {row.turnIndex}/{row.turnTotal}
+            </Pill>
+          )}
         </>
       }
       prompt={

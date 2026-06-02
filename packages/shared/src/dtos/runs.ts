@@ -240,6 +240,15 @@ export const runListRowSchema = z.object({
   agentId: z.uuid(),
   agentSlug: z.string(),
   agentName: z.string(),
+  /** Mastra thread (conversation) this run belongs to; `null` for
+   *  memory-disabled runs. Lets /logs filter to one conversation and the
+   *  run detail step through that thread's turns. */
+  mastraThreadId: z.string().nullable(),
+  /** This run's 1-based position within its thread, and the thread's total
+   *  turn count. Both `null` for threadless (memory-disabled) runs. Powers the
+   *  "Turn N of M" tag on the run row. */
+  turnIndex: z.number().int().nullable(),
+  turnTotal: z.number().int().nullable(),
   status: z.enum(runStatuses),
   source: z.enum(runSources),
   streamId: z.string(),
@@ -279,6 +288,8 @@ export const runListQuerySchema = z
      * the bridge view doesn't need but the future UI runs view does.
      */
     agentId: z.uuid().optional(),
+    /** Filter to one Mastra thread, the turns of a single conversation. */
+    mastraThreadId: z.string().min(1).max(200).optional(),
   })
   .strict()
 
@@ -299,7 +310,12 @@ export type RunListResponse = z.infer<typeof runListResponseSchema>
  * everything.
  */
 export const runDetailRowSchema = runListRowSchema
-  .omit({ inputPromptPreview: true, outputSummaryPreview: true })
+  .omit({
+    inputPromptPreview: true,
+    outputSummaryPreview: true,
+    turnIndex: true,
+    turnTotal: true,
+  })
   .extend({
     inputPrompt: z.string(),
     outputSummary: z.string().nullable(),
