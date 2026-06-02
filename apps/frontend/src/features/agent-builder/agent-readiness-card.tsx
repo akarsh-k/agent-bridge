@@ -69,31 +69,31 @@ export function AgentReadinessCard({
 
   return (
     <>
-      <div className="ab-card ab-card-pad" style={{ marginBottom: 18 }}>
+      <div className="ab-card ab-card-pad ab-form-section">
         <div
           style={{
             display: 'flex',
-            alignItems: 'center',
-            gap: 10,
-            marginBottom: 12,
+            alignItems: 'baseline',
+            gap: 'var(--space-2_5)',
+            marginBottom: 'var(--space-3)',
           }}
         >
           <div className="ab-section-title">Set up this agent</div>
           <span
             style={{
-              fontSize: 12,
+              fontSize: 'var(--text-xs)',
               color: 'var(--text-muted)',
             }}
           >
-            {remaining} step{remaining === 1 ? '' : 's'} left — finish these
-            to make it run end-to-end.
+            {remaining} step{remaining === 1 ? '' : 's'} left to make it run
+            end-to-end.
           </span>
         </div>
         <div
           style={{
             display: 'flex',
             flexDirection: 'column',
-            gap: 8,
+            gap: 'var(--space-2)',
           }}
         >
           {checks.map((c) => (
@@ -102,12 +102,13 @@ export function AgentReadinessCard({
               style={{
                 display: 'flex',
                 alignItems: 'flex-start',
-                gap: 12,
-                padding: '10px 12px',
+                gap: 'var(--space-3)',
+                padding: 'var(--space-2_5) var(--space-3)',
                 borderRadius: 'var(--radius)',
                 border: '1px solid var(--border)',
                 background: c.done ? 'var(--surface-hi)' : 'var(--surface)',
-                opacity: c.done ? 0.65 : 1,
+                opacity: c.done ? 0.6 : 1,
+                transition: 'opacity var(--dur-1) var(--ease-out)',
               }}
             >
               <div
@@ -124,7 +125,7 @@ export function AgentReadinessCard({
                   background: c.done ? 'var(--success)' : 'var(--surface-hi)',
                   color: c.done ? 'var(--bg-canvas)' : 'var(--text-muted)',
                   border: c.done
-                    ? '1px solid var(--success)'
+                    ? '1px solid var(--success-border)'
                     : '1px solid var(--border)',
                 }}
               >
@@ -135,8 +136,8 @@ export function AgentReadinessCard({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div
                   style={{
-                    fontSize: 13,
-                    fontWeight: 500,
+                    fontSize: 'var(--text-sm)',
+                    fontWeight: 'var(--fw-medium)',
                     color: 'var(--text)',
                   }}
                 >
@@ -144,9 +145,10 @@ export function AgentReadinessCard({
                 </div>
                 <div
                   style={{
-                    marginTop: 2,
-                    fontSize: 12,
+                    marginTop: 'var(--space-0_5)',
+                    fontSize: 'var(--text-xs)',
                     color: 'var(--text-dim)',
+                    lineHeight: 1.5,
                   }}
                 >
                   {c.body}

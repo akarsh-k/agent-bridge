@@ -47,9 +47,9 @@ export function EventPayloadViewer({ payload }: EventPayloadViewerProps) {
         style={{
           borderTop: '1px solid var(--border)',
           background: 'var(--surface-hi)',
-          padding: '10px 14px',
+          padding: 'var(--space-2_5) var(--space-3)',
           color: 'var(--text-muted)',
-          fontSize: 12,
+          fontSize: 'var(--text-xs)',
           fontStyle: 'italic',
         }}
       >
@@ -62,10 +62,10 @@ export function EventPayloadViewer({ payload }: EventPayloadViewerProps) {
       style={{
         borderTop: '1px solid var(--border)',
         background: 'var(--surface-hi)',
-        padding: '10px 14px',
+        padding: 'var(--space-2_5) var(--space-3)',
         display: 'flex',
         flexDirection: 'column',
-        gap: 8,
+        gap: 'var(--space-2)',
       }}
     >
       <div
@@ -73,7 +73,7 @@ export function EventPayloadViewer({ payload }: EventPayloadViewerProps) {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'flex-end',
-          gap: 10,
+          gap: 'var(--space-2_5)',
         }}
       >
         <ViewJsonButton payload={payload} />
@@ -98,7 +98,7 @@ export function EventPayloadBody({ payload }: { payload: unknown }) {
       <div
         style={{
           color: 'var(--text-muted)',
-          fontSize: 12,
+          fontSize: 'var(--text-xs)',
           fontStyle: 'italic',
         }}
       >
@@ -191,7 +191,7 @@ function CodebaseInspectionReportView({
           style={{
             display: 'flex',
             justifyContent: 'flex-end',
-            marginBottom: 6,
+            marginBottom: 'var(--space-1_5)',
           }}
         >
           {toggle}
@@ -199,12 +199,12 @@ function CodebaseInspectionReportView({
         <pre
           style={{
             margin: 0,
-            padding: '8px 10px',
+            padding: 'var(--space-2) var(--space-2_5)',
             background: 'var(--code-well)',
             border: '1px solid var(--code-well-border)',
             borderRadius: 'var(--radius)',
             fontFamily: 'var(--font-mono)',
-            fontSize: 11.5,
+            fontSize: 'var(--text-2xs)',
             color: 'var(--text)',
             whiteSpace: 'pre-wrap',
             wordBreak: 'break-word',
@@ -220,18 +220,28 @@ function CodebaseInspectionReportView({
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 'var(--space-2_5)',
+      }}
+    >
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 8,
+          gap: 'var(--space-2)',
           flexWrap: 'wrap',
         }}
       >
         <span
           className="ab-mono"
-          style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}
+          style={{
+            fontSize: 'var(--text-xs)',
+            fontWeight: 'var(--fw-semibold)',
+            color: 'var(--text)',
+          }}
         >
           {wrapper}
         </span>
@@ -239,7 +249,7 @@ function CodebaseInspectionReportView({
           <span
             className="ab-mono"
             style={{
-              fontSize: 11,
+              fontSize: 'var(--text-2xs)',
               color: 'var(--text-dim)',
               fontVariantNumeric: 'tabular-nums',
             }}
@@ -251,13 +261,13 @@ function CodebaseInspectionReportView({
         {truncated && (
           <span
             style={{
-              fontSize: 10.5,
-              fontWeight: 600,
+              fontSize: 'var(--text-3xs)',
+              fontWeight: 'var(--fw-semibold)',
               color: 'var(--warn)',
               background: 'var(--warn-bg)',
               border: '1px solid var(--warn-border)',
               borderRadius: 'var(--radius-pill)',
-              padding: '1px 7px',
+              padding: 'var(--space-0_5) var(--space-1_5)',
             }}
           >
             truncated
@@ -267,19 +277,29 @@ function CodebaseInspectionReportView({
       </div>
 
       <div
-        style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}
+        style={{
+          fontSize: 'var(--text-2xs)',
+          color: 'var(--text-muted)',
+          lineHeight: 1.45,
+        }}
       >
         {INSPECTION_REPORT_EXPLAINER}
       </div>
 
       {summary && (
-        <div style={{ fontSize: 12.5, color: 'var(--text)', lineHeight: 1.5 }}>
+        <div
+          style={{
+            fontSize: 'var(--text-sm)',
+            color: 'var(--text)',
+            lineHeight: 1.5,
+          }}
+        >
           {summary}
         </div>
       )}
 
       {resolvedLabel && (
-        <div style={{ fontSize: 11.5, color: 'var(--text-dim)' }}>
+        <div style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-dim)' }}>
           Repo: <span className="ab-mono">{resolvedLabel}</span>
           {resolvedSignal ? ` · matched ${resolvedSignal}` : ''}
         </div>
@@ -289,8 +309,8 @@ function CodebaseInspectionReportView({
         <ul
           style={{
             margin: 0,
-            paddingLeft: 16,
-            fontSize: 11.5,
+            paddingLeft: 'var(--space-4)',
+            fontSize: 'var(--text-2xs)',
             color: 'var(--warn)',
           }}
         >
@@ -301,15 +321,26 @@ function CodebaseInspectionReportView({
       )}
 
       <div>
-        <div className="ab-field-label" style={{ marginBottom: 6 }}>
+        <div
+          className="ab-field-label"
+          style={{ marginBottom: 'var(--space-1_5)' }}
+        >
           Files ({files.length})
         </div>
         {files.length === 0 ? (
-          <div style={{ fontSize: 11.5, color: 'var(--text-muted)' }}>
+          <div
+            style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-muted)' }}
+          >
             No files in this report.
           </div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 'var(--space-1_5)',
+            }}
+          >
             {files.map((f, i) => (
               <ReportFileRow key={i} file={f} />
             ))}
@@ -342,8 +373,8 @@ function ReportFileRow({ file }: { file: unknown }) {
       style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: 2,
-        padding: '6px 8px',
+        gap: 'var(--space-0_5)',
+        padding: 'var(--space-1_5) var(--space-2)',
         background: 'var(--code-well)',
         border: '1px solid var(--code-well-border)',
         borderRadius: 'var(--radius)',
@@ -353,26 +384,30 @@ function ReportFileRow({ file }: { file: unknown }) {
         style={{
           display: 'flex',
           alignItems: 'baseline',
-          gap: 8,
+          gap: 'var(--space-2)',
           flexWrap: 'wrap',
         }}
       >
         <span
           className="ab-mono"
           style={{
-            fontSize: 11.5,
+            fontSize: 'var(--text-2xs)',
             color: 'var(--text)',
             wordBreak: 'break-all',
           }}
         >
           {path}
         </span>
-        <span style={{ fontSize: 10.5, color: 'var(--text-muted)' }}>
+        <span
+          style={{ fontSize: 'var(--text-3xs)', color: 'var(--text-muted)' }}
+        >
           {meta}
         </span>
       </div>
       {why && (
-        <div style={{ fontSize: 11, color: 'var(--text-dim)' }}>{why}</div>
+        <div style={{ fontSize: 'var(--text-2xs)', color: 'var(--text-dim)' }}>
+          {why}
+        </div>
       )}
     </div>
   )
@@ -482,7 +517,7 @@ function JsonModal({
       <div
         className="ab-sheet-backdrop is-open"
         onClick={onClose}
-        style={{ zIndex: 200 }}
+        style={{ zIndex: 'var(--z-modal)' }}
       />
       <div
         role="dialog"
@@ -493,13 +528,13 @@ function JsonModal({
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 'min(1200px, calc(100vw - 48px))',
-          height: 'min(820px, calc(100vh - 48px))',
+          width: 'min(1200px, calc(100vw - var(--space-12)))',
+          height: 'min(820px, calc(100vh - var(--space-12)))',
           background: 'var(--surface)',
           border: '1px solid var(--border-strong)',
           borderRadius: 'var(--radius-lg)',
           boxShadow: 'var(--shadow-3)',
-          zIndex: 201,
+          zIndex: 'calc(var(--z-modal) + 1)',
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
@@ -510,8 +545,8 @@ function JsonModal({
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 12,
-            padding: '10px 14px',
+            gap: 'var(--space-3)',
+            padding: 'var(--space-2_5) var(--space-3)',
             borderBottom: '1px solid var(--border)',
             background: 'var(--surface-hi)',
           }}
@@ -519,14 +554,14 @@ function JsonModal({
           <div
             id={titleId}
             className="ab-section-title"
-            style={{ fontSize: 13, flex: 1 }}
+            style={{ fontSize: 'var(--text-sm)', flex: 1 }}
           >
             Payload JSON
           </div>
           <span
             className="ab-mono"
             style={{
-              fontSize: 11,
+              fontSize: 'var(--text-2xs)',
               color: 'var(--text-muted)',
               fontVariantNumeric: 'tabular-nums',
             }}
@@ -563,10 +598,10 @@ function JsonModal({
         <pre
           style={{
             margin: 0,
-            padding: '14px 18px',
+            padding: 'var(--space-3) var(--space-4)',
             background: 'var(--bg-canvas)',
             fontFamily: 'var(--font-mono)',
-            fontSize: 12.5,
+            fontSize: 'var(--text-sm)',
             lineHeight: 1.55,
             color: 'var(--text)',
             whiteSpace: wrap ? 'pre-wrap' : 'pre',
@@ -589,7 +624,7 @@ function ObjectKeyValueList({ obj }: { obj: Record<string, unknown> }) {
   const entries = Object.entries(obj)
   if (entries.length === 0) {
     return (
-      <div style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+      <div style={{ color: 'var(--text-muted)', fontSize: 'var(--text-xs)' }}>
         Empty object.
       </div>
     )
@@ -599,8 +634,8 @@ function ObjectKeyValueList({ obj }: { obj: Record<string, unknown> }) {
       style={{
         display: 'grid',
         gridTemplateColumns: 'minmax(120px, max-content) 1fr',
-        columnGap: 14,
-        rowGap: 6,
+        columnGap: 'var(--space-3)',
+        rowGap: 'var(--space-1_5)',
         alignItems: 'baseline',
       }}
     >
@@ -617,9 +652,9 @@ function KeyValueRow({ k, v }: { k: string; v: unknown }) {
       <div
         className="ab-mono"
         style={{
-          fontSize: 11,
+          fontSize: 'var(--text-2xs)',
           color: 'var(--text-muted)',
-          paddingTop: 2,
+          paddingTop: 'var(--space-0_5)',
           wordBreak: 'break-word',
         }}
       >
@@ -659,7 +694,7 @@ function Atom({ children, dim }: { children: React.ReactNode; dim?: boolean }) {
     <span
       className="ab-mono"
       style={{
-        fontSize: 12,
+        fontSize: 'var(--text-xs)',
         color: dim ? 'var(--text-muted)' : 'var(--text)',
       }}
     >
@@ -676,7 +711,7 @@ function StringValue({ value }: { value: string }) {
       <span
         className="ab-mono"
         style={{
-          fontSize: 12,
+          fontSize: 'var(--text-xs)',
           color: 'var(--text)',
           wordBreak: 'break-word',
           whiteSpace: 'pre-wrap',
@@ -692,12 +727,12 @@ function StringValue({ value }: { value: string }) {
       <pre
         style={{
           margin: 0,
-          padding: '8px 10px',
+          padding: 'var(--space-2) var(--space-2_5)',
           background: 'var(--code-well)',
           border: '1px solid var(--code-well-border)',
           borderRadius: 'var(--radius)',
           fontFamily: 'var(--font-mono)',
-          fontSize: 11.5,
+          fontSize: 'var(--text-2xs)',
           color: 'var(--text)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
@@ -712,7 +747,7 @@ function StringValue({ value }: { value: string }) {
         type="button"
         onClick={() => setExpanded((e) => !e)}
         className="ab-inline-action"
-        style={{ marginTop: 4 }}
+        style={{ marginTop: 'var(--space-1)' }}
       >
         {expanded
           ? 'Show less'
@@ -732,12 +767,12 @@ function NestedJson({ value }: { value: unknown }) {
       <pre
         style={{
           margin: 0,
-          padding: '8px 10px',
+          padding: 'var(--space-2) var(--space-2_5)',
           background: 'var(--code-well)',
           border: '1px solid var(--code-well-border)',
           borderRadius: 'var(--radius)',
           fontFamily: 'var(--font-mono)',
-          fontSize: 11.5,
+          fontSize: 'var(--text-2xs)',
           color: 'var(--text)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
@@ -753,7 +788,7 @@ function NestedJson({ value }: { value: unknown }) {
           type="button"
           onClick={() => setExpanded((e) => !e)}
           className="ab-inline-action"
-          style={{ marginTop: 4 }}
+          style={{ marginTop: 'var(--space-1)' }}
         >
           {expanded
             ? 'Collapse'

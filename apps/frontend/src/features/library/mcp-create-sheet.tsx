@@ -64,9 +64,7 @@ function McpCreateForm({
   // handler keeps this in sync if the operator switches transports
   // without manually touching the auth picker (most common path —
   // operator picks transport, leaves auth at default).
-  const [authKind, setAuthKind] = useState<McpAuthKind>(
-    defaultAuthFor('stdio'),
-  )
+  const [authKind, setAuthKind] = useState<McpAuthKind>(defaultAuthFor('stdio'))
   const [err, setErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -120,11 +118,11 @@ function McpCreateForm({
   const submit = async () => {
     setErr(null)
     const argsJson = isStdio
-      ? parseJsonStringArray(argsRaw) ??
+      ? (parseJsonStringArray(argsRaw) ??
         argsRaw
           .split('\n')
           .map((l) => l.trim())
-          .filter(Boolean)
+          .filter(Boolean))
       : []
     const parsed = mcpConnectionCreateInputSchema.safeParse({
       name: name.trim(),
@@ -144,7 +142,7 @@ function McpCreateForm({
     setBusy(true)
     try {
       const created = await createMcpConnection(parsed.data)
-      toast.success(`MCP “${name.trim()}” connected`)
+      toast.success(`MCP "${name.trim()}" connected`)
       onCreated?.(created)
       onClose()
     } catch (e) {
@@ -191,9 +189,7 @@ function McpCreateForm({
           onChange={handleTransportChange}
           options={transportOpts}
         />
-        <span className="ab-field-help">
-          {transportGuidanceFor(transport)}
-        </span>
+        <span className="ab-field-help">{transportGuidanceFor(transport)}</span>
       </div>
       <div className="ab-field">
         <label className="ab-field-label" htmlFor="mc-cmd">
@@ -221,9 +217,7 @@ function McpCreateForm({
             onChange={setAuthKind}
             options={authOpts}
           />
-          <span className="ab-field-help">
-            {authGuidanceFor(authKind)}
-          </span>
+          <span className="ab-field-help">{authGuidanceFor(authKind)}</span>
         </div>
       )}
       {isStdio && (
@@ -259,10 +253,7 @@ function McpCreateForm({
             </span>
           </div>
           <div className="ab-field">
-            <label
-              className="ab-field-label"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
-            >
+            <label className="ab-field-label ab-field-label--checkbox">
               <input
                 type="checkbox"
                 checked={allowHostHome}
@@ -271,18 +262,14 @@ function McpCreateForm({
               Allow access to host $HOME
             </label>
             <span className="ab-field-help">
-              Off by default. Only enable if the server needs to read your
-              home directory (e.g. credentials in <code>~/.config</code>).
+              Off by default. Only enable if the server needs to read your home
+              directory (e.g. credentials in <code>~/.config</code>).
             </span>
           </div>
         </>
       )}
       {err && (
-        <div
-          className="ab-field-help"
-          style={{ color: 'var(--danger)' }}
-          role="alert"
-        >
+        <div className="ab-field-help ab-field-help--danger" role="alert">
           {err}
         </div>
       )}
@@ -339,7 +326,7 @@ function transportGuidanceFor(transport: McpTransport): string {
         'services using static API keys via env vars. ' +
         'For OAuth-protected services with an HTTP MCP endpoint ' +
         '(Notion, Linear, Atlassian, …), choose http instead — Agent ' +
-        "Bridge will handle the OAuth lifecycle (authorize once, " +
+        'Bridge will handle the OAuth lifecycle (authorize once, ' +
         "auto-refresh tokens, you're done)."
       )
     case 'http':
@@ -368,10 +355,10 @@ function authGuidanceFor(authKind: McpAuthKind): string {
   switch (authKind) {
     case 'oauth':
       return (
-        "After saving, click Discover to authorize — a popup opens the " +
-        "upstream OAuth flow. Tokens are stored encrypted; Agent Bridge " +
-        "refreshes them automatically so the connection stays alive " +
-        "across IDE sessions without you returning here."
+        'After saving, click Discover to authorize — a popup opens the ' +
+        'upstream OAuth flow. Tokens are stored encrypted; Agent Bridge ' +
+        'refreshes them automatically so the connection stays alive ' +
+        'across IDE sessions without you returning here.'
       )
     case 'headers':
       return (
@@ -383,9 +370,9 @@ function authGuidanceFor(authKind: McpAuthKind): string {
     case 'none':
       return (
         'Anonymous — no auth header sent. Only valid for MCP servers ' +
-        "that explicitly allow unauthenticated access (rare for hosted " +
-        "services). Discover will fail silently with 0 tools if the " +
-        "server actually requires auth."
+        'that explicitly allow unauthenticated access (rare for hosted ' +
+        'services). Discover will fail silently with 0 tools if the ' +
+        'server actually requires auth.'
       )
   }
 }

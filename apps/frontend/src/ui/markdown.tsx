@@ -137,7 +137,7 @@ function renderInline(text: string): string {
   let s = escapeHtml(text)
   s = s.replace(
     /`([^`]+)`/g,
-    '<code style="font-family: var(--font-mono); font-size: 0.9em; background: var(--surface-hi); padding: 1px 5px; border-radius: 4px;">$1</code>',
+    '<code style="font-family: var(--font-mono); font-size: 0.9em; background: var(--surface-hi); padding: 1px 5px; border-radius: var(--radius-xs);">$1</code>',
   )
   s = s.replace(
     /\*\*([^*]+)\*\*/g,
@@ -154,7 +154,7 @@ function renderInline(text: string): string {
     (match, label: string, url: string) => {
       const safe = safeHref(url)
       if (safe === null) return match
-      return `<a href="${safe}" target="_blank" rel="noreferrer" style="color: var(--accent-300); text-decoration: underline">${label}</a>`
+      return `<a href="${safe}" target="_blank" rel="noreferrer" style="color: var(--accent-400); text-decoration: underline; text-underline-offset: 2px;">${label}</a>`
     },
   )
   return s
@@ -166,7 +166,7 @@ export function Markdown({ source }: { source: string }) {
     <div
       className="ab-md"
       style={{
-        fontSize: 13,
+        fontSize: 'var(--text-sm)',
         lineHeight: 1.65,
         color: 'var(--text)',
       }}
@@ -174,15 +174,19 @@ export function Markdown({ source }: { source: string }) {
       {tokens.map((t, i) => {
         switch (t.kind) {
           case 'heading': {
-            const size = { 1: 18, 2: 16, 3: 14 }[t.level]
+            const sizeMap = {
+              1: 'var(--text-lg)',
+              2: 'var(--text-base)',
+              3: 'var(--text-sm)',
+            } as const
             return (
               <div
                 key={i}
                 style={{
-                  fontSize: size,
-                  fontWeight: 600,
-                  letterSpacing: '-0.01em',
-                  margin: '14px 0 6px',
+                  fontSize: sizeMap[t.level],
+                  fontWeight: 'var(--fw-semibold)',
+                  letterSpacing: 'var(--tracking-snug)',
+                  margin: 'var(--space-4) 0 var(--space-1_5)',
                 }}
                 dangerouslySetInnerHTML={{ __html: renderInline(t.text) }}
               />
@@ -192,7 +196,7 @@ export function Markdown({ source }: { source: string }) {
             return (
               <p
                 key={i}
-                style={{ margin: '0 0 8px' }}
+                style={{ margin: '0 0 var(--space-2)' }}
                 dangerouslySetInnerHTML={{ __html: renderInline(t.text) }}
               />
             )
@@ -201,8 +205,8 @@ export function Markdown({ source }: { source: string }) {
               <ul
                 key={i}
                 style={{
-                  margin: '0 0 8px',
-                  paddingLeft: 18,
+                  margin: '0 0 var(--space-2)',
+                  paddingLeft: 'var(--space-5)',
                 }}
               >
                 {t.items.map((it, j) => (
@@ -218,8 +222,8 @@ export function Markdown({ source }: { source: string }) {
               <ol
                 key={i}
                 style={{
-                  margin: '0 0 8px',
-                  paddingLeft: 22,
+                  margin: '0 0 var(--space-2)',
+                  paddingLeft: 'var(--space-6)',
                 }}
               >
                 {t.items.map((it, j) => (
@@ -235,15 +239,16 @@ export function Markdown({ source }: { source: string }) {
               <pre
                 key={i}
                 style={{
-                  margin: '0 0 8px',
-                  padding: '10px 12px',
-                  background: 'var(--surface-hi)',
-                  border: '1px solid var(--border)',
+                  margin: '0 0 var(--space-2)',
+                  padding: 'var(--space-2_5) var(--space-3)',
+                  background: 'var(--code-well)',
+                  border: '1px solid var(--code-well-border)',
                   borderRadius: 'var(--radius)',
                   fontFamily: 'var(--font-mono)',
-                  fontSize: 12,
+                  fontSize: 'var(--text-xs)',
                   whiteSpace: 'pre-wrap',
                   overflowX: 'auto',
+                  color: 'var(--text-dim)',
                 }}
               >
                 {t.text}
@@ -256,7 +261,7 @@ export function Markdown({ source }: { source: string }) {
                 style={{
                   border: 'none',
                   borderTop: '1px solid var(--border)',
-                  margin: '12px 0',
+                  margin: 'var(--space-3) 0',
                 }}
               />
             )

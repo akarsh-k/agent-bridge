@@ -90,8 +90,7 @@ function ProviderCreateForm({
   )
   const local = isLocal(kind)
 
-  const dirty =
-    label.length > 0 || baseUrl.length > 0 || apiKey.length > 0
+  const dirty = label.length > 0 || baseUrl.length > 0 || apiKey.length > 0
   const guardedClose = useDirtyClose(dirty && !busy, onClose)
 
   const submit = async () => {
@@ -112,7 +111,7 @@ function ProviderCreateForm({
     setBusy(true)
     try {
       const created = await createLlmProvider(parsed.data)
-      toast.success(`Provider “${label.trim()}” added`)
+      toast.success(`Provider "${label.trim()}" added`)
       onClose()
       // Kick off model refresh in the background. Don't block the close
       // — the user has moved on; we just want the cache populated by the
@@ -169,9 +168,10 @@ function ProviderCreateForm({
           options={roleOpts}
         />
         <span className="ab-field-help">
-          Chat providers serve <code className="ab-mono">/v1/chat/completions</code>.
-          The embedding provider is a workspace singleton — its model
-          embeds every vector consumer.
+          Chat providers serve{' '}
+          <code className="ab-mono">/v1/chat/completions</code>. The embedding
+          provider is a workspace singleton — its model embeds every vector
+          consumer.
         </span>
       </div>
       <div className="ab-field">
@@ -226,19 +226,7 @@ function ProviderCreateForm({
         </span>
       </div>
       {role === 'chat' && !embeddingExists && (
-        <div
-          className="ab-field-help"
-          style={{
-            display: 'flex',
-            gap: 8,
-            alignItems: 'flex-start',
-            padding: '8px 10px',
-            border: '1px dashed var(--border)',
-            borderRadius: 'var(--radius)',
-            background: 'var(--surface-hi)',
-            color: 'var(--text-dim)',
-          }}
-        >
+        <div className="ab-hint-note">
           <span aria-hidden="true">·</span>
           <span>
             Coding-helper agents also need an embedding provider for code
@@ -247,11 +235,7 @@ function ProviderCreateForm({
         </div>
       )}
       {err && (
-        <div
-          className="ab-field-help"
-          style={{ color: 'var(--danger)' }}
-          role="alert"
-        >
+        <div className="ab-field-help ab-field-help--danger" role="alert">
           {err}
         </div>
       )}

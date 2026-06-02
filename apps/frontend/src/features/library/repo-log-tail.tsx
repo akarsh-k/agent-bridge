@@ -261,10 +261,7 @@ export function RepoLogTail({ repoId }: { repoId: string }) {
       </header>
 
       {historyError && (
-        <div
-          className="ab-field-help"
-          style={{ color: 'var(--danger)', marginTop: 4 }}
-        >
+        <div className="ab-field-help ab-field-help--danger">
           Couldn't load history: {historyError}. Live events still work.
         </div>
       )}
@@ -403,18 +400,7 @@ function LongRunHint({ phases }: { phases: readonly PhaseState[] }) {
     phases.find((p) => p.id === 'embed')?.status === 'running'
   if (!indexRunning && !embedRunning) return null
   return (
-    <div
-      style={{
-        margin: '6px 0 12px',
-        padding: '8px 12px',
-        borderLeft: '3px solid var(--accent-300)',
-        background: 'var(--accent-bg)',
-        borderRadius: 'var(--radius)',
-        fontSize: 12,
-        lineHeight: 1.5,
-        color: 'var(--text-dim)',
-      }}
-    >
+    <div className="ab-long-run-hint">
       Large repos can take several minutes. Gitnexus may go quiet for stretches
       during the embed pipeline. That's normal.
     </div>
@@ -454,7 +440,7 @@ function LogFeed({
   }
   if (empty) {
     return (
-      <div className="ab-field-help" style={{ marginTop: 12 }}>
+      <div className="ab-field-help ab-field-help--mt">
         No events yet — kick off a clone or re-index above.
       </div>
     )

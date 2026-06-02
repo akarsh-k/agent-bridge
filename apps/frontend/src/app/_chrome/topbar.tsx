@@ -17,22 +17,17 @@ export interface Crumb {
   to?: string
 }
 
-export function Topbar({
-  crumbs,
-}: {
-  crumbs: ReadonlyArray<Crumb>
-}) {
+export function Topbar({ crumbs }: { crumbs: ReadonlyArray<Crumb> }) {
   const { runningCount, errorCount, runs } = useNotificationCounts()
   const totalDot = runningCount + errorCount > 0
-  const dotColor = errorCount > 0 ? 'var(--danger)' : 'var(--accent-400)'
   const tooltip =
     runningCount === 0 && errorCount === 0
       ? 'No active runs'
       : [
-          runningCount > 0
-            ? `${runningCount} running`
+          runningCount > 0 ? `${runningCount} running` : null,
+          errorCount > 0
+            ? `${errorCount} recent error${errorCount === 1 ? '' : 's'}`
             : null,
-          errorCount > 0 ? `${errorCount} recent error${errorCount === 1 ? '' : 's'}` : null,
         ]
           .filter(Boolean)
           .join(' · ')
@@ -63,7 +58,7 @@ export function Topbar({
         {crumbs.map((c, i) => {
           const last = i === crumbs.length - 1
           return (
-            <span key={i} style={{ display: 'inline-flex', gap: 8, alignItems: 'center' }}>
+            <span key={i} className="ab-crumb-item">
               {i > 0 && <span className="ab-sep">/</span>}
               {last || !c.to ? (
                 <span className="ab-current">{c.label}</span>
@@ -75,32 +70,21 @@ export function Topbar({
         })}
       </nav>
       <div className="ab-topbar-spacer" />
-      <div ref={flyoutRef} style={{ position: 'relative' }}>
+      <div ref={flyoutRef} className="ab-notif-anchor">
         <Tooltip label={tooltip} side="bottom">
           <button
             type="button"
-            className="ab-icon-btn"
+            className="ab-icon-btn ab-notif-trigger"
             aria-label="Notifications"
             aria-haspopup="dialog"
             aria-expanded={flyoutOpen}
             onClick={() => setFlyoutOpen((v) => !v)}
-            style={{ position: 'relative' }}
           >
             <NotificationIcon />
             {totalDot && (
               <span
                 aria-hidden="true"
-                style={{
-                  position: 'absolute',
-                  top: 6,
-                  right: 6,
-                  width: 7,
-                  height: 7,
-                  borderRadius: '50%',
-                  background: dotColor,
-                  border: '2px solid var(--surface)',
-                  boxSizing: 'content-box',
-                }}
+                className={`ab-notif-dot${errorCount > 0 ? ' ab-notif-dot-danger' : ' ab-notif-dot-accent'}`}
               />
             )}
           </button>
@@ -192,45 +176,10 @@ function NotificationFlyout({
     })
     .slice(0, 8)
   return (
-    <div
-      role="dialog"
-      aria-label="Recent activity"
-      style={{
-        position: 'absolute',
-        top: 'calc(100% + 8px)',
-        right: 0,
-        width: 360,
-        maxHeight: '60vh',
-        overflowY: 'auto',
-        background: 'var(--surface-raised)',
-        border: '1px solid var(--border-strong)',
-        borderRadius: 'var(--radius-lg)',
-        boxShadow: 'var(--shadow-3)',
-        zIndex: 60,
-        padding: 4,
-        animation: 'ab-fadeup 160ms var(--ease-out)',
-      }}
-    >
-      <div
-        style={{
-          padding: '10px 12px 6px',
-          fontSize: 12,
-          color: 'var(--text-muted)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.08em',
-          fontFamily: 'var(--font-mono)',
-        }}
-      >
-        Recent activity
-      </div>
+    <div role="dialog" aria-label="Recent activity" className="ab-notif-flyout">
+      <div className="ab-notif-flyout-heading">Recent activity</div>
       {interesting.length === 0 ? (
-        <div
-          style={{
-            padding: '12px 14px 16px',
-            fontSize: 13,
-            color: 'var(--text-dim)',
-          }}
-        >
+        <div className="ab-notif-empty">
           Nothing in flight, no recent errors.
         </div>
       ) : (
@@ -254,52 +203,15 @@ function NotificationFlyout({
                 // timeline by default.
                 navigate(`/logs/${row.id}`)
               }}
-              style={{
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 10,
-                width: '100%',
-                textAlign: 'left',
-                padding: '8px 10px',
-                borderRadius: 7,
-                border: 'none',
-                background: 'transparent',
-                cursor: 'pointer',
-                font: 'inherit',
-              }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.background = 'var(--surface-hover)')
-              }
-              onMouseLeave={(e) =>
-                (e.currentTarget.style.background = 'transparent')
-              }
+              className="ab-notif-row"
             >
               <Pill kind={kind} dot>
                 {row.status}
               </Pill>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    fontSize: 13,
-                    fontWeight: 500,
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {row.agentName}
-                </div>
-                <div
-                  className="ab-mono"
-                  style={{
-                    fontSize: 11,
-                    color: 'var(--text-muted)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                >
-                  {row.source} ·{' '}
+              <div className="ab-notif-row-body">
+                <div className="ab-notif-row-name">{row.agentName}</div>
+                <div className="ab-notif-row-meta ab-mono">
+                  {row.source} &middot;{' '}
                   {formatRelative(Date.parse(row.startedAt))}
                   {row.errorMessage && ` · ${row.errorMessage}`}
                 </div>
@@ -308,37 +220,14 @@ function NotificationFlyout({
           )
         })
       )}
-      <div
-        style={{
-          padding: '6px 10px 8px',
-          borderTop: '1px solid var(--border)',
-          marginTop: 4,
-        }}
-      >
+      <div className="ab-notif-footer">
         <button
           type="button"
           onClick={() => {
             onClose()
             navigate('/bridge#runs')
           }}
-          style={{
-            width: '100%',
-            padding: '7px 10px',
-            border: 'none',
-            background: 'transparent',
-            color: 'var(--accent-300)',
-            fontSize: 13,
-            cursor: 'pointer',
-            font: 'inherit',
-            textAlign: 'left',
-            borderRadius: 7,
-          }}
-          onMouseEnter={(e) =>
-            (e.currentTarget.style.background = 'var(--surface-hover)')
-          }
-          onMouseLeave={(e) =>
-            (e.currentTarget.style.background = 'transparent')
-          }
+          className="ab-notif-all-link"
         >
           See all activity in Bridge →
         </button>

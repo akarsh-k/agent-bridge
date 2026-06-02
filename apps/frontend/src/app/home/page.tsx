@@ -70,8 +70,7 @@ export function HomePage() {
       {lastTouched ? (
         <Link
           to={`/agents/${lastTouched.id}`}
-          className="ab-card ab-card-link ab-card-pad ab-card-featured"
-          style={{ display: 'block', marginBottom: 14 }}
+          className="ab-card ab-card-link ab-card-pad ab-card-featured ab-home-featured"
         >
           <div className="ab-agent-head">
             <div
@@ -83,7 +82,7 @@ export function HomePage() {
               <div className="ab-agent-name">{lastTouched.name}</div>
               <div className="ab-agent-slug">{lastTouched.slug}</div>
             </div>
-            <Pill kind="accent" className="ab-ml-auto">
+            <Pill kind="accent" className="ab-home-recent-pill">
               Most recent
             </Pill>
           </div>
@@ -94,24 +93,22 @@ export function HomePage() {
         </Link>
       ) : (
         <div className="ab-card ab-card-pad">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="ab-home-cta-row">
             <div>
               <div className="ab-section-title">Build your first agent</div>
-              <div className="ab-section-sub" style={{ marginTop: 4 }}>
+              <div className="ab-section-sub ab-home-cta-sub">
                 An agent is a system prompt plus the tools and repos it can
-                reach. Wire one up and it becomes a callable tool inside
-                your IDE.
+                reach. Wire one up and it becomes a callable tool inside your
+                IDE.
               </div>
             </div>
-            <div style={{ marginLeft: 'auto' }}>
-              <Button
-                variant="primary"
-                onClick={() => navigate('/agents')}
-                trailing={<ArrowRightIcon />}
-              >
-                Get started
-              </Button>
-            </div>
+            <Button
+              variant="primary"
+              onClick={() => navigate('/agents')}
+              trailing={<ArrowRightIcon />}
+            >
+              Get started
+            </Button>
           </div>
         </div>
       )}
@@ -139,9 +136,7 @@ function FirstRun() {
   const [agentSheet, setAgentSheet] = useState(false)
 
   const chatProviderDone = llmProviders.some((p) => p.role === 'chat')
-  const embeddingProviderDone = llmProviders.some(
-    (p) => p.role === 'embedding',
-  )
+  const embeddingProviderDone = llmProviders.some((p) => p.role === 'embedding')
   const repoDone = repos.length > 0
   const agentDone = agents.length > 0
 
@@ -198,42 +193,22 @@ function FirstRun() {
         subtitle="A few steps to your first IDE-callable agent. Coding helpers need both a chat provider AND an embedding provider — non-code agents only need the chat one."
       />
 
-      <div
-        className="ab-card ab-card-pad ab-card-featured ab-firstrun-hero"
-        style={{ marginBottom: 18 }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            position: 'relative',
-            zIndex: 1,
-          }}
-        >
-          <div className="ab-glyph ab-glyph-violet">
+      <div className="ab-card ab-card-pad ab-card-featured ab-firstrun-hero ab-firstrun-hero-card">
+        <div className="ab-firstrun-hero-inner">
+          <div className="ab-glyph ab-glyph-violet" aria-hidden="true">
             <BridgeIcon />
           </div>
-          <div style={{ flex: 1 }}>
-            <div className="ab-section-title">
-              Get your first agent running
-            </div>
-            <div className="ab-section-sub" style={{ marginTop: 4 }}>
-              Each step takes a minute. You can come back here any time — every
-              action lives under Library and Agents in the sidebar too.
+          <div className="ab-firstrun-hero-text">
+            <div className="ab-section-title">Get your first agent running</div>
+            <div className="ab-section-sub ab-firstrun-hero-sub">
+              Each step takes a minute. You can come back here any time. Every
+              action also lives under Library and Agents in the sidebar.
             </div>
           </div>
         </div>
       </div>
 
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 12,
-          marginBottom: 18,
-        }}
-      >
+      <div className="ab-firstrun-steps">
         {steps.map((s) => (
           <StepCard key={s.n} step={s} />
         ))}
@@ -244,10 +219,7 @@ function FirstRun() {
         defaultRole={providerSheetRole ?? 'chat'}
         onClose={() => setProviderSheetRole(null)}
       />
-      <RepoCreateSheet
-        open={repoSheet}
-        onClose={() => setRepoSheet(false)}
-      />
+      <RepoCreateSheet open={repoSheet} onClose={() => setRepoSheet(false)} />
       <CreateAgentSheet
         open={agentSheet}
         onClose={() => setAgentSheet(false)}
@@ -271,13 +243,7 @@ function StepCard({ step }: { step: Step }) {
   const { Icon } = step
   return (
     <div
-      className="ab-card ab-card-pad"
-      style={{
-        display: 'flex',
-        alignItems: 'flex-start',
-        gap: 14,
-        opacity: step.done ? 0.7 : 1,
-      }}
+      className={`ab-card ab-card-pad ab-step-card${step.done ? ' ab-step-card-done' : ''}`}
     >
       <div
         className={`ab-glyph ${step.done ? 'ab-glyph-green' : 'ab-glyph-violet'}`}
@@ -289,33 +255,14 @@ function StepCard({ step }: { step: Step }) {
           <Icon width={18} height={18} />
         )}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            fontSize: 14,
-            fontWeight: 600,
-          }}
-        >
-          <span style={{ color: 'var(--text-muted)', fontWeight: 500 }}>
-            Step {step.n}
-          </span>
-          <span>{step.title}</span>
-          {step.optional && (
-            <Pill kind="neutral">Optional</Pill>
-          )}
-          {step.done && (
-            <Pill kind="success">Done</Pill>
-          )}
+      <div className="ab-step-body">
+        <div className="ab-step-title-row">
+          <span className="ab-step-num">Step {step.n}</span>
+          <span className="ab-step-title">{step.title}</span>
+          {step.optional && <Pill kind="neutral">Optional</Pill>}
+          {step.done && <Pill kind="success">Done</Pill>}
         </div>
-        <div
-          className="ab-section-sub"
-          style={{ marginTop: 4, fontSize: 13 }}
-        >
-          {step.body}
-        </div>
+        <div className="ab-section-sub ab-step-desc">{step.body}</div>
       </div>
       <Button
         variant={step.done ? 'ghost' : 'primary'}

@@ -13,11 +13,14 @@
   /* Layer stack — from deepest (canvas) to highest (raised) */
   --bg: #0d0e13;
   --bg-canvas: #0a0b0f;
-  --bg-grid: rgba(174, 198, 255, 0.04);
+  --bg-grid: rgba(255, 255, 255, 0.025);
   --surface: #15161b;
   --surface-hi: #1c1d24;
   --surface-raised: #23242c;
-  --surface-hover: rgba(126, 168, 243, 0.07);
+  /* Hover = neutral lift (accent is reserved for selection/active, per the
+   * visual-identity contract). A translucent overlay so it composites on any
+   * underlying surface tone. */
+  --surface-hover: rgba(255, 255, 255, 0.045);
   /* Recessed well for code / JSON payloads — the page tone, clearly
    * below the lifted panel/surface it sits on so the well reads as a
    * contained block, but not the near-black canvas (no hole). The well
@@ -30,7 +33,7 @@
   /* Borders — hairline by default; brighter on focus */
   --border: rgba(255, 255, 255, 0.09);
   --border-strong: rgba(255, 255, 255, 0.16);
-  --border-focus: rgba(91, 141, 239, 0.62);
+  --border-focus: oklch(var(--acc-l-400) var(--accent-c) var(--accent-h) / 0.6);
 
   /* Text — high contrast, faint cool cast to match the surfaces */
   --text: #f2f3f5;
@@ -38,22 +41,39 @@
   --text-muted: #6c6f7a;
   --text-inverted: #0a0b0f;
 
-  /* Accent — one calm periwinkle-blue, sharing the surfaces' cool
-   * temperature so it reads as native, not pasted on. Used for focus,
-   * links, selection, and info only. Primary actions are monochrome. */
-  --accent-50: #eef3fe;
-  --accent-300: #a9c4f7;
-  --accent-400: #7ea8f3;
-  --accent-500: #5b8def;
-  --accent-600: #3f6fd6;
-  --accent-glow: rgba(91, 141, 239, 0.25);
-  --accent-bg: rgba(91, 141, 239, 0.12);
-  --accent-bg-hi: rgba(91, 141, 239, 0.2);
-  --accent-border: rgba(126, 168, 243, 0.34);
-  /* Solid accent for primary-button fills: deeper than the bright link
-   * accent so white label text clears WCAG AA (~6.6:1). */
-  --accent-solid: #3856ad;
-  --accent-solid-hover: #2f4a93;
+  /* Accent — USER-SELECTABLE, derived from one hue + chroma in OKLCH so a
+   * single setting re-skins every accent surface. Default is teal (deliberately
+   * not the agentic-violet reflex). The curated preset palette + the
+   * zero-flicker bootstrap live in `lib/theme` + `index.html`, which set
+   * --accent-h / --accent-c on <html>. Lightness anchors (--acc-l-*) differ per
+   * theme and are overridden in the light blocks; the ramp formulas below stay
+   * put. Every preset is WCAG-AA verified in both themes. */
+  --accent-h: 195;
+  --accent-c: 0.125;
+  --acc-l-300: 0.82;
+  --acc-l-400: 0.74;
+  --acc-l-500: 0.7;
+  --acc-l-600: 0.6;
+  --acc-l-solid: 0.5;
+  --acc-l-solid-hover: 0.45;
+  --accent-50: oklch(0.97 calc(var(--accent-c) * 0.4) var(--accent-h));
+  --accent-300: oklch(var(--acc-l-300) var(--accent-c) var(--accent-h));
+  --accent-400: oklch(var(--acc-l-400) var(--accent-c) var(--accent-h));
+  --accent-500: oklch(var(--acc-l-500) var(--accent-c) var(--accent-h));
+  --accent-600: oklch(var(--acc-l-600) var(--accent-c) var(--accent-h));
+  --accent-glow: oklch(var(--acc-l-500) var(--accent-c) var(--accent-h) / 0.25);
+  --accent-bg: oklch(var(--acc-l-500) var(--accent-c) var(--accent-h) / 0.13);
+  --accent-bg-hi: oklch(var(--acc-l-500) var(--accent-c) var(--accent-h) / 0.2);
+  --accent-border: oklch(
+    var(--acc-l-400) var(--accent-c) var(--accent-h) / 0.34
+  );
+  /* Solid fill for primary buttons — white label clears WCAG AA on every
+   * preset (verified ~5.3–6.5:1 across the palette, both themes). */
+  --accent-fg: #ffffff;
+  --accent-solid: oklch(var(--acc-l-solid) var(--accent-c) var(--accent-h));
+  --accent-solid-hover: oklch(
+    var(--acc-l-solid-hover) var(--accent-c) var(--accent-h)
+  );
 
   /* Semantic — `-bg` is the soft fill behind a tone surface, `-border`
    * is the matching outline. Mirrors the accent token set (which has
@@ -69,18 +89,23 @@
   --warn-bg: rgba(251, 191, 36, 0.12);
   --warn-border: rgba(251, 191, 36, 0.32);
 
-  /* Shape — sharper, more deliberate corners */
-  --radius-xs: 3px;
-  --radius-sm: 5px;
-  --radius: 7px;
+  /* Shape — soft, even rounding (xs 4 / sm 6 / md 8, stepping up from there) */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius: 8px;
   --radius-lg: 10px;
-  --radius-xl: 14px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
   --radius-pill: 999px;
 
-  /* Elevation — flat; borders carry the structure, shadows stay subtle */
-  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4);
-  --shadow-2: 0 4px 16px -2px rgba(0, 0, 0, 0.5),
-    0 1px 2px rgba(0, 0, 0, 0.3);
+  /* Elevation — soft, layered. `--shadow-3` (modals / palette) was previously
+   * defined only in the light theme, so dark elevated surfaces rendered flat;
+   * it now lives here too. */
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 1px rgba(0, 0, 0, 0.28);
+  --shadow-2:
+    0 6px 16px -4px rgba(0, 0, 0, 0.5), 0 2px 6px -2px rgba(0, 0, 0, 0.4);
+  --shadow-3:
+    0 18px 44px -10px rgba(0, 0, 0, 0.62), 0 6px 16px -6px rgba(0, 0, 0, 0.5);
   --shadow-glow: 0 0 0 1px var(--accent-border);
 
   /* Motion — strong ease-out, no overshoot */
@@ -102,6 +127,59 @@
   --font-mono:
     'Geist Mono Variable', 'Geist Mono', ui-monospace, 'SF Mono', Menlo,
     Consolas, monospace;
+
+  /* Type scale — fixed, modular. Replaces the ~19 ad-hoc sizes in use;
+   * surfaces migrate onto these over the redesign sweep. */
+  --text-3xs: 10px;
+  --text-2xs: 11px;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+  --text-3xl: 30px;
+  --text-display: 38px;
+  --fw-regular: 420;
+  --fw-medium: 510;
+  --fw-semibold: 590;
+  --fw-bold: 680;
+  --tracking-tight: -0.02em;
+  --tracking-snug: -0.011em;
+  --tracking-wide: 0.06em;
+
+  /* Spatial system — strict 4px base (+ 2 / 6 / 10 micro steps for dense UI).
+   * Kills the competing 4px / 6px rhythms. */
+  --space-0_5: 2px;
+  --space-1: 4px;
+  --space-1_5: 6px;
+  --space-2: 8px;
+  --space-2_5: 10px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Z-index scale — replaces the ad-hoc 1…200 integers, in semantic order. */
+  --z-sticky: 10;
+  --z-sidebar: 20;
+  --z-dropdown: 30;
+  --z-overlay: 40;
+  --z-modal: 50;
+  --z-popover: 60;
+  --z-toast: 70;
+  --z-tooltip: 80;
+
+  /* Info — a fixed sky-blue, distinct from the user-chosen accent, for
+   * info-level signals. Replaces the orphan cyan literal (#38bdf8) hardcoded
+   * across log-level + mention chips. */
+  --info: #5cabf2;
+  --info-bg: rgba(92, 171, 242, 0.13);
+  --info-border: rgba(92, 171, 242, 0.32);
 
   color-scheme: dark;
   font-family: var(--font-sans);
@@ -138,30 +216,39 @@
     --surface: #ffffff;
     --surface-hi: #fafbfc;
     --surface-raised: #ffffff;
-    --surface-hover: rgba(47, 91, 192, 0.05);
+    --surface-hover: rgba(17, 24, 39, 0.04);
     --code-well: #f3f4f6;
     --code-well-border: rgba(11, 12, 16, 0.16);
 
     --border: rgba(11, 12, 16, 0.1);
     --border-strong: rgba(11, 12, 16, 0.16);
-    --border-focus: rgba(47, 91, 192, 0.5);
+    --border-focus: oklch(
+      var(--acc-l-400) var(--accent-c) var(--accent-h) / 0.5
+    );
 
     --text: #0b0c10;
     --text-dim: #51545d;
     --text-muted: #888b94;
     --text-inverted: #ffffff;
 
-    --accent-50: #eef3fe;
-    --accent-300: #5b8def;
-    --accent-400: #3f6fd6;
-    --accent-500: #2f5bc0;
-    --accent-600: #244a9e;
-    --accent-glow: rgba(47, 91, 192, 0.2);
-    --accent-bg: rgba(47, 91, 192, 0.08);
-    --accent-bg-hi: rgba(47, 91, 192, 0.14);
-    --accent-border: rgba(47, 91, 192, 0.26);
-    --accent-solid: #2f5bc0;
-    --accent-solid-hover: #244a9e;
+    /* Light overrides ONLY the lightness anchors + tint alphas; the OKLCH ramp
+     * formulas in :root recompute from these (deeper, for AA on white). */
+    --acc-l-300: 0.52;
+    --acc-l-400: 0.5;
+    --acc-l-500: 0.48;
+    --acc-l-600: 0.42;
+    --acc-l-solid: 0.5;
+    --acc-l-solid-hover: 0.44;
+    --accent-bg: oklch(var(--acc-l-500) var(--accent-c) var(--accent-h) / 0.1);
+    --accent-bg-hi: oklch(
+      var(--acc-l-500) var(--accent-c) var(--accent-h) / 0.16
+    );
+    --accent-border: oklch(
+      var(--acc-l-400) var(--accent-c) var(--accent-h) / 0.28
+    );
+    --info: #2f76d6;
+    --info-bg: rgba(47, 118, 214, 0.1);
+    --info-border: rgba(47, 118, 214, 0.28);
 
     --success: #059669;
     --success-bg: rgba(5, 150, 105, 0.1);
@@ -173,11 +260,11 @@
     --warn-bg: rgba(217, 119, 6, 0.1);
     --warn-border: rgba(217, 119, 6, 0.28);
 
-    --shadow-1: 0 1px 2px rgba(9, 9, 11, 0.06),
-      0 0 0 1px rgba(9, 9, 11, 0.02);
-    --shadow-2: 0 8px 24px -6px rgba(9, 9, 11, 0.12),
-      0 1px 3px rgba(9, 9, 11, 0.06);
-    --shadow-3: 0 24px 60px -12px rgba(9, 9, 11, 0.18),
+    --shadow-1: 0 1px 2px rgba(9, 9, 11, 0.06), 0 0 0 1px rgba(9, 9, 11, 0.02);
+    --shadow-2:
+      0 8px 24px -6px rgba(9, 9, 11, 0.12), 0 1px 3px rgba(9, 9, 11, 0.06);
+    --shadow-3:
+      0 24px 60px -12px rgba(9, 9, 11, 0.18),
       0 6px 16px -4px rgba(9, 9, 11, 0.1);
     --shadow-glow: 0 0 0 1px var(--accent-border);
 

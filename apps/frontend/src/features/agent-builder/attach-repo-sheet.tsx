@@ -85,8 +85,8 @@ function AttachRepoForm({
         <div className="ab-field">
           <div className="ab-field-help">
             You haven't added any repositories yet.{' '}
-            <Link to="/library/repos" style={{ color: 'var(--accent-300)' }}>
-              Add one in Library →
+            <Link to="/library/repos" className="ab-text-link">
+              Add one in Library
             </Link>
           </div>
         </div>

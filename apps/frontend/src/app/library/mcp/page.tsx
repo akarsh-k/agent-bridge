@@ -30,7 +30,7 @@ export function McpPage() {
   const remove = async (id: string, label: string) => {
     if (
       !(await confirmDialog({
-        title: `Delete MCP “${label}”?`,
+        title: `Delete MCP "${label}"?`,
         body: 'Agent allowlists referencing this connection will be cleared.',
         confirmLabel: 'Delete connection',
         destructive: true,

@@ -30,10 +30,7 @@ import { SectionHead as CardHead } from '../../ui/section-head'
 import { toast } from '../../ui/toast-store'
 import { confirmDialog } from '../../ui/dialog-store'
 import { RowMenu } from '../../ui/row-menu'
-import {
-  ApiError,
-  getInspectorSystemSkill,
-} from '../../lib/rpc'
+import { ApiError, getInspectorSystemSkill } from '../../lib/rpc'
 import { navigate } from '../../lib/router'
 import { useDragReorder } from '../../lib/use-drag-reorder'
 import { AttachRepoSheet } from './attach-repo-sheet'
@@ -43,10 +40,7 @@ import { SkillSheet } from './skill-sheet'
 import { RelationshipsSection } from './relationships-section'
 import { EditAttachedRepoSheet } from './edit-attached-repo-sheet'
 
-const REPO_STATUS_PILL: Record<
-  string,
-  { kind: PillKind; label: string }
-> = {
+const REPO_STATUS_PILL: Record<string, { kind: PillKind; label: string }> = {
   pending: { kind: 'neutral', label: 'Pending' },
   cloning: { kind: 'warn', label: 'Cloning' },
   cloned: { kind: 'neutral', label: 'Cloned' },
@@ -93,10 +87,10 @@ function BuiltInSubhead() {
   return (
     <div
       style={{
-        margin: '18px 4px 8px',
-        fontSize: 11,
-        fontWeight: 600,
-        letterSpacing: '0.06em',
+        margin: 'var(--space-4) var(--space-1) var(--space-2)',
+        fontSize: 'var(--text-2xs)',
+        fontWeight: 'var(--fw-semibold)',
+        letterSpacing: 'var(--tracking-wide)',
         textTransform: 'uppercase',
         color: 'var(--text-muted)',
       }}
@@ -120,16 +114,13 @@ function BuiltInSubhead() {
 function SkillLoadingBadge({ skill }: { skill: SkillResponse }) {
   const hasDescription = skill.description.trim().length > 0
   if (!skill.alwaysInclude && !hasDescription) {
-    return (
-      <Pill kind="warn">Needs description</Pill>
-    )
+    return <Pill kind="warn">Needs description</Pill>
   }
   if (!skill.alwaysInclude) {
     return <Pill kind="accent">On demand</Pill>
   }
   return <Pill kind="neutral">Always on</Pill>
 }
-
 
 export function ResourcesPanel({ agentId }: { agentId: string }) {
   const {
@@ -209,7 +200,7 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
   const removeSkillConfirmed = async (skillId: string, name: string) => {
     if (
       !(await confirmDialog({
-        title: `Delete skill “${name}”?`,
+        title: `Delete skill "${name}"?`,
         confirmLabel: 'Delete skill',
         destructive: true,
       }))
@@ -230,13 +221,10 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
     }
   }
 
-  const removeMcpEntry = async (
-    mcpConnectionId: string,
-    toolName: string,
-  ) => {
+  const removeMcpEntry = async (mcpConnectionId: string, toolName: string) => {
     if (
       !(await confirmDialog({
-        title: `Disallow tool “${toolName}”?`,
+        title: `Disallow tool "${toolName}"?`,
         body: 'The MCP server stays connected — this agent just stops being able to call this specific tool.',
         confirmLabel: 'Disallow',
         destructive: true,
@@ -292,18 +280,18 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
           <div
             className="ab-field-help"
             style={{
-              marginBottom: 10,
+              marginBottom: 'var(--space-2_5)',
               color: 'var(--warn)',
-              padding: '10px 12px',
-              border: '1px solid var(--border)',
+              padding: 'var(--space-2_5) var(--space-3)',
+              border: '1px solid var(--warn-border)',
               borderRadius: 'var(--radius)',
-              background: 'var(--surface-hi)',
+              background: 'var(--warn-bg)',
             }}
           >
-            <strong>Inspector toolkit is disabled.</strong> Repos can
-            still be attached, but the agent has no built-in tools to
-            query them. Enable the toolkit on the <strong>Tools</strong> tab
-            to make these repos readable.
+            <strong>Inspector toolkit is disabled.</strong> Repos can still be
+            attached, but the agent has no built-in tools to query them. Enable
+            the toolkit on the <strong>Tools</strong> tab to make these repos
+            readable.
           </div>
         )}
         {(resources?.attachedRepos.length ?? 0) === 0 ? (
@@ -355,8 +343,8 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                         style={{
                           display: 'flex',
                           flexWrap: 'wrap',
-                          gap: 4,
-                          marginTop: 4,
+                          gap: 'var(--space-1)',
+                          marginTop: 'var(--space-1)',
                         }}
                         title="Names a coding agent might use to refer to this repo"
                       >
@@ -384,8 +372,7 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                       items={[
                         {
                           label: 'Edit role',
-                          onClick: () =>
-                            setEditingRepoAttachmentId(r.repo.id),
+                          onClick: () => setEditingRepoAttachmentId(r.repo.id),
                         },
                         {
                           label: 'Manage repository',
@@ -529,8 +516,7 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
           <div className="ab-card ab-list-card">
             {groupAllowlistByConnection(resources?.mcpAllowlist ?? []).map(
               (group) => {
-                const enabledCount = group.tools.filter((t) => t.enabled)
-                  .length
+                const enabledCount = group.tools.filter((t) => t.enabled).length
                 return (
                   <div
                     className="ab-list-row is-edit"
@@ -546,7 +532,10 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                     }}
                   >
                     <BrandGlyph kind="mcp" />
-                    <div className="ab-list-row-head" style={{ gap: 6 }}>
+                    <div
+                      className="ab-list-row-head"
+                      style={{ gap: 'var(--space-1_5)' }}
+                    >
                       <div className="ab-list-row-title">
                         {group.mcpConnectionName}
                       </div>
@@ -554,31 +543,20 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
                         style={{
                           display: 'flex',
                           flexWrap: 'wrap',
-                          gap: 4,
-                          marginTop: 2,
+                          gap: 'var(--space-1)',
+                          marginTop: 'var(--space-0_5)',
                         }}
                       >
                         {group.tools.map((t) => (
                           <span
                             key={t.toolName}
-                            className="ab-mono"
+                            className={
+                              t.enabled
+                                ? 'ab-pill ab-pill-accent ab-mono'
+                                : 'ab-pill ab-mono'
+                            }
                             title={t.enabled ? 'Allowed' : 'Disabled'}
-                            style={{
-                              fontSize: 11,
-                              padding: '2px 7px',
-                              borderRadius: 'var(--radius-pill)',
-                              background: t.enabled
-                                ? 'var(--accent-bg)'
-                                : 'var(--surface-hi)',
-                              color: t.enabled
-                                ? 'var(--accent-300)'
-                                : 'var(--text-muted)',
-                              border:
-                                '1px solid ' +
-                                (t.enabled
-                                  ? 'var(--accent-border)'
-                                  : 'var(--border)'),
-                            }}
+                            style={{ fontSize: 'var(--text-2xs)' }}
                           >
                             {t.toolName}
                           </span>
@@ -675,97 +653,101 @@ export function ResourcesPanel({ agentId }: { agentId: string }) {
           <>
             <div className="ab-card ab-list-card">
               {resources?.skills.map((s) => {
-              const drag = skillDrag.rowProps(s.id)
-              return (
-                <div
-                  className="ab-list-row is-edit"
-                  key={s.id}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => {
-                    setEditingSkillId(s.id)
-                    setSkillSheet(true)
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault()
+                const drag = skillDrag.rowProps(s.id)
+                return (
+                  <div
+                    className="ab-list-row is-edit"
+                    key={s.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => {
                       setEditingSkillId(s.id)
                       setSkillSheet(true)
-                    }
-                  }}
-                  draggable={drag.draggable}
-                  onDragStart={drag.onDragStart}
-                  onDragEnter={drag.onDragEnter}
-                  onDragOver={drag.onDragOver}
-                  onDragEnd={drag.onDragEnd}
-                  onDrop={drag.onDrop}
-                  style={{
-                    opacity: drag.isDragging ? 0.4 : 1,
-                    ...(drag.isDropTarget
-                      ? {
-                          background: 'var(--accent-bg)',
-                          boxShadow: 'inset 0 2px 0 var(--accent-400)',
-                        }
-                      : null),
-                  }}
-                >
-                  <span
-                    aria-hidden="true"
-                    style={{
-                      color: 'var(--text-muted)',
-                      fontSize: 14,
-                      marginRight: -4,
-                      cursor: 'grab',
-                      userSelect: 'none',
                     }}
-                    title="Drag to reorder"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setEditingSkillId(s.id)
+                        setSkillSheet(true)
+                      }
+                    }}
+                    draggable={drag.draggable}
+                    onDragStart={drag.onDragStart}
+                    onDragEnter={drag.onDragEnter}
+                    onDragOver={drag.onDragOver}
+                    onDragEnd={drag.onDragEnd}
+                    onDrop={drag.onDrop}
+                    style={{
+                      opacity: drag.isDragging ? 0.4 : 1,
+                      ...(drag.isDropTarget
+                        ? {
+                            background: 'var(--accent-bg)',
+                            boxShadow: 'inset 0 2px 0 var(--accent-400)',
+                          }
+                        : null),
+                    }}
                   >
-                    ⋮⋮
-                  </span>
-                  <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-                    {s.name.charAt(0).toUpperCase()}
-                  </div>
-                  <div className="ab-list-row-head">
-                    <div
-                      className="ab-list-row-title"
-                      style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
-                    >
-                      {s.name}
-                      <SkillLoadingBadge skill={s} />
-                    </div>
-                    <div
-                      className="ab-list-row-sub"
+                    <span
+                      aria-hidden="true"
                       style={{
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
+                        color: 'var(--text-muted)',
+                        fontSize: 'var(--text-base)',
+                        marginRight: 'calc(-1 * var(--space-1))',
+                        cursor: 'grab',
+                        userSelect: 'none',
                       }}
+                      title="Drag to reorder"
                     >
-                      {s.description.trim() ||
-                        s.markdownBody.slice(0, 80) ||
-                        'No body yet'}
+                      ⋮⋮
+                    </span>
+                    <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
+                      {s.name.charAt(0).toUpperCase()}
+                    </div>
+                    <div className="ab-list-row-head">
+                      <div
+                        className="ab-list-row-title"
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 'var(--space-2)',
+                        }}
+                      >
+                        {s.name}
+                        <SkillLoadingBadge skill={s} />
+                      </div>
+                      <div
+                        className="ab-list-row-sub"
+                        style={{
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {s.description.trim() ||
+                          s.markdownBody.slice(0, 80) ||
+                          'No body yet'}
+                      </div>
+                    </div>
+                    <div className="ab-list-row-meta">
+                      <RowMenu
+                        items={[
+                          {
+                            label: 'Edit skill',
+                            onClick: () => {
+                              setEditingSkillId(s.id)
+                              setSkillSheet(true)
+                            },
+                          },
+                          {
+                            label: 'Delete skill',
+                            destructive: true,
+                            onClick: () =>
+                              void removeSkillConfirmed(s.id, s.name),
+                          },
+                        ]}
+                      />
                     </div>
                   </div>
-                  <div className="ab-list-row-meta">
-                    <RowMenu
-                      items={[
-                        {
-                          label: 'Edit skill',
-                          onClick: () => {
-                            setEditingSkillId(s.id)
-                            setSkillSheet(true)
-                          },
-                        },
-                        {
-                          label: 'Delete skill',
-                          destructive: true,
-                          onClick: () =>
-                            void removeSkillConfirmed(s.id, s.name),
-                        },
-                      ]}
-                    />
-                  </div>
-                </div>
                 )
               })}
             </div>
@@ -875,7 +857,11 @@ function SystemSkillRow() {
     return (
       <div
         className="ab-list-row"
-        style={{ opacity: 0.6, fontSize: 13, color: 'var(--text-dim)' }}
+        style={{
+          opacity: 0.6,
+          fontSize: 'var(--text-sm)',
+          color: 'var(--text-dim)',
+        }}
       >
         <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
           <FileIcon />
@@ -889,7 +875,7 @@ function SystemSkillRow() {
 
   if (state.status === 'error') {
     return (
-      <div className="ab-list-row" style={{ fontSize: 13 }}>
+      <div className="ab-list-row" style={{ fontSize: 'var(--text-sm)' }}>
         <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
           <FileIcon />
         </div>
@@ -905,7 +891,7 @@ function SystemSkillRow() {
 
   if (state.data.ok === false) {
     return (
-      <div className="ab-list-row" style={{ fontSize: 13 }}>
+      <div className="ab-list-row" style={{ fontSize: 'var(--text-sm)' }}>
         <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
           <FileIcon />
         </div>
@@ -940,9 +926,7 @@ function SystemSkillRow() {
           <FileIcon />
         </div>
         <div className="ab-list-row-head">
-          <div className="ab-list-row-title">
-            Coding-agent toolkit guidance
-          </div>
+          <div className="ab-list-row-title">Coding-agent toolkit guidance</div>
           <div className="ab-list-row-sub">
             Always last in prompt order · v{skill.version} ·{' '}
             {skill.body.length.toLocaleString()} chars
@@ -966,8 +950,8 @@ function SystemSkillRow() {
       {expanded && (
         <div
           style={{
-            padding: '14px 18px 14px 62px',
-            fontSize: 13,
+            padding: 'var(--space-4) var(--space-4) var(--space-4) 62px',
+            fontSize: 'var(--text-sm)',
             lineHeight: 1.55,
             background: 'var(--surface-hi)',
             borderTop: '1px solid var(--border)',

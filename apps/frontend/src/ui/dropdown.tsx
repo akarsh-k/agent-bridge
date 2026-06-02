@@ -106,11 +106,7 @@ export function Dropdown<V extends string = string>({
   return (
     <div
       ref={rootRef}
-      className={[
-        'ab-dropdown',
-        open && 'is-open',
-        className,
-      ]
+      className={['ab-dropdown', open && 'is-open', className]
         .filter(Boolean)
         .join(' ')}
     >
@@ -166,7 +162,7 @@ export function Dropdown<V extends string = string>({
             title={opt.disabled ? opt.disabledReason : undefined}
             style={
               opt.disabled
-                ? { opacity: 0.5, cursor: 'not-allowed' }
+                ? { opacity: 0.45, cursor: 'not-allowed' }
                 : undefined
             }
             onClick={() => {
@@ -175,7 +171,9 @@ export function Dropdown<V extends string = string>({
               close()
             }}
           >
-            {opt.leading && <span className="ab-dropdown-leading">{opt.leading}</span>}
+            {opt.leading && (
+              <span className="ab-dropdown-leading">{opt.leading}</span>
+            )}
             <span className="ab-dropdown-option-stack">
               <span className={opt.monoLabel ? 'ab-mono' : undefined}>
                 {opt.label}

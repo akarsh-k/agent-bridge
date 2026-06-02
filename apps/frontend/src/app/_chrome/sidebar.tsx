@@ -48,7 +48,12 @@ export function Sidebar() {
       matchPrefix: '/agents',
       count: agents.length,
     },
-    { to: '/bridge', label: 'Bridge', Icon: BridgeIcon, matchPrefix: '/bridge' },
+    {
+      to: '/bridge',
+      label: 'Bridge',
+      Icon: BridgeIcon,
+      matchPrefix: '/bridge',
+    },
     { to: '/logs', label: 'Logs', Icon: LogsIcon, matchPrefix: '/logs' },
   ]
 
@@ -94,7 +99,8 @@ export function Sidebar() {
 
   const isActive = (spec: NavSpec) => {
     if (spec.to === '/') return path === '/'
-    return path === spec.to || (spec.matchPrefix && path.startsWith(spec.matchPrefix + '/'))
+    return path === spec.to ||
+      (spec.matchPrefix && path.startsWith(spec.matchPrefix + '/'))
       ? true
       : path === spec.to
   }
@@ -196,11 +202,9 @@ export function Sidebar() {
               strokeLinejoin="round"
               aria-hidden="true"
               style={{
-                transition: 'transform 160ms var(--ease-out)',
+                transition: 'transform var(--dur-2) var(--ease-out)',
                 transform:
-                  override === 'collapsed'
-                    ? 'rotate(180deg)'
-                    : 'rotate(0deg)',
+                  override === 'collapsed' ? 'rotate(180deg)' : 'rotate(0deg)',
               }}
             >
               <path d="M11 17l-5-5 5-5" />

@@ -57,10 +57,10 @@ export function OAuthCallbackPage() {
         <div
           className="ab-section-title"
           style={{
-            marginBottom: 6,
+            marginBottom: 'var(--space-1_5)',
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 10,
+            gap: 'var(--space-2_5)',
           }}
         >
           {!closed && <span className="ab-pulse-dot" aria-hidden="true" />}

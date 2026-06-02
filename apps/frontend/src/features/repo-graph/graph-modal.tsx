@@ -265,7 +265,9 @@ export function GraphModal({ repo, onClose }: GraphModalProps) {
             />
           ) : null}
           {state.kind === 'loading' ? <LoadingState mode={mode} /> : null}
-          {state.kind === 'empty' ? <EmptyState message={state.message} /> : null}
+          {state.kind === 'empty' ? (
+            <EmptyState message={state.message} />
+          ) : null}
           {state.kind === 'error' ? (
             <ErrorState message={state.message} />
           ) : null}
@@ -281,9 +283,7 @@ export function GraphModal({ repo, onClose }: GraphModalProps) {
                   top-toolbar kind chips aren't visible (processes /
                   communities). In `network` the chips already show
                   one dot per kind, so a second legend would be noise. */}
-              {mode !== 'network' && (
-                <GraphLegend graph={state.graph} />
-              )}
+              {mode !== 'network' && <GraphLegend graph={state.graph} />}
             </>
           ) : null}
           <NodeDetailsPanel
@@ -298,7 +298,6 @@ export function GraphModal({ repo, onClose }: GraphModalProps) {
     </div>
   )
 }
-
 
 function emptyMessageFor(mode: RepoGraphMode): string {
   switch (mode) {
@@ -488,7 +487,10 @@ function GraphLegend({ graph }: { graph: RepoGraph }) {
           {LABEL_PLURAL[k]}
         </span>
       ))}
-      <span className="graph-legend-item" title="Edges fade by default; hover a node to light up its connections">
+      <span
+        className="graph-legend-item"
+        title="Edges fade by default; hover a node to light up its connections"
+      >
         <span className="graph-legend-edge" aria-hidden />
         edges
       </span>
@@ -532,7 +534,11 @@ function KindFilterChips({
   }
   const anyActive = value.size > 0
   return (
-    <div className="graph-kind-chips" role="group" aria-label="Filter by node kind">
+    <div
+      className="graph-kind-chips"
+      role="group"
+      aria-label="Filter by node kind"
+    >
       <button
         type="button"
         className={`graph-kind-chip ${!anyActive ? 'is-active' : ''}`}
@@ -551,7 +557,13 @@ function KindFilterChips({
             type="button"
             className={`graph-kind-chip kind-${c.kind} ${active ? 'is-active' : ''}`}
             onClick={() => toggle(c.kind)}
-            style={empty ? { opacity: 0.55 } : undefined}
+            style={
+              empty
+                ? { opacity: 0.45, cursor: 'default', pointerEvents: 'none' }
+                : undefined
+            }
+            aria-disabled={empty}
+            tabIndex={empty ? -1 : undefined}
           >
             <span
               className={`graph-kind-chip-dot graph-node-icon-${c.kind}`}
@@ -559,7 +571,10 @@ function KindFilterChips({
             />
             <span>{c.label}</span>
             {count != null && (
-              <span className="graph-kind-chip-count" aria-label={`${count} ${c.label.toLowerCase()}`}>
+              <span
+                className="graph-kind-chip-count"
+                aria-label={`${count} ${c.label.toLowerCase()}`}
+              >
                 {formatCount(count)}
               </span>
             )}

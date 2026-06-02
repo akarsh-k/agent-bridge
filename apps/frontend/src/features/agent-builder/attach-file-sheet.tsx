@@ -44,7 +44,9 @@ function AttachFileForm({
       eligible.map((f) => ({
         value: f.id,
         label: f.name,
-        sub: f.description.trim() || `${f.kind.toUpperCase()} · ${(f.bytes / 1024).toFixed(1)} KB`,
+        sub:
+          f.description.trim() ||
+          `${f.kind.toUpperCase()} · ${(f.bytes / 1024).toFixed(1)} KB`,
       })),
     [eligible],
   )
@@ -89,8 +91,8 @@ function AttachFileForm({
         <div className="ab-field">
           <div className="ab-field-help">
             You haven't uploaded any files yet.{' '}
-            <Link to="/library/files" style={{ color: 'var(--accent-300)' }}>
-              Upload one in Library →
+            <Link to="/library/files" className="ab-text-link">
+              Upload one in Library
             </Link>
           </div>
         </div>
@@ -98,8 +100,8 @@ function AttachFileForm({
         <div className="ab-field">
           <div className="ab-field-help">
             All your ready files are already attached to this agent.
-            Still-ingesting files (pending, embedding, etc.) can't be
-            attached until they finish.
+            Still-ingesting files (pending, embedding, etc.) can't be attached
+            until they finish.
           </div>
         </div>
       ) : (

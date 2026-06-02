@@ -146,9 +146,7 @@ export function matchBridge(path: string): boolean {
  * Optional `:runId` segment opens the run detail sheet on load
  * (deep-linkable from a tool-call notification, etc.).
  */
-export function matchLogs(
-  path: string,
-): { runId: string | null } | null {
+export function matchLogs(path: string): { runId: string | null } | null {
   const parts = path.split('/').filter(Boolean)
   if (parts[0] !== 'logs') return null
   if (parts.length === 1) return { runId: null }
@@ -167,7 +165,9 @@ export function matchSettings(path: string): boolean {
   return path === '/settings'
 }
 export function matchLibraryProviders(path: string): boolean {
-  return path === '/library' || path === '/library/' || path === '/library/providers'
+  return (
+    path === '/library' || path === '/library/' || path === '/library/providers'
+  )
 }
 export function matchLibraryRepos(path: string): boolean {
   return path === '/library/repos'
@@ -183,6 +183,11 @@ export function matchLibraryMcp(path: string): boolean {
  *  upstream callback params which are forwarded by postMessage. */
 export function matchOAuthCallback(path: string): boolean {
   return path === '/oauth/callback'
+}
+
+/** Match the internal design-language showcase (proposal surface). */
+export function matchDesign(path: string): boolean {
+  return path === '/_design'
 }
 
 /** Match `/library/{providers,repos,mcp}/<uuid>` and return id + section. */

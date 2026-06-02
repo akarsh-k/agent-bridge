@@ -7,10 +7,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useWorkspace } from '../lib/workspace-context'
 import { navigate } from '../lib/router'
-import {
-  closePalette,
-  subscribePaletteState,
-} from './command-palette-store'
+import { closePalette, subscribePaletteState } from './command-palette-store'
 import type { SVGProps } from 'react'
 import { matchAgentDetail } from '../lib/router'
 import {
@@ -48,8 +45,7 @@ function Inner({ onClose }: { onClose: () => void }) {
   const inputRef = useRef<HTMLInputElement | null>(null)
 
   // Detect agent-scope so we can surface tab-jumps relative to it.
-  const path =
-    typeof window === 'undefined' ? '/' : window.location.pathname
+  const path = typeof window === 'undefined' ? '/' : window.location.pathname
   const agentDetail = matchAgentDetail(path)
   const scopedAgent = agentDetail
     ? agents.find((a) => a.id === agentDetail.id)
@@ -232,8 +228,7 @@ function Inner({ onClose }: { onClose: () => void }) {
   // pinned at the top via insertion order; this reorders the rest.
   const priorityGroup = useMemo<string | null>(() => {
     if (path.startsWith('/agents/')) return null // handled by "On {agent}"
-    if (path === '/agents' || path.startsWith('/agents'))
-      return 'Agents'
+    if (path === '/agents' || path.startsWith('/agents')) return 'Agents'
     if (path.startsWith('/library/providers')) return 'LLM providers'
     if (path.startsWith('/library/repos')) return 'Repositories'
     if (path.startsWith('/library/mcp')) return 'MCP connections'
@@ -287,25 +282,26 @@ function Inner({ onClose }: { onClose: () => void }) {
           top: '12vh',
           left: '50%',
           transform: 'translateX(-50%)',
-          width: 'min(560px, calc(100vw - 32px))',
+          width: 'min(560px, calc(100vw - var(--space-8)))',
           maxHeight: '70vh',
           background: 'var(--surface-raised)',
           border: '1px solid var(--border-strong)',
-          borderRadius: 'var(--radius-lg)',
+          borderRadius: 'var(--radius-xl)',
           boxShadow: 'var(--shadow-3)',
+          /* 111: above backdrop(110)+sheet layer; see dialog.tsx z-index note */
           zIndex: 111,
           display: 'flex',
           flexDirection: 'column',
           overflow: 'hidden',
-          animation: 'ab-popover-in 200ms var(--ease-out)',
+          animation: 'ab-popover-in var(--dur-2) var(--ease-out)',
         }}
       >
         <div
           style={{
             display: 'flex',
             alignItems: 'center',
-            gap: 10,
-            padding: '12px 14px',
+            gap: 'var(--space-2_5)',
+            padding: 'var(--space-3) var(--space-4)',
             borderBottom: '1px solid var(--border)',
           }}
         >
@@ -325,16 +321,14 @@ function Inner({ onClose }: { onClose: () => void }) {
               outline: 'none',
               background: 'transparent',
               color: 'var(--text)',
-              fontSize: 14,
+              fontSize: 'var(--text-base)',
               font: 'inherit',
             }}
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown') {
                 e.preventDefault()
                 setActive((i) =>
-                  flatList.length === 0
-                    ? 0
-                    : (i + 1) % flatList.length,
+                  flatList.length === 0 ? 0 : (i + 1) % flatList.length,
                 )
               } else if (e.key === 'ArrowUp') {
                 e.preventDefault()
@@ -356,11 +350,14 @@ function Inner({ onClose }: { onClose: () => void }) {
           <span className="ab-kbd">esc</span>
         </div>
 
-        <div style={{ overflowY: 'auto', padding: 4 }}>
+        <div style={{ overflowY: 'auto', padding: 'var(--space-1)' }}>
           {flatList.length === 0 ? (
             <div
               className="ab-section-sub"
-              style={{ padding: '24px 16px', textAlign: 'center' }}
+              style={{
+                padding: 'var(--space-6) var(--space-4)',
+                textAlign: 'center',
+              }}
             >
               No matches.
             </div>
@@ -369,11 +366,11 @@ function Inner({ onClose }: { onClose: () => void }) {
               <div key={group}>
                 <div
                   style={{
-                    fontSize: 11,
+                    fontSize: 'var(--text-2xs)',
                     color: 'var(--text-muted)',
                     textTransform: 'uppercase',
                     letterSpacing: '0.08em',
-                    padding: '10px 12px 4px',
+                    padding: 'var(--space-2_5) var(--space-3) var(--space-1)',
                     fontFamily: 'var(--font-mono)',
                   }}
                 >
@@ -392,26 +389,30 @@ function Inner({ onClose }: { onClose: () => void }) {
                         width: '100%',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: 10,
-                        padding: '8px 10px',
-                        borderRadius: 7,
+                        gap: 'var(--space-2_5)',
+                        padding: 'var(--space-2) var(--space-2_5)',
+                        borderRadius: 'var(--radius)',
                         border: 'none',
                         background: isActive
                           ? 'var(--accent-bg)'
                           : 'transparent',
                         color: 'var(--text)',
-                        fontSize: 13,
+                        fontSize: 'var(--text-sm)',
                         cursor: 'pointer',
                         textAlign: 'left',
                         font: 'inherit',
+                        transition: 'background var(--dur-1) var(--ease-out)',
                       }}
                     >
                       <it.Icon
                         width={14}
                         height={14}
                         style={{
-                          color: 'var(--text-dim)',
+                          color: isActive
+                            ? 'var(--accent-400)'
+                            : 'var(--text-dim)',
                           flexShrink: 0,
+                          transition: 'color var(--dur-1) var(--ease-out)',
                         }}
                       />
                       <span style={{ flex: 1 }}>{it.label}</span>
@@ -419,7 +420,7 @@ function Inner({ onClose }: { onClose: () => void }) {
                         <span
                           className="ab-mono"
                           style={{
-                            fontSize: 11,
+                            fontSize: 'var(--text-2xs)',
                             color: 'var(--text-muted)',
                           }}
                         >

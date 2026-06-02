@@ -98,7 +98,8 @@ export function BuildTab({ agentId }: { agentId: string }) {
       draft.systemPrompt !== agent.systemPrompt ||
       draft.llmProviderId !== agent.llmProviderId ||
       draft.maxSteps !== agent.maxSteps ||
-      draft.codebaseInspectionReportTokenCap !== agent.codebaseInspectionReportTokenCap
+      draft.codebaseInspectionReportTokenCap !==
+        agent.codebaseInspectionReportTokenCap
     )
   }, [agent, seededFor, draft])
 
@@ -143,7 +144,8 @@ export function BuildTab({ agentId }: { agentId: string }) {
           systemPrompt: draft.systemPrompt,
           llmProviderId: draft.llmProviderId,
           maxSteps: draft.maxSteps,
-          codebaseInspectionReportTokenCap: draft.codebaseInspectionReportTokenCap,
+          codebaseInspectionReportTokenCap:
+            draft.codebaseInspectionReportTokenCap,
         })
         toast.success('Identity saved')
       } catch (e) {
@@ -165,7 +167,9 @@ export function BuildTab({ agentId }: { agentId: string }) {
       setProviderId(agent.llmProviderId)
       setMaxStepsInput(agent.maxSteps === null ? '' : String(agent.maxSteps))
       setReportCapInput(
-        agent.codebaseInspectionReportTokenCap === null ? '' : String(agent.codebaseInspectionReportTokenCap),
+        agent.codebaseInspectionReportTokenCap === null
+          ? ''
+          : String(agent.codebaseInspectionReportTokenCap),
       )
     },
   })
@@ -178,7 +182,9 @@ export function BuildTab({ agentId }: { agentId: string }) {
     setProviderId(agent.llmProviderId)
     setMaxStepsInput(agent.maxSteps === null ? '' : String(agent.maxSteps))
     setReportCapInput(
-      agent.codebaseInspectionReportTokenCap === null ? '' : String(agent.codebaseInspectionReportTokenCap),
+      agent.codebaseInspectionReportTokenCap === null
+        ? ''
+        : String(agent.codebaseInspectionReportTokenCap),
     )
   }
 
@@ -221,7 +227,7 @@ export function BuildTab({ agentId }: { agentId: string }) {
         <div className="ab-section-head">
           <div className="ab-section-title">
             Identity
-            <span style={{ marginLeft: 10 }}>
+            <span style={{ marginLeft: 'var(--space-2_5)' }}>
               <Pill kind={agent.inspectorEnabled ? 'accent' : 'neutral'}>
                 {agent.inspectorEnabled
                   ? 'Repo inspector'
@@ -266,16 +272,13 @@ export function BuildTab({ agentId }: { agentId: string }) {
               onChange={(e) => setSlug(e.target.value)}
             />
             {slug !== agent.slug && (
-              <span
-                className="ab-field-help"
-                style={{ color: 'var(--warn)' }}
-              >
-                ⚠ IDE tool name{agent.inspectorEnabled ? 's' : ''} will
-                change to{' '}
+              <span className="ab-field-help" style={{ color: 'var(--warn)' }}>
+                IDE tool name{agent.inspectorEnabled ? 's' : ''} will change to{' '}
                 <code className="ab-mono">{slug || '<slug>'}__ask_agent</code>
                 {agent.inspectorEnabled && (
                   <>
-                    {' '}+{' '}
+                    {' '}
+                    +{' '}
                     <code className="ab-mono">
                       {slug || '<slug>'}__inspect_codebase
                     </code>
@@ -317,8 +320,8 @@ export function BuildTab({ agentId }: { agentId: string }) {
           <div className="ab-section-title">Provider</div>
           <div className="ab-section-sub">
             Which provider answers chat for this agent. The provider's{' '}
-            <code className="ab-mono">defaultModel</code> is what runs —
-            change it on the provider page if you want a different model.
+            <code className="ab-mono">defaultModel</code> is what runs — change
+            it on the provider page if you want a different model.
           </div>
         </div>
         <div className="ab-field-grid">
@@ -373,7 +376,10 @@ export function BuildTab({ agentId }: { agentId: string }) {
           </div>
           {agent.inspectorEnabled && (
             <div className="ab-field">
-              <label className="ab-field-label" htmlFor="b-inspection-report-cap">
+              <label
+                className="ab-field-label"
+                htmlFor="b-inspection-report-cap"
+              >
                 Tool response budget
               </label>
               <input
@@ -384,9 +390,7 @@ export function BuildTab({ agentId }: { agentId: string }) {
                 placeholder="default (12,000 tokens)"
                 value={reportCapInput}
                 onChange={(e) => setReportCapInput(e.target.value)}
-                aria-invalid={
-                  parsedReportCap === 'invalid' ? true : undefined
-                }
+                aria-invalid={parsedReportCap === 'invalid' ? true : undefined}
               />
               <span
                 className="ab-field-help"

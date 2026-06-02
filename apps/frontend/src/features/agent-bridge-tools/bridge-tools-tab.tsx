@@ -20,23 +20,14 @@ import {
   INSPECT_CODEBASE_METADATA,
   type BridgeToolResponse,
 } from '@agent-bridge/shared'
-import {
-  ApiError,
-  deleteBridgeTool,
-  listBridgeTools,
-} from '../../lib/rpc'
+import { ApiError, deleteBridgeTool, listBridgeTools } from '../../lib/rpc'
 import { Button } from '../../ui/button'
 import { Pill } from '../../ui/pill'
 import { EmptyState } from '../../ui/empty'
 import { RowMenu } from '../../ui/row-menu'
 import { confirmDialog } from '../../ui/dialog-store'
 import { toast } from '../../ui/toast-store'
-import {
-  BridgeIcon,
-  ChevronDownIcon,
-  PlusIcon,
-  ToolIcon,
-} from '../../ui/icons'
+import { BridgeIcon, ChevronDownIcon, PlusIcon, ToolIcon } from '../../ui/icons'
 import { useWorkspace } from '../../lib/workspace-context'
 import { BridgeToolSheet } from './bridge-tool-sheet'
 
@@ -93,7 +84,7 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
   const remove = async (id: string, name: string) => {
     if (
       !(await confirmDialog({
-        title: `Delete bridge tool “${name}”?`,
+        title: `Delete bridge tool "${name}"?`,
         body: 'Connected IDEs keep the cached definition until they reconnect. The agent stops exposing it on the next bridge restart.',
         confirmLabel: 'Delete bridge tool',
         destructive: true,
@@ -126,10 +117,10 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
         <div className="ab-section-head">
           <div className="ab-section-title">Bridge tools</div>
           <div className="ab-section-sub">
-            Tools this agent <strong>exposes to your IDE</strong> over MCP.
-            Each one shows up in Cursor / Claude Code / Codex as a callable
-            function. The IDE picks args, the agent fills the prompt
-            template, the LLM answers.
+            Tools this agent <strong>exposes to your IDE</strong> over MCP. Each
+            one shows up in Cursor / Claude Code / Codex as a callable function.
+            The IDE picks args, the agent fills the prompt template, the LLM
+            answers.
           </div>
         </div>
 
@@ -144,16 +135,7 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
         )}
 
         {loading && tools.length === 0 ? (
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              color: 'var(--text-dim)',
-              padding: '10px 0',
-              fontSize: 13,
-            }}
-          >
+          <div className="ab-loading-row">
             <span className="ab-pulse-dot" />
             Loading bridge tools…
           </div>
@@ -163,9 +145,11 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
             title="No bridge tools yet"
             body={
               <>
-                Bridge tools turn this agent into a typed function your IDE
-                can call. The bridge auto-publishes them as{' '}
-                <code className="ab-mono">query_&lt;slug&gt;__&lt;name&gt;</code>
+                Bridge tools turn this agent into a typed function your IDE can
+                call. The bridge auto-publishes them as{' '}
+                <code className="ab-mono">
+                  query_&lt;slug&gt;__&lt;name&gt;
+                </code>
                 .
               </>
             }
@@ -201,14 +185,7 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
                   </div>
                   <div className="ab-list-row-head">
                     <div className="ab-list-row-title ab-mono">{t.name}</div>
-                    <div
-                      className="ab-list-row-sub"
-                      style={{
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap',
-                      }}
-                    >
+                    <div className="ab-list-row-sub ab-list-row-sub--clamp1">
                       {t.description || 'No description'}
                     </div>
                   </div>
@@ -233,7 +210,7 @@ export function BridgeToolsTab({ agentId }: { agentId: string }) {
                 </div>
               ))}
             </div>
-            <div style={{ marginTop: 14 }}>
+            <div style={{ marginTop: 'var(--space-4)' }}>
               <Button
                 variant="secondary"
                 leading={<PlusIcon strokeWidth={2.4} />}
@@ -280,15 +257,17 @@ function InspectorToolkitCard({ slug }: { slug: string }) {
   const fullName = `${slug}__${INSPECT_CODEBASE_METADATA.nameSuffix}`
   return (
     <div className="ab-card ab-card-pad ab-form-section">
-      <div className="ab-section-head" style={{ marginBottom: 6 }}>
+      <div
+        className="ab-section-head"
+        style={{ marginBottom: 'var(--space-1_5)' }}
+      >
         <div className="ab-section-title">Built-in tool · system</div>
         <div className="ab-section-sub">
-          Repo inspectors ship one system tool with a structured
-          response contract: file paths, code snippets, graph slices,
-          cross-repo relationships. The description is system-controlled
-          (operator agent description + framework note about the
-          envelope). Operators can author additional tools below
-          via <strong>bridge_tools</strong>.
+          Repo inspectors ship one system tool with a structured response
+          contract: file paths, code snippets, graph slices, cross-repo
+          relationships. The description is system-controlled (operator agent
+          description + framework note about the envelope). Operators can author
+          additional tools below via <strong>bridge_tools</strong>.
         </div>
       </div>
       <div className="ab-card ab-list-card">
@@ -307,20 +286,12 @@ function BuiltInRow({
 }) {
   const [expanded, setExpanded] = useState(false)
   return (
-    <div>
+    <div className="ab-system-tool">
       <button
         type="button"
-        className="ab-list-row"
+        className="ab-system-tool-summary"
         onClick={() => setExpanded((v) => !v)}
         aria-expanded={expanded}
-        style={{
-          width: '100%',
-          background: 'transparent',
-          border: 'none',
-          font: 'inherit',
-          textAlign: 'left',
-          cursor: 'pointer',
-        }}
       >
         <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
           <BridgeIcon />
@@ -332,42 +303,27 @@ function BuiltInRow({
         <div className="ab-list-row-meta">
           <Pill kind="accent">Built-in</Pill>
           <span
-            className="ab-row-affordance"
+            className="ab-row-affordance ab-system-tool-chevron"
             aria-hidden="true"
-            style={{
-              transform: expanded ? 'rotate(180deg)' : undefined,
-              transition: 'transform 160ms var(--ease-out)',
-              display: 'inline-flex',
-            }}
           >
             <ChevronDownIcon />
           </span>
         </div>
       </button>
       {expanded && (
-        <div
-          style={{
-            padding: '14px 18px 14px 62px',
-            fontSize: 13,
-            lineHeight: 1.55,
-            background: 'var(--surface-hi)',
-            borderTop: '1px solid var(--border)',
-            whiteSpace: 'pre-wrap',
-          }}
-        >
-          {meta.description}
-          {'\n\nInputs:'}
-          {meta.inputKeys.map((k) => (
-            <div key={k.name} style={{ marginTop: 6 }}>
-              <span className="ab-mono" style={{ color: 'var(--text)' }}>
-                {k.name}
-              </span>{' '}
-              {k.required ? '(required)' : '(optional)'} — {k.description}
-            </div>
-          ))}
+        <div className="ab-system-tool-detail">
+          <pre>
+            {meta.description}
+            {'\n\nInputs:'}
+            {meta.inputKeys.map((k) => (
+              <div key={k.name} style={{ marginTop: 'var(--space-1_5)' }}>
+                <span className="ab-mono">{k.name}</span>{' '}
+                {k.required ? '(required)' : '(optional)'} — {k.description}
+              </div>
+            ))}
+          </pre>
         </div>
       )}
     </div>
   )
 }
-

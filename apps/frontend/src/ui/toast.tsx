@@ -4,11 +4,7 @@
  */
 
 import { useEffect, useState } from 'react'
-import {
-  dismissToast,
-  subscribeToasts,
-  type ToastEntry,
-} from './toast-store'
+import { dismissToast, subscribeToasts, type ToastEntry } from './toast-store'
 import { CloseIcon } from './icons'
 
 const VISIBLE_CAP = 3
@@ -30,7 +26,7 @@ export function ToastHost() {
           style={{
             background: 'var(--surface-hi)',
             color: 'var(--text-muted)',
-            fontSize: 12,
+            fontSize: 'var(--text-xs)',
             border: '1px solid var(--border)',
           }}
         >
@@ -44,7 +40,7 @@ export function ToastHost() {
           <button
             type="button"
             className="ab-icon-btn"
-            style={{ width: 22, height: 22 }}
+            style={{ width: 'var(--space-6)', height: 'var(--space-6)' }}
             aria-label="Dismiss"
             onClick={() => dismissToast(t.id)}
           >

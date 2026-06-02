@@ -49,8 +49,16 @@ export interface SecretMapEditorProps {
 }
 
 export function SecretMapEditor(props: SecretMapEditorProps) {
-  const { label, present, keyPlaceholder, valuePlaceholder, helpText, onSave, onClear, busy } =
-    props
+  const {
+    label,
+    present,
+    keyPlaceholder,
+    valuePlaceholder,
+    helpText,
+    onSave,
+    onClear,
+    busy,
+  } = props
   const [open, setOpen] = useState(false)
   const [rows, setRows] = useState<Array<{ key: string; value: string }>>([
     { key: '', value: '' },
@@ -62,8 +70,7 @@ export function SecretMapEditor(props: SecretMapEditorProps) {
     setOpen(false)
   }
 
-  const addRow = () =>
-    setRows((r) => [...r, { key: '', value: '' }])
+  const addRow = () => setRows((r) => [...r, { key: '', value: '' }])
 
   const removeRow = (idx: number) => {
     setRows((r) => {
@@ -72,12 +79,18 @@ export function SecretMapEditor(props: SecretMapEditorProps) {
     })
   }
 
-  const updateRow = (idx: number, patch: Partial<{ key: string; value: string }>) => {
+  const updateRow = (
+    idx: number,
+    patch: Partial<{ key: string; value: string }>,
+  ) => {
     setRows((r) => {
       const next = [...r]
       const current = next[idx]
       if (!current) return r
-      next[idx] = { key: patch.key ?? current.key, value: patch.value ?? current.value }
+      next[idx] = {
+        key: patch.key ?? current.key,
+        value: patch.value ?? current.value,
+      }
       return next
     })
   }
@@ -111,14 +124,7 @@ export function SecretMapEditor(props: SecretMapEditorProps) {
 
   if (!open) {
     return (
-      <div
-        style={{
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: 8,
-          flexWrap: 'wrap',
-        }}
-      >
+      <div className="ab-secret-map-collapsed">
         <Pill kind={present ? 'success' : 'neutral'} dot>
           {present ? 'Set' : 'None'}
         </Pill>
@@ -145,44 +151,28 @@ export function SecretMapEditor(props: SecretMapEditorProps) {
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 8,
-        marginTop: 4,
-        padding: 10,
-        background: 'var(--surface-hi)',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-sm)',
-      }}
-    >
+    <div className="ab-secret-map-editor">
       <span className="ab-field-help">
-        {helpText ? `${helpText} ` : ''}Saving will <strong>replace</strong>{' '}
-        all existing {label.toLowerCase()}. Values are encrypted at rest;
-        we can't show you what's currently stored.
+        {helpText ? `${helpText} ` : ''}Saving will <strong>replace</strong> all
+        existing {label.toLowerCase()}. Values are encrypted at rest; we can't
+        show you what's currently stored.
       </span>
       {rows.map((row, idx) => (
-        <div
-          key={idx}
-          style={{ display: 'flex', gap: 6, alignItems: 'center' }}
-        >
+        <div key={idx} className="ab-secret-map-row">
           <input
-            className="ab-input ab-mono"
+            className="ab-input ab-mono ab-secret-map-key"
             placeholder={keyPlaceholder}
             value={row.key}
             onChange={(e) => updateRow(idx, { key: e.target.value })}
-            style={{ flex: '1 1 0', minWidth: 0 }}
             spellCheck={false}
             autoComplete="off"
           />
           <input
-            className="ab-input ab-mono"
+            className="ab-input ab-mono ab-secret-map-value"
             placeholder={valuePlaceholder}
             value={row.value}
             onChange={(e) => updateRow(idx, { value: e.target.value })}
             type="password"
-            style={{ flex: '2 1 0', minWidth: 0 }}
             spellCheck={false}
             autoComplete="off"
           />
@@ -197,14 +187,7 @@ export function SecretMapEditor(props: SecretMapEditorProps) {
           </button>
         </div>
       ))}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          marginTop: 2,
-        }}
-      >
+      <div className="ab-secret-map-footer">
         <button
           type="button"
           className="ab-inline-action"
@@ -213,7 +196,7 @@ export function SecretMapEditor(props: SecretMapEditorProps) {
         >
           + add row
         </button>
-        <span style={{ flex: 1 }} />
+        <span className="ab-secret-map-spacer" />
         <button
           type="button"
           className="ab-inline-action"

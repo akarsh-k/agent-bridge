@@ -88,8 +88,8 @@ function SetupCard() {
       <div className="ab-section-head">
         <div className="ab-section-title">MCP server config</div>
         <div className="ab-section-sub">
-          Paste the snippet below into your IDE's MCP config file, then
-          restart the IDE.
+          Paste the snippet below into your IDE's MCP config file, then restart
+          the IDE.
         </div>
       </div>
       {error && (
@@ -170,16 +170,16 @@ function ToolsCard() {
       <div className="ab-section-head">
         <div className="ab-section-title">Exposed tools</div>
         <div className="ab-section-sub">
-          {exposed.length} agent{exposed.length === 1 ? '' : 's'} exposed
-          to your IDE. Repo inspectors ship{' '}
+          {exposed.length} agent{exposed.length === 1 ? '' : 's'} exposed to
+          your IDE. Repo inspectors ship{' '}
           <span className="ab-mono">
             &lt;slug&gt;__{INSPECT_CODEBASE_METADATA.nameSuffix}
           </span>{' '}
           as a system tool. Build-your-own agents ship a starter{' '}
-          <span className="ab-mono">&lt;slug&gt;__ask_agent</span>{' '}
-          tool that's auto-created when the agent is — fully editable
-          (name, description, prompt template) on the agent's
-          Bridge-tools tab, like any custom tool. Add more from there.
+          <span className="ab-mono">&lt;slug&gt;__ask_agent</span> tool that's
+          auto-created when the agent is — fully editable (name, description,
+          prompt template) on the agent's Bridge-tools tab, like any custom
+          tool. Add more from there.
           {skipped > 0 && ` · ${skipped} skipped (no LLM provider)`}
         </div>
       </div>
@@ -208,9 +208,9 @@ function ToolsCard() {
           })}
         </div>
       )}
-      <div className="ab-field-help" style={{ marginTop: 12 }}>
-        Tools refresh on IDE restart — create a new agent and reopen Cursor
-        to see it appear in the picker.
+      <div className="ab-field-help" style={{ marginTop: 'var(--space-3)' }}>
+        Tools refresh on IDE restart — create a new agent and reopen Cursor to
+        see it appear in the picker.
       </div>
     </div>
   )
@@ -225,9 +225,7 @@ function ExposedAgentRow({
   defaultOpen,
 }: {
   agent: ReturnType<typeof useWorkspace>['agents'][number]
-  provider:
-    | ReturnType<typeof useWorkspace>['llmProviders'][number]
-    | undefined
+  provider: ReturnType<typeof useWorkspace>['llmProviders'][number] | undefined
   highlight: boolean
   defaultOpen: boolean
 }) {
@@ -289,28 +287,15 @@ function ExposedAgentRow({
   return (
     <div
       data-bridge-slug={agent.slug}
-      style={{
-        borderBottom: '1px solid var(--border)',
-        ...(highlight
-          ? {
-              background: 'var(--accent-bg)',
-              boxShadow: 'inset 3px 0 0 var(--accent-400)',
-              transition: 'background var(--dur-3) var(--ease-out)',
-            }
-          : null),
-      }}
+      className={
+        highlight ? 'ab-exposed-agent-row is-highlight' : 'ab-exposed-agent-row'
+      }
     >
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="ab-list-row"
-        style={{
-          width: '100%',
-          background: 'transparent',
-          border: 'none',
-          font: 'inherit',
-          textAlign: 'left',
-        }}
+        aria-expanded={open}
       >
         <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
           {agent.name.charAt(0).toUpperCase()}
@@ -318,11 +303,8 @@ function ExposedAgentRow({
         <div className="ab-list-row-head">
           <div className="ab-list-row-title">{agent.name}</div>
           <div className="ab-list-row-sub">
-            <span className="ab-mono" style={{ color: 'var(--text-dim)' }}>
-              {agent.slug}
-            </span>
-            {agent.description &&
-              ' · ' + truncate(agent.description, 80)}
+            <span className="ab-mono">{agent.slug}</span>
+            {agent.description && ' · ' + truncate(agent.description, 80)}
           </div>
         </div>
         <div className="ab-list-row-meta">
@@ -332,20 +314,16 @@ function ExposedAgentRow({
             </Pill>
           )}
           {provider?.defaultModel && (
-            <span
-              className="ab-mono"
-              style={{ color: 'var(--text-muted)' }}
-            >
+            <span className="ab-mono" style={{ color: 'var(--text-muted)' }}>
               {provider.defaultModel}
             </span>
           )}
           <span
+            className="ab-row-affordance ab-exposed-agent-chevron"
             aria-hidden="true"
             style={{
-              color: 'var(--text-muted)',
-              display: 'inline-flex',
-              transition: 'transform var(--dur-1) var(--ease-out)',
               transform: open ? 'rotate(90deg)' : 'rotate(0)',
+              transition: 'transform var(--dur-1) var(--ease-out)',
             }}
           >
             <ChevronRightIcon width={14} height={14} />
@@ -353,13 +331,7 @@ function ExposedAgentRow({
         </div>
       </button>
       {open && (
-        <div
-          style={{
-            padding: '10px 18px 16px 64px',
-            borderTop: '1px solid var(--border)',
-            background: 'var(--surface-hi)',
-          }}
-        >
+        <div className="ab-exposed-agent-detail">
           {builtInName && (
             <ToolGroup
               label="Inspector (system)"
@@ -384,9 +356,7 @@ function ExposedAgentRow({
             <div role="status" className="ab-alert ab-alert-danger">
               <span className="ab-alert-dot" aria-hidden="true" />
               <div className="ab-alert-body">
-                <div className="ab-alert-title">
-                  Couldn't load bridge tools
-                </div>
+                <div className="ab-alert-title">Couldn't load bridge tools</div>
                 <div className="ab-alert-sub">{bridgeToolsErr}</div>
               </div>
             </div>
@@ -404,14 +374,14 @@ function ExposedAgentRow({
           )}
 
           {bridgeTools && bridgeTools.length === 0 && !loadingBridgeTools && (
-            <div
+            <p
               className="ab-field-help"
-              style={{ marginTop: 8, fontStyle: 'italic' }}
+              style={{ marginTop: 'var(--space-2)', fontStyle: 'italic' }}
             >
               {agent.inspectorEnabled
                 ? "No custom tools on this agent. The IDE sees just the system built-in above. Add a custom tool from the agent's Bridge tools tab."
                 : "No tools on this agent yet. Add one from the agent's Bridge tools tab — a starter `<slug>__ask_agent` tool is normally created automatically; if it's missing, create one."}
-            </div>
+            </p>
           )}
         </div>
       )}
@@ -443,25 +413,15 @@ function ToolGroup({
   tools: readonly ToolGroupTool[]
 }) {
   return (
-    <div style={{ marginTop: 8 }}>
-      <div className="ab-section-sub" style={{ marginBottom: 6, fontSize: 12 }}>
-        <strong style={{ color: 'var(--text-dim)' }}>{label}</strong> · {sub}
+    <div className="ab-tool-group">
+      <div className="ab-tool-group-header">
+        <strong className="ab-tool-group-label">{label}</strong>
+        <span className="ab-tool-group-sub"> · {sub}</span>
       </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div className="ab-tool-group-list">
         {tools.map((t) => (
-          <div
-            key={t.name}
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              padding: '6px 0',
-              fontSize: 12,
-            }}
-          >
-            <span className="ab-mono" style={{ color: 'var(--text)' }}>
-              {t.name}
-            </span>
+          <div key={t.name} className="ab-tool-group-row">
+            <span className="ab-mono ab-tool-group-name">{t.name}</span>
             {t.enabled ? (
               <Pill kind="success" dot>
                 Enabled
@@ -470,9 +430,7 @@ function ToolGroup({
               <Pill kind="neutral">Disabled</Pill>
             )}
             {t.tag && (
-              <Pill
-                kind={t.tag === 'single-repo' ? 'accent' : 'neutral'}
-              >
+              <Pill kind={t.tag === 'single-repo' ? 'accent' : 'neutral'}>
                 {t.tag === 'sync'
                   ? 'Sync'
                   : t.tag === 'any-repo'
@@ -481,18 +439,7 @@ function ToolGroup({
               </Pill>
             )}
             {t.description && (
-              <span
-                style={{
-                  color: 'var(--text-muted)',
-                  flex: 1,
-                  minWidth: 0,
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                {t.description}
-              </span>
+              <span className="ab-tool-group-desc">{t.description}</span>
             )}
           </div>
         ))}

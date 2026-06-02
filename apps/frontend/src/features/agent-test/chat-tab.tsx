@@ -5,13 +5,7 @@
  * attached resources (repos / skills / tools / MCP tools).
  */
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type KeyboardEvent,
-} from 'react'
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { useWorkspace } from '../../lib/workspace-context'
 import { useChat, type ChatMessage } from '../../lib/use-chat'
@@ -294,10 +288,7 @@ export function ChatTab({
     updateMentionState(value, textareaRef.current)
   }
 
-  const updateMentionState = (
-    text: string,
-    el: HTMLTextAreaElement | null,
-  ) => {
+  const updateMentionState = (text: string, el: HTMLTextAreaElement | null) => {
     if (!el) {
       setMention(null)
       return
@@ -411,179 +402,159 @@ export function ChatTab({
   return (
     <div className="ab-chat-shell">
       <div className="ab-chat-with-threads">
-      <ThreadRail
-        threads={chat.threads}
-        activeThreadId={chat.threadId}
-        streamingThreadIds={chat.streamingThreadIds}
-        unreadThreadIds={chat.unreadThreadIds}
-        onNew={() => chat.newThread()}
-        onSwitch={(id) => void chat.switchThread(id)}
-        onDelete={(id) => void chat.deleteThread(id)}
-        error={chat.threadsError}
-        disabled={chat.sending}
-      />
-      <div className="ab-chat-main">
-        {agent && !agent.memoryEnabled && (
-          <div
-            role="note"
-            style={{
-              padding: '8px 14px',
-              fontSize: 12,
-              color: 'var(--text-muted)',
-              background: 'var(--surface-hi)',
-              borderBottom: '1px solid var(--border)',
-              lineHeight: 1.5,
-            }}
-          >
-            <strong style={{ color: 'var(--text)' }}>Memory is off.</strong>{' '}
-            This conversation won't be saved after you leave or navigate
-            away. Turn on memory in the Memory tab to keep history across
-            sessions.
-          </div>
-        )}
-        <div className="ab-chat-thread" ref={threadRef}>
-          {chat.messages.length === 0 ? (
-            // Suppress the greeting while the load-messages effect is in
-            // flight or a resumed run is still streaming. Without this
-            // gate the empty `messages: []` window flashes the greeting
-            // bubble alongside a highlighted thread row in the sidebar,
-            // which reads as "two conversations active." Loading state
-            // owns the brief in-between; the greeting is reserved for
-            // genuine "no conversation yet."
-            chat.loadingMessages || chat.activeRunId ? null : (
+        <ThreadRail
+          threads={chat.threads}
+          activeThreadId={chat.threadId}
+          streamingThreadIds={chat.streamingThreadIds}
+          unreadThreadIds={chat.unreadThreadIds}
+          onNew={() => chat.newThread()}
+          onSwitch={(id) => void chat.switchThread(id)}
+          onDelete={(id) => void chat.deleteThread(id)}
+          error={chat.threadsError}
+          disabled={chat.sending}
+        />
+        <div className="ab-chat-main">
+          {agent && !agent.memoryEnabled && (
+            <div role="note" className="ab-chat-memory-banner">
+              <strong className="ab-chat-memory-banner-label">
+                Memory is off.
+              </strong>{' '}
+              This conversation won't be saved after you leave or navigate away.
+              Turn on memory in the Memory tab to keep history across sessions.
+            </div>
+          )}
+          <div className="ab-chat-thread" ref={threadRef}>
+            {chat.messages.length === 0 ? (
+              // Suppress the greeting while the load-messages effect is in
+              // flight or a resumed run is still streaming. Without this
+              // gate the empty `messages: []` window flashes the greeting
+              // bubble alongside a highlighted thread row in the sidebar,
+              // which reads as "two conversations active." Loading state
+              // owns the brief in-between; the greeting is reserved for
+              // genuine "no conversation yet."
+              chat.loadingMessages || chat.activeRunId ? null : (
+                <div className="ab-msg ab-msg-bot">
+                  <div className="ab-msg-avatar is-bot">
+                    {(agent?.name ?? 'A').charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <div className="ab-msg-bubble">
+                      Hi — I'm {agent?.name ?? 'here'}. Ask me anything about
+                      the resources I'm wired up with. Type{' '}
+                      <code className="ab-mono">@</code> to reference a repo,
+                      skill, tool, or MCP.
+                    </div>
+                  </div>
+                </div>
+              )
+            ) : (
+              chat.messages.map((m) => (
+                <MessageRow
+                  key={m.id}
+                  msg={m}
+                  agentInitial={(agent?.name ?? 'A').charAt(0).toUpperCase()}
+                  mentionItems={mentionItems}
+                />
+              ))
+            )}
+
+            {showThinkingBubble && (
               <div className="ab-msg ab-msg-bot">
                 <div className="ab-msg-avatar is-bot">
                   {(agent?.name ?? 'A').charAt(0).toUpperCase()}
                 </div>
                 <div>
                   <div className="ab-msg-bubble">
-                    Hi — I'm {agent?.name ?? 'here'}. Ask me anything about
-                    the resources I'm wired up with. Type{' '}
-                    <code className="ab-mono">@</code> to reference a repo,
-                    skill, tool, or MCP.
+                    <ThinkingDots />
                   </div>
                 </div>
               </div>
-            )
-          ) : (
-            chat.messages.map((m) => (
-              <MessageRow
-                key={m.id}
-                msg={m}
-                agentInitial={(agent?.name ?? 'A').charAt(0).toUpperCase()}
-                mentionItems={mentionItems}
-              />
-            ))
-          )}
+            )}
 
-          {showThinkingBubble && (
-            <div className="ab-msg ab-msg-bot">
-              <div className="ab-msg-avatar is-bot">
-                {(agent?.name ?? 'A').charAt(0).toUpperCase()}
+            {chat.sendError && (
+              <div className="ab-chat-send-error" role="alert">
+                {chat.sendError}
               </div>
-              <div>
-                <div className="ab-msg-bubble">
-                  <ThinkingDots />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {chat.sendError && (
-            <div
-              className="ab-field-help"
-              style={{
-                color: 'var(--danger)',
-                background: 'var(--danger-bg)',
-                padding: '8px 12px',
-                borderRadius: 'var(--radius)',
-                border: '1px solid var(--danger-border)',
-              }}
-              role="alert"
-            >
-              {chat.sendError}
-            </div>
-          )}
-
-        </div>
-
-        {threadReconnects.length > 0 && (
-          <div className="ab-mcp-reconnect-dock">
-            <McpReconnectBar connections={threadReconnects} />
+            )}
           </div>
-        )}
 
-        <div className="ab-chat-input-bar">
-          <div className="ab-chat-input-pill">
-            <textarea
-              ref={textareaRef}
-              className="ab-chat-input"
-              value={draft}
-              onChange={(e) => handleDraftChange(e.target.value)}
-              onKeyDown={handleKeyDown}
-              onClick={() => updateMentionState(draft, textareaRef.current)}
-              onBlur={() => {
-                // Defer so click-on-popover still fires before close.
-                setTimeout(() => setMention(null), 120)
-              }}
-              placeholder={
-                noProvider
-                  ? 'No LLM provider assigned — configure on the Configure tab.'
-                  : chat.activeRunId
-                    ? 'Streaming…'
-                    : `Ask ${agent?.name ?? 'the agent'} anything…  (type @ to mention)`
-              }
-              rows={1}
-              disabled={
-                chat.activeRunId !== null || chat.sending || noProvider
-              }
-            />
-            <div className="ab-chat-input-actions">
-              <button
-                type="button"
-                className="ab-chat-input-icon-btn"
-                aria-label="Attach file"
-                title="Attach file (.md, .txt, .pdf)"
-                onClick={onPickFile}
-                disabled={chat.activeRunId !== null || fileUploading}
-              >
-                <FileIcon />
-              </button>
-              <button
-                type="button"
-                className="ab-chat-input-icon-btn"
-                aria-label="New conversation"
-                title="New conversation"
-                onClick={() => chat.newThread()}
-                disabled={chat.messages.length === 0}
-              >
-                <RefreshIcon />
-              </button>
-              <button
-                type="button"
-                className="ab-chat-input-send"
-                aria-label="Send"
-                onClick={send}
-                disabled={
-                  !draft.trim() ||
-                  chat.sending ||
-                  chat.activeRunId !== null ||
+          {threadReconnects.length > 0 && (
+            <div className="ab-mcp-reconnect-dock">
+              <McpReconnectBar connections={threadReconnects} />
+            </div>
+          )}
+
+          <div className="ab-chat-input-bar">
+            <div className="ab-chat-input-pill">
+              <textarea
+                ref={textareaRef}
+                className="ab-chat-input"
+                value={draft}
+                onChange={(e) => handleDraftChange(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onClick={() => updateMentionState(draft, textareaRef.current)}
+                onBlur={() => {
+                  // Defer so click-on-popover still fires before close.
+                  setTimeout(() => setMention(null), 120)
+                }}
+                placeholder={
                   noProvider
+                    ? 'No LLM provider assigned — configure on the Configure tab.'
+                    : chat.activeRunId
+                      ? 'Streaming…'
+                      : `Ask ${agent?.name ?? 'the agent'} anything…  (type @ to mention)`
                 }
-              >
-                <ArrowRightIcon strokeWidth={2.4} />
-              </button>
+                rows={1}
+                disabled={
+                  chat.activeRunId !== null || chat.sending || noProvider
+                }
+              />
+              <div className="ab-chat-input-actions">
+                <button
+                  type="button"
+                  className="ab-chat-input-icon-btn"
+                  aria-label="Attach file"
+                  title="Attach file (.md, .txt, .pdf)"
+                  onClick={onPickFile}
+                  disabled={chat.activeRunId !== null || fileUploading}
+                >
+                  <FileIcon />
+                </button>
+                <button
+                  type="button"
+                  className="ab-chat-input-icon-btn"
+                  aria-label="New conversation"
+                  title="New conversation"
+                  onClick={() => chat.newThread()}
+                  disabled={chat.messages.length === 0}
+                >
+                  <RefreshIcon />
+                </button>
+                <button
+                  type="button"
+                  className="ab-chat-input-send"
+                  aria-label="Send"
+                  onClick={send}
+                  disabled={
+                    !draft.trim() ||
+                    chat.sending ||
+                    chat.activeRunId !== null ||
+                    noProvider
+                  }
+                >
+                  <ArrowRightIcon strokeWidth={2.4} />
+                </button>
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".md,.txt,.pdf,text/plain,text/markdown,application/pdf"
+                style={{ display: 'none' }}
+                onChange={(e) => void onFileChosen(e)}
+              />
             </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".md,.txt,.pdf,text/plain,text/markdown,application/pdf"
-              style={{ display: 'none' }}
-              onChange={(e) => void onFileChosen(e)}
-            />
           </div>
         </div>
-      </div>
       </div>
 
       {mention &&
@@ -661,27 +632,12 @@ function ThinkingDots() {
   // Three pulsing dots to signal the request is in flight before the
   // real assistant bubble arrives. CSS-driven keyframe.
   return (
-    <span
-      style={{
-        display: 'inline-flex',
-        gap: 4,
-        alignItems: 'center',
-        height: 16,
-        verticalAlign: 'middle',
-      }}
-      aria-label="Thinking"
-    >
+    <span className="ab-thinking-dots" aria-label="Thinking">
       {[0, 1, 2].map((i) => (
         <span
           key={i}
-          style={{
-            width: 6,
-            height: 6,
-            borderRadius: '50%',
-            background: 'var(--text-muted)',
-            opacity: 0.3,
-            animation: `ab-pulse 1.2s ${i * 200}ms infinite`,
-          }}
+          className="ab-thinking-dot"
+          style={{ animationDelay: `${i * 200}ms` }}
         />
       ))}
     </span>
@@ -709,7 +665,7 @@ function MessageRow({
       >
         {msg.role === 'user' ? 'AK' : agentInitial}
       </div>
-      <div style={{ flex: 1, minWidth: 0 }}>
+      <div className="ab-msg-content">
         {msg.toolCalls.map((tc) => (
           <div className="ab-msg-tool" key={tc.toolCallId}>
             <div className="ab-msg-tool-head">
@@ -723,47 +679,29 @@ function MessageRow({
               (tc.toolName === 'search_knowledge' ? (
                 <KnowledgeCitations output={tc.output} />
               ) : (
-                <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
+                <div className="ab-msg-tool-output">
                   <JsonBlock value={tc.output} />
                 </div>
               ))}
-            {tc.error && (
-              <div
-                style={{
-                  marginTop: 6,
-                  color: 'var(--danger)',
-                  whiteSpace: 'pre-wrap',
-                }}
-              >
-                {tc.error}
-              </div>
-            )}
+            {tc.error && <div className="ab-msg-tool-error">{tc.error}</div>}
           </div>
         ))}
         {msg.text &&
           (msg.role === 'user' ? (
             <>
-              {msg.referencedFileNames && msg.referencedFileNames.length > 0 && (
-                <div
-                  className="ab-pill"
-                  style={{
-                    display: 'inline-block',
-                    marginBottom: 6,
-                    fontSize: 11,
-                    color: 'var(--text-muted)',
-                  }}
-                  title="Files scoped via @-mention for this turn"
-                >
-                  Filtered to: {msg.referencedFileNames.join(', ')}
-                </div>
-              )}
-              <div
-                className="ab-msg-bubble"
-                style={{ whiteSpace: 'pre-wrap' }}
-              >
+              {msg.referencedFileNames &&
+                msg.referencedFileNames.length > 0 && (
+                  <div
+                    className="ab-pill ab-msg-file-scope"
+                    title="Files scoped via @-mention for this turn"
+                  >
+                    Filtered to: {msg.referencedFileNames.join(', ')}
+                  </div>
+                )}
+              <div className="ab-msg-bubble ab-msg-bubble-user">
                 {renderUserText(msg.text, mentionItems)}
                 {msg.status === 'streaming' && (
-                  <span style={{ opacity: 0.5 }}> ▍</span>
+                  <span className="ab-msg-stream-caret"> ▍</span>
                 )}
               </div>
             </>
@@ -788,26 +726,12 @@ function MessageRow({
             // text (see use-chat's watchdog). Also catches the genuine
             // "model returned no text" case — without this the row was
             // just a timestamp meta line with no bubble at all.
-            <div
-              className="ab-msg-bubble"
-              style={{
-                opacity: 0.55,
-                fontStyle: 'italic',
-                color: 'var(--text-muted)',
-              }}
-            >
+            <div className="ab-msg-bubble ab-msg-bubble-empty">
               (no text response)
             </div>
           )}
         {msg.errorMessage && (
-          <div
-            className="ab-msg-bubble"
-            style={{
-              background: 'var(--danger-bg)',
-              border: '1px solid var(--danger-border)',
-              color: 'var(--danger)',
-            }}
-          >
+          <div className="ab-msg-bubble ab-msg-bubble-error">
             {msg.errorMessage}
           </div>
         )}
@@ -1311,17 +1235,14 @@ function KnowledgeCitations({ output }: { output: unknown }) {
     // Shape didn't match — fall back to raw JSON so the operator can
     // still inspect what came back.
     return (
-      <div style={{ marginTop: 6, color: 'var(--text-muted)' }}>
+      <div className="ab-msg-tool-output">
         <JsonBlock value={output} />
       </div>
     )
   }
   if (parsed.chunks.length === 0) {
     return (
-      <div
-        className="ab-field-help"
-        style={{ marginTop: 6, fontStyle: 'italic' }}
-      >
+      <div className="ab-field-help ab-citation-hint">
         {parsed.hint ?? 'No matching passages.'}
       </div>
     )
@@ -1335,24 +1256,10 @@ function KnowledgeCitations({ output }: { output: unknown }) {
   )
   distinctFiles.delete('')
   return (
-    <div
-      style={{
-        marginTop: 6,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 6,
-      }}
-    >
+    <div className="ab-citations">
       {distinctFiles.size >= 3 && (
         <div
-          className="ab-pill"
-          style={{
-            display: 'inline-block',
-            alignSelf: 'flex-start',
-            fontSize: 11,
-            color: 'var(--text-muted)',
-            marginBottom: 2,
-          }}
+          className="ab-pill ab-citation-scope"
           title="Number of distinct files matched in this search"
         >
           Looking at {distinctFiles.size} files
@@ -1367,37 +1274,11 @@ function KnowledgeCitations({ output }: { output: unknown }) {
         return (
           <div
             key={`${c.file_id ?? i}-${i}`}
-            className="ab-pill"
+            className="ab-pill ab-citation-chip"
             title={snippet}
-            style={{
-              display: 'block',
-              maxWidth: '100%',
-              lineHeight: 1.45,
-              whiteSpace: 'normal',
-              padding: '6px 10px',
-            }}
           >
-            <div
-              style={{
-                fontSize: 11,
-                color: 'var(--text-muted)',
-                fontFamily: 'var(--font-mono)',
-              }}
-            >
-              {head}
-            </div>
-            <div
-              style={{
-                marginTop: 2,
-                overflow: 'hidden',
-                textOverflow: 'ellipsis',
-                display: '-webkit-box',
-                WebkitLineClamp: 2,
-                WebkitBoxOrient: 'vertical',
-              }}
-            >
-              {snippet}
-            </div>
+            <div className="ab-citation-head">{head}</div>
+            <div className="ab-citation-snippet">{snippet}</div>
           </div>
         )
       })}
@@ -1542,16 +1423,10 @@ function ThreadRail({
           onClick={() => onSwitch(t.threadId)}
           disabled={disabled && t.threadId !== activeThreadId}
         >
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              minWidth: 0,
-            }}
-          >
+          <div className="ab-thread-row-inner">
             {unreadThreadIds.has(t.threadId) && (
               <span
+                className={`ab-thread-unread-dot${streamingThreadIds.has(t.threadId) ? ' is-streaming' : ''}`}
                 aria-label={
                   streamingThreadIds.has(t.threadId)
                     ? 'Streaming, unviewed'
@@ -1562,25 +1437,9 @@ function ThreadRail({
                     ? 'A run is streaming here; switch in to watch.'
                     : 'New activity since you last opened this conversation.'
                 }
-                style={{
-                  display: 'inline-block',
-                  width: 7,
-                  height: 7,
-                  flexShrink: 0,
-                  borderRadius: 999,
-                  background: 'var(--accent-400)',
-                  animation: streamingThreadIds.has(t.threadId)
-                    ? 'ab-pulse-blue 1.6s ease-in-out infinite'
-                    : undefined,
-                }}
               />
             )}
-            <span
-              className="ab-thread-row-title"
-              style={{ minWidth: 0, flex: 1 }}
-            >
-              {t.title ?? 'Untitled'}
-            </span>
+            <span className="ab-thread-row-title">{t.title ?? 'Untitled'}</span>
           </div>
           <span className="ab-thread-row-meta">
             {t.messageCount} msg · {formatRelativeShort(t.updatedAt)}

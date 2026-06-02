@@ -37,8 +37,7 @@ function RepoCreateForm({ onClose }: { onClose: () => void }) {
     readonly total: number
   } | null>(null)
 
-  const dirty =
-    remoteUrl.length > 0 || branch !== 'main' || pat.length > 0
+  const dirty = remoteUrl.length > 0 || branch !== 'main' || pat.length > 0
   const guardedClose = useDirtyClose(dirty && !busy, onClose)
 
   const onRemoteUrlChange = (next: string) => {
@@ -148,22 +147,14 @@ function RepoCreateForm({ onClose }: { onClose: () => void }) {
             {branchPicker.truncated && (
               <span className="ab-field-help">
                 Showing {branchPicker.branches.length} of {branchPicker.total}{' '}
-                branches. If yours isn't here, use “Type a different branch”
+                branches. If yours isn't here, use "Type a different branch"
                 below.
               </span>
             )}
             <button
               type="button"
-              className="ab-field-help"
+              className="ab-field-help ab-field-help--link-btn"
               onClick={() => setBranchPicker(null)}
-              style={{
-                background: 'none',
-                border: 0,
-                padding: 0,
-                cursor: 'pointer',
-                textAlign: 'left',
-                textDecoration: 'underline',
-              }}
             >
               Type a different branch instead
             </button>
@@ -194,11 +185,7 @@ function RepoCreateForm({ onClose }: { onClose: () => void }) {
         </span>
       </div>
       {err && (
-        <div
-          className="ab-field-help"
-          style={{ color: 'var(--danger)' }}
-          role="alert"
-        >
+        <div className="ab-field-help ab-field-help--danger" role="alert">
           {err}
         </div>
       )}

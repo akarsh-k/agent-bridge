@@ -122,7 +122,10 @@ export function Sheet({
           <div>
             <div className="ab-sheet-title">{title}</div>
             {subtitle && (
-              <div className="ab-field-help" style={{ marginTop: 2 }}>
+              <div
+                className="ab-field-help"
+                style={{ marginTop: 'var(--space-0_5)' }}
+              >
                 {subtitle}
               </div>
             )}

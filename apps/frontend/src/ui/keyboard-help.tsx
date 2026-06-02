@@ -85,54 +85,68 @@ export function KeyboardHelp() {
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 'min(520px, calc(100vw - 32px))',
+          width: 'min(520px, calc(100vw - var(--space-8)))',
           maxHeight: '80vh',
           background: 'var(--surface)',
           border: '1px solid var(--border-strong)',
-          borderRadius: 'var(--radius-lg)',
+          borderRadius: 'var(--radius-xl)',
           boxShadow: 'var(--shadow-3)',
+          /* 102: above .ab-sheet-backdrop(100)+sheet(101); see dialog.tsx note */
           zIndex: 102,
           overflow: 'hidden',
-          animation: 'ab-dialog-in 200ms var(--ease-out)',
+          animation: 'ab-dialog-in var(--dur-2) var(--ease-out)',
         }}
       >
         <div
           style={{
-            padding: '16px 20px',
+            padding: 'var(--space-4) var(--space-5)',
             borderBottom: '1px solid var(--border)',
           }}
         >
           <div className="ab-section-title">Keyboard shortcuts</div>
         </div>
-        <div style={{ padding: '8px 20px 16px', overflowY: 'auto' }}>
+        <div
+          style={{
+            padding: 'var(--space-2) var(--space-5) var(--space-4)',
+            overflowY: 'auto',
+          }}
+        >
           {GROUPS.map((g) => (
-            <div key={g.title} style={{ marginTop: 14 }}>
+            <div key={g.title} style={{ marginTop: 'var(--space-4)' }}>
               <div
                 style={{
-                  fontSize: 11,
+                  fontSize: 'var(--text-2xs)',
                   color: 'var(--text-muted)',
                   textTransform: 'uppercase',
                   letterSpacing: '0.08em',
                   fontFamily: 'var(--font-mono)',
-                  marginBottom: 6,
+                  marginBottom: 'var(--space-1_5)',
                 }}
               >
                 {g.title}
               </div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 'var(--space-1)',
+                }}
+              >
                 {g.rows.map((r, i) => (
                   <div
                     key={i}
                     style={{
                       display: 'flex',
                       alignItems: 'center',
-                      gap: 8,
-                      padding: '6px 0',
-                      fontSize: 13,
+                      gap: 'var(--space-2)',
+                      padding: 'var(--space-1_5) 0',
+                      fontSize: 'var(--text-sm)',
                     }}
                   >
                     <span style={{ flex: 1 }}>{r.label}</span>
-                    <span style={{ display: 'inline-flex', gap: 4 }}>
+                    <span
+                      style={{ display: 'inline-flex', gap: 'var(--space-1)' }}
+                    >
                       {r.keys.map((k, j) => (
                         <span key={j} className="ab-kbd">
                           {k}

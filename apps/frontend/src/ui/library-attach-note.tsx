@@ -40,28 +40,26 @@ const COPY: Record<
   },
 }
 
-export function LibraryAttachNote({
-  subject,
-}: {
-  subject: LibrarySubject
-}) {
+export function LibraryAttachNote({ subject }: { subject: LibrarySubject }) {
   const { noun, verb, resourceSection } = COPY[subject]
   return (
     <div
       className="ab-alert"
       // Pull the note up slightly so it tucks under the page header
-      // without an awkward gap, and trim the default 18px bottom
-      // margin to 14 so it doesn't push the list too far down.
-      style={{ marginTop: -6, marginBottom: 14 }}
+      // without an awkward gap, and trim the bottom margin so it
+      // doesn't push the list too far down.
+      style={{
+        marginTop: 'calc(-1 * var(--space-1_5))',
+        marginBottom: 'var(--space-3)',
+      }}
       role="note"
     >
       <InfoIcon />
       <div className="ab-alert-body">
         <div className="ab-alert-sub">
-          Adding a {noun} here makes it available across the workspace
-          library. To use it inside an agent, open the agent and{' '}
-          {verb} from its <strong>Resources</strong> tab →{' '}
-          <strong>{resourceSection}</strong>.
+          Adding a {noun} here makes it available across the workspace library.
+          To use it inside an agent, open the agent and {verb} from its{' '}
+          <strong>Resources</strong> tab → <strong>{resourceSection}</strong>.
         </div>
       </div>
     </div>

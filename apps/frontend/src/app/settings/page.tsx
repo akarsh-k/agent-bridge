@@ -1,12 +1,13 @@
 import { PageHeader } from '../_chrome/page-header'
 import { Button } from '../../ui/button'
-import { useTheme, type Theme } from '../../lib/theme'
+import { useTheme, useAccent, ACCENTS, type Theme } from '../../lib/theme'
 import { Pill } from '../../ui/pill'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type CSSProperties } from 'react'
 import { ApiError, getBridgeConfig } from '../../lib/rpc'
 
 export function SettingsPage() {
   const { theme, setTheme } = useTheme()
+  const { accent, setAccent } = useAccent()
 
   const opts: ReadonlyArray<{ value: Theme; label: string }> = [
     { value: 'system', label: 'System' },
@@ -25,11 +26,11 @@ export function SettingsPage() {
         <div className="ab-section-head">
           <div className="ab-section-title">Appearance</div>
           <div className="ab-section-sub">
-            Pick a theme for this workspace. <code className="ab-mono">System</code>{' '}
-            follows your OS preference.
+            Pick a theme for this workspace.{' '}
+            <code className="ab-mono">System</code> follows your OS preference.
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="ab-theme-row">
           {opts.map((o) => (
             <Button
               key={o.value}
@@ -39,6 +40,26 @@ export function SettingsPage() {
               {o.label}
             </Button>
           ))}
+        </div>
+
+        <div className="ab-appearance-accent">
+          <div className="ab-field-label">Accent color</div>
+          <div className="ab-accent-grid">
+            {ACCENTS.map((a) => (
+              <button
+                key={a.key}
+                type="button"
+                className={`ab-accent-swatch${accent.key === a.key ? ' is-active' : ''}`}
+                aria-pressed={accent.key === a.key}
+                aria-label={a.label}
+                onClick={() => setAccent(a.key)}
+                style={{ '--sw': `oklch(0.66 ${a.c} ${a.h})` } as CSSProperties}
+              >
+                <span className="ab-accent-dot" aria-hidden="true" />
+                {a.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -50,11 +71,11 @@ export function SettingsPage() {
             store.
           </div>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+        <div className="ab-settings-key-row">
           <Pill kind="success">Configured</Pill>
           <span className="ab-field-help">
-            Rotation flow lands in a follow-up. For now treat the env var as
-            the source of truth.
+            Rotation flow lands in a follow-up. For now treat the env var as the
+            source of truth.
           </span>
         </div>
       </div>
@@ -104,29 +125,21 @@ function AboutCard() {
           Build + runtime info — useful when filing issues.
         </div>
       </div>
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: '160px 1fr',
-          gap: '8px 16px',
-          fontSize: 13,
-          alignItems: 'center',
-        }}
-      >
-        <span style={{ color: 'var(--text-muted)' }}>Frontend version</span>
+      <div className="ab-about-grid">
+        <span className="ab-about-label">Frontend version</span>
         <span className="ab-mono">{buildVersion}</span>
 
-        <span style={{ color: 'var(--text-muted)' }}>Build mode</span>
+        <span className="ab-about-label">Build mode</span>
         <span className="ab-mono">{buildMode}</span>
 
-        <span style={{ color: 'var(--text-muted)' }}>API endpoint</span>
-        <span className="ab-mono" style={{ wordBreak: 'break-all' }}>
+        <span className="ab-about-label">API endpoint</span>
+        <span className="ab-mono ab-about-endpoint">
           {(import.meta.env.VITE_API_URL as string | undefined)?.trim() ||
-            '(default — http://127.0.0.1:3001)'}
+            '(default: http://127.0.0.1:3001)'}
         </span>
 
-        <span style={{ color: 'var(--text-muted)' }}>Bridge runtime</span>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+        <span className="ab-about-label">Bridge runtime</span>
+        <span className="ab-about-bridge-status">
           {bridgeReady === null ? (
             <Pill kind="neutral">Checking…</Pill>
           ) : bridgeReady ? (
@@ -137,20 +150,13 @@ function AboutCard() {
             <Pill kind="warn">Not ready</Pill>
           )}
           {bridgeMsg && (
-            <span className="ab-field-help" style={{ margin: 0 }}>
+            <span className="ab-field-help ab-about-bridge-msg">
               {bridgeMsg}
             </span>
           )}
         </span>
       </div>
-      <div
-        style={{
-          display: 'flex',
-          gap: 10,
-          marginTop: 14,
-          flexWrap: 'wrap',
-        }}
-      >
+      <div className="ab-about-actions">
         <a
           href="https://github.com/akarsh-k/agent-bridge/issues"
           target="_blank"

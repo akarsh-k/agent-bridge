@@ -35,10 +35,7 @@ function WikiGenerateForm({
     () => providersWithKey.find((p) => p.id === providerId) ?? null,
     [providersWithKey, providerId],
   )
-  const cachedModels = useMemo(
-    () => provider?.models?.models ?? [],
-    [provider],
-  )
+  const cachedModels = useMemo(() => provider?.models?.models ?? [], [provider])
   const effectiveModel = useMemo(() => {
     if (model && cachedModels.includes(model)) return model
     return provider?.defaultModel ?? cachedModels[0] ?? null
@@ -54,8 +51,7 @@ function WikiGenerateForm({
     [providersWithKey],
   )
   const modelOpts: DropdownOption[] = useMemo(
-    () =>
-      cachedModels.map((m) => ({ value: m, label: m, monoLabel: true })),
+    () => cachedModels.map((m) => ({ value: m, label: m, monoLabel: true })),
     [cachedModels],
   )
 
@@ -98,10 +94,7 @@ function WikiGenerateForm({
       {providersWithKey.length === 0 ? (
         <div className="ab-field-help">
           No providers with an API key set.{' '}
-          <Link
-            to="/library/providers"
-            style={{ color: 'var(--accent-300)' }}
-          >
+          <Link to="/library/providers" className="ab-text-link">
             Add one →
           </Link>
         </div>
@@ -130,10 +123,7 @@ function WikiGenerateForm({
             />
           </div>
           <div className="ab-field">
-            <label
-              className="ab-field-label"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
-            >
+            <label className="ab-field-label ab-field-label--checkbox">
               <input
                 type="checkbox"
                 checked={force}
@@ -142,16 +132,12 @@ function WikiGenerateForm({
               Force regenerate
             </label>
             <span className="ab-field-help">
-              Skip the up-to-date short-circuit. Regenerates every page even
-              if nothing changed since the last run.
+              Skip the up-to-date short-circuit. Regenerates every page even if
+              nothing changed since the last run.
             </span>
           </div>
           {err && (
-            <div
-              className="ab-field-help"
-              style={{ color: 'var(--danger)' }}
-              role="alert"
-            >
+            <div className="ab-field-help ab-field-help--danger" role="alert">
               {err}
             </div>
           )}

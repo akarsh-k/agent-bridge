@@ -90,9 +90,7 @@ export function LogsPage() {
   const [seededFor, setSeededFor] = useState(path)
   if (seededFor !== path) {
     setSeededFor(path)
-    setOpenTarget(
-      initialRunId ? { kind: 'run', id: initialRunId } : null,
-    )
+    setOpenTarget(initialRunId ? { kind: 'run', id: initialRunId } : null)
   }
 
   const [runs, setRuns] = useState<readonly RunListRow[]>([])
@@ -224,10 +222,7 @@ export function LogsPage() {
         return hay.includes(q)
       }
       // config row
-      if (
-        agentFilter.size > 0 &&
-        !agentFilter.has(row.event.agentId)
-      ) {
+      if (agentFilter.size > 0 && !agentFilter.has(row.event.agentId)) {
         return false
       }
       // Source / Status pills don't apply to config events. When
@@ -479,9 +474,9 @@ function FilterBar(p: FilterBarProps) {
         disabled={sourcePillDisabled}
         disabledTitle={
           p.typeFilter === 'worker'
-            ? 'Worker jobs don\'t have a UI/Bridge source.'
+            ? "Worker jobs don't have a UI/Bridge source."
             : p.typeFilter === 'config'
-              ? 'Config events don\'t have a UI/Bridge source.'
+              ? "Config events don't have a UI/Bridge source."
               : undefined
         }
       />
@@ -492,7 +487,7 @@ function FilterBar(p: FilterBarProps) {
         disabled={statusPillDisabled}
         disabledTitle={
           p.typeFilter === 'config'
-            ? 'Config events don\'t have a status.'
+            ? "Config events don't have a status."
             : undefined
         }
       />
@@ -562,7 +557,7 @@ function AgentMultiSelect({
     selected.size === 0
       ? 'All agents'
       : selected.size === 1
-        ? agents.find((a) => selected.has(a.id))?.name ?? '1 agent'
+        ? (agents.find((a) => selected.has(a.id))?.name ?? '1 agent')
         : `${selected.size} agents`
   const toggle = (id: string) => {
     const next = new Set(selected)
@@ -575,9 +570,10 @@ function AgentMultiSelect({
     <div style={{ position: 'relative' }}>
       <button
         type="button"
-        className="ab-btn ab-btn-secondary"
+        className="ab-btn ab-btn-secondary ab-btn-sm"
         onClick={() => setOpen((o) => !o)}
-        style={{ fontSize: 12, padding: '6px 10px' }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
       >
         {label} ▾
       </button>
@@ -585,22 +581,25 @@ function AgentMultiSelect({
         <div
           style={{
             position: 'absolute',
-            top: 'calc(100% + 4px)',
+            top: 'calc(100% + var(--space-1))',
             right: 0,
             minWidth: 240,
             maxHeight: 320,
             overflow: 'auto',
-            padding: 6,
-            background: 'var(--surface)',
-            border: '1px solid var(--border)',
+            padding: 'var(--space-1_5)',
+            background: 'var(--surface-raised)',
+            border: '1px solid var(--border-strong)',
             borderRadius: 'var(--radius)',
             boxShadow: 'var(--shadow-2)',
-            zIndex: 10,
+            zIndex: 'var(--z-dropdown)',
           }}
           onMouseLeave={() => setOpen(false)}
         >
           {agents.length === 0 ? (
-            <div className="ab-field-help" style={{ padding: 6 }}>
+            <div
+              className="ab-field-help"
+              style={{ padding: 'var(--space-1_5)' }}
+            >
               No agents yet.
             </div>
           ) : (
@@ -611,13 +610,14 @@ function AgentMultiSelect({
                 style={{
                   width: '100%',
                   textAlign: 'left',
-                  padding: '6px 10px',
-                  fontSize: 12,
+                  padding: 'var(--space-1_5) var(--space-2_5)',
+                  fontSize: 'var(--text-xs)',
                   color: 'var(--accent-300)',
                   background: 'transparent',
                   border: 'none',
                   cursor: 'pointer',
                   borderRadius: 'var(--radius-xs)',
+                  transition: 'background var(--dur-1) var(--ease-out)',
                 }}
               >
                 Clear all
@@ -626,7 +626,7 @@ function AgentMultiSelect({
                 style={{
                   height: 1,
                   background: 'var(--border)',
-                  margin: '4px 0',
+                  margin: 'var(--space-1) 0',
                 }}
               />
               {agents.map((a) => {
@@ -637,11 +637,12 @@ function AgentMultiSelect({
                     style={{
                       display: 'flex',
                       alignItems: 'center',
-                      gap: 8,
-                      padding: '6px 10px',
-                      fontSize: 12,
+                      gap: 'var(--space-2)',
+                      padding: 'var(--space-1_5) var(--space-2_5)',
+                      fontSize: 'var(--text-xs)',
                       cursor: 'pointer',
                       borderRadius: 'var(--radius-xs)',
+                      transition: 'background var(--dur-1) var(--ease-out)',
                     }}
                   >
                     <input
@@ -655,7 +656,7 @@ function AgentMultiSelect({
                       style={{
                         marginLeft: 'auto',
                         color: 'var(--text-muted)',
-                        fontSize: 11,
+                        fontSize: 'var(--text-2xs)',
                       }}
                     >
                       {a.slug}
@@ -698,7 +699,11 @@ function RunsTable({
     )
   }
   if (rows.length === 0 && !loading) {
-    return <div className="ab-runs-empty">No activity matches the current filters.</div>
+    return (
+      <div className="ab-runs-empty">
+        No activity matches the current filters.
+      </div>
+    )
   }
   return (
     <div className="ab-runs-feed">
@@ -843,7 +848,10 @@ function RunRow({
 }
 
 function StatusPill({ status }: { status: RunStatus }) {
-  const map: Record<RunStatus, { kind: 'success' | 'warn' | 'danger' | 'neutral'; label: string }> = {
+  const map: Record<
+    RunStatus,
+    { kind: 'success' | 'warn' | 'danger' | 'neutral'; label: string }
+  > = {
     pending: { kind: 'neutral', label: 'pending' },
     running: { kind: 'warn', label: 'running' },
     completed: { kind: 'success', label: 'completed' },
@@ -935,7 +943,9 @@ function WorkerRow({
   onOpen: (id: string) => void
 }) {
   const dur =
-    row.durationMs !== null ? `${(row.durationMs / 1000).toFixed(2)}s` : undefined
+    row.durationMs !== null
+      ? `${(row.durationMs / 1000).toFixed(2)}s`
+      : undefined
   return (
     <FeedRow
       onOpen={() => onOpen(row.id)}
@@ -985,11 +995,7 @@ function workerJobKindHelp(kind: string): string {
   }
 }
 
-function WorkerStatusPill({
-  status,
-}: {
-  status: WorkerJobListRow['status']
-}) {
+function WorkerStatusPill({ status }: { status: WorkerJobListRow['status'] }) {
   const map: Record<
     WorkerJobListRow['status'],
     { kind: 'success' | 'warn' | 'danger' | 'neutral'; label: string }
@@ -1007,11 +1013,7 @@ function WorkerStatusPill({
   )
 }
 
-function ConfigRow({
-  row,
-}: {
-  row: Extract<FeedRow, { kind: 'config' }>
-}) {
+function ConfigRow({ row }: { row: Extract<FeedRow, { kind: 'config' }> }) {
   const { event } = row
   const detail = event.detail?.trim()
   return (

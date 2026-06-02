@@ -113,8 +113,8 @@ export function RowMenu({
               border: '1px solid var(--border-strong)',
               borderRadius: 'var(--radius)',
               boxShadow: 'var(--shadow-2)',
-              padding: 4,
-              zIndex: 200,
+              padding: 'var(--space-1)',
+              zIndex: 70 /* --z-toast */,
               animation: 'ab-fadeup 140ms var(--ease-out)',
             }}
           >
@@ -124,30 +124,11 @@ export function RowMenu({
                 type="button"
                 role="menuitem"
                 disabled={item.disabled}
+                className={`ab-menu-item${item.destructive ? ' ab-menu-item-danger' : ''}`}
                 onClick={() => {
                   setOpen(false)
                   item.onClick()
                 }}
-                style={{
-                  display: 'block',
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '7px 10px',
-                  borderRadius: 7,
-                  background: 'transparent',
-                  border: 'none',
-                  color: item.destructive ? 'var(--danger)' : 'var(--text)',
-                  fontSize: 13,
-                  cursor: item.disabled ? 'not-allowed' : 'pointer',
-                  opacity: item.disabled ? 0.5 : 1,
-                  font: 'inherit',
-                }}
-                onMouseEnter={(e) =>
-                  (e.currentTarget.style.background = 'var(--surface-hover)')
-                }
-                onMouseLeave={(e) =>
-                  (e.currentTarget.style.background = 'transparent')
-                }
               >
                 {item.label}
               </button>

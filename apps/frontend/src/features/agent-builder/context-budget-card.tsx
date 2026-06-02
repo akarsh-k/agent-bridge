@@ -120,15 +120,15 @@ export function ContextBudgetCard({ agentId }: { agentId: string }) {
           display: 'flex',
           alignItems: 'flex-start',
           justifyContent: 'space-between',
-          gap: 12,
+          gap: 'var(--space-3)',
         }}
       >
         <div style={{ minWidth: 0 }}>
           <div className="ab-section-title">Context budget</div>
           <div className="ab-section-sub">
-            Estimated tokens this agent ships on every call before the
-            user message. Recent-message replay, working memory, and
-            semantic-recall chunks add to the actual number per turn.
+            Estimated tokens this agent ships on every call before the user
+            message. Recent-message replay, working memory, and semantic-recall
+            chunks add to the actual number per turn.
           </div>
         </div>
         <Button
@@ -198,22 +198,22 @@ function BudgetBody({
         style={{
           display: 'flex',
           alignItems: 'baseline',
-          gap: 12,
+          gap: 'var(--space-3)',
           flexWrap: 'wrap',
-          marginBottom: 14,
+          marginBottom: 'var(--space-4)',
         }}
       >
         <div
           style={{
-            fontSize: 28,
-            fontWeight: 600,
+            fontSize: 'var(--text-2xl)',
+            fontWeight: 'var(--fw-semibold)',
             lineHeight: 1,
             fontVariantNumeric: 'tabular-nums',
           }}
         >
           ~{formatTokens(baseline)}
         </div>
-        <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>
+        <div style={{ color: 'var(--text-muted)', fontSize: 'var(--text-sm)' }}>
           baseline tokens per call
         </div>
         <span style={{ flex: 1 }} />
@@ -229,42 +229,42 @@ function BudgetBody({
       </div>
 
       <div className="ab-budget-rows">
-      <BreakdownRow
-        label="System prompt"
-        tokens={estimate.parts.systemPrompt}
-        total={baseline}
-      />
+        <BreakdownRow
+          label="System prompt"
+          tokens={estimate.parts.systemPrompt}
+          total={baseline}
+        />
 
-      <BreakdownRow
-        label={`Skills (${estimate.parts.skills.length})`}
-        tokens={estimate.parts.skillsTotal}
-        total={baseline}
-        expandable={estimate.parts.skills.length > 0}
-        expanded={skillsOpen}
-        onToggle={() => setSkillsOpen(!skillsOpen)}
-      />
-      {skillsOpen &&
-        estimate.parts.skills.map((s) => (
-          <SubRow key={s.name} label={s.name} tokens={s.tokens} />
-        ))}
+        <BreakdownRow
+          label={`Skills (${estimate.parts.skills.length})`}
+          tokens={estimate.parts.skillsTotal}
+          total={baseline}
+          expandable={estimate.parts.skills.length > 0}
+          expanded={skillsOpen}
+          onToggle={() => setSkillsOpen(!skillsOpen)}
+        />
+        {skillsOpen &&
+          estimate.parts.skills.map((s) => (
+            <SubRow key={s.name} label={s.name} tokens={s.tokens} />
+          ))}
 
-      {/* Inspector toolkit's auto-attached system prompt
+        {/* Inspector toolkit's auto-attached system prompt
           (`docs/ARCHITECTURE.md §10`). Listed as its own row because
           the source is build-time (.md), not an editable `skills` row.
           Renders distinctly when the .md fails to load so a missing
           build artifact is visible. */}
-      <BreakdownRow
-        label="System prompt (built-in)"
-        tokens={estimate.parts.systemSkill?.tokens ?? 0}
-        total={baseline}
-        sublabel={
-          estimate.parts.systemSkill === null
-            ? 'Failed to load. rebuild @agent-bridge/agents'
-            : `${estimate.parts.systemSkill.name} · v${estimate.parts.systemSkill.version}`
-        }
-      />
+        <BreakdownRow
+          label="System prompt (built-in)"
+          tokens={estimate.parts.systemSkill?.tokens ?? 0}
+          total={baseline}
+          sublabel={
+            estimate.parts.systemSkill === null
+              ? 'Failed to load. rebuild @agent-bridge/agents'
+              : `${estimate.parts.systemSkill.name} · v${estimate.parts.systemSkill.version}`
+          }
+        />
 
-      {/* GitNexus library skills + attached-repos hint + repo-relationships
+        {/* GitNexus library skills + attached-repos hint + repo-relationships
           hint were all dropped from the prompt by the wrapper-tool
           architecture (PLAN_v2.md B6 / D9 / D12). The data still
           travels — just inside wrapper responses (`list_repos`,
@@ -273,36 +273,36 @@ function BudgetBody({
           backwards-compat, but rendering them as always-zero rows
           would mislead the operator. Hidden here. */}
 
-      <BreakdownRow
-        label={`Tools (${estimate.parts.tools.length})`}
-        tokens={estimate.parts.toolsTotal}
-        total={baseline}
-        expandable={estimate.parts.tools.length > 0}
-        expanded={toolsOpen}
-        onToggle={() => setToolsOpen(!toolsOpen)}
-      />
-      {toolsOpen &&
-        estimate.parts.tools.map((t) => (
-          <SubRow key={t.name} label={`${t.name}`} tokens={t.tokens} />
-        ))}
+        <BreakdownRow
+          label={`Tools (${estimate.parts.tools.length})`}
+          tokens={estimate.parts.toolsTotal}
+          total={baseline}
+          expandable={estimate.parts.tools.length > 0}
+          expanded={toolsOpen}
+          onToggle={() => setToolsOpen(!toolsOpen)}
+        />
+        {toolsOpen &&
+          estimate.parts.tools.map((t) => (
+            <SubRow key={t.name} label={`${t.name}`} tokens={t.tokens} />
+          ))}
       </div>
 
       {limit !== null && baseline > limit * 0.8 && (
         <div
           className="ab-field-help"
           style={{
-            marginTop: 12,
+            marginTop: 'var(--space-3)',
             color: 'var(--danger)',
             background: 'var(--danger-bg)',
-            border: '1px solid rgba(251, 113, 133, 0.3)',
+            border: '1px solid var(--danger-border)',
             borderRadius: 'var(--radius)',
-            padding: '10px 12px',
+            padding: 'var(--space-2_5) var(--space-3)',
           }}
         >
-          ⚠ Baseline is {usagePct}% of the model's context window. Long
-          threads or large tool calls may overflow mid-conversation —
-          consider trimming skills, reducing attached MCPs, or
-          switching to a model with a larger context window.
+          Baseline is {usagePct}% of the model's context window. Long threads or
+          large tool calls may overflow mid-conversation. Consider trimming
+          skills, reducing attached MCPs, or switching to a model with a larger
+          context window.
         </div>
       )}
     </>
@@ -333,9 +333,11 @@ function BreakdownRow({
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
-        padding: '8px 0',
+        gap: 'var(--space-2_5)',
+        padding: 'var(--space-2) 0',
         cursor: expandable ? 'pointer' : 'default',
+        borderRadius: expandable ? 'var(--radius-xs)' : undefined,
+        outline: 'none',
       }}
       onClick={expandable ? onToggle : undefined}
       role={expandable ? 'button' : undefined}
@@ -357,19 +359,20 @@ function BreakdownRow({
             display: 'inline-flex',
             color: 'var(--text-muted)',
             width: 14,
+            flexShrink: 0,
           }}
         >
           {expanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
         </span>
       )}
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontSize: 13 }}>{label}</div>
+        <div style={{ fontSize: 'var(--text-sm)' }}>{label}</div>
         {sublabel && (
           <div
             style={{
-              fontSize: 11,
+              fontSize: 'var(--text-2xs)',
               color: 'var(--text-muted)',
-              marginTop: 2,
+              marginTop: 'var(--space-0_5)',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',
@@ -381,7 +384,7 @@ function BreakdownRow({
       </div>
       <span
         style={{
-          fontSize: 11,
+          fontSize: 'var(--text-2xs)',
           color: 'var(--text-muted)',
           fontVariantNumeric: 'tabular-nums',
         }}
@@ -390,8 +393,8 @@ function BreakdownRow({
       </span>
       <span
         style={{
-          fontSize: 13,
-          fontWeight: 500,
+          fontSize: 'var(--text-sm)',
+          fontWeight: 'var(--fw-medium)',
           minWidth: 56,
           textAlign: 'right',
           fontVariantNumeric: 'tabular-nums',
@@ -409,9 +412,9 @@ function SubRow({ label, tokens }: { label: string; tokens: number }) {
       style={{
         display: 'flex',
         alignItems: 'center',
-        gap: 10,
-        padding: '4px 0 4px 24px',
-        fontSize: 12,
+        gap: 'var(--space-2_5)',
+        padding: 'var(--space-1) 0 var(--space-1) var(--space-6)',
+        fontSize: 'var(--text-xs)',
         color: 'var(--text-dim)',
       }}
     >

@@ -71,8 +71,7 @@ function BridgeToolForm({
   const seededInputSchema = existingTool
     ? JSON.stringify(existingTool.inputSchema, null, 2)
     : DEFAULT_INPUT_SCHEMA
-  const seededTemplate =
-    existingTool?.promptTemplate ?? DEFAULT_PROMPT_TEMPLATE
+  const seededTemplate = existingTool?.promptTemplate ?? DEFAULT_PROMPT_TEMPLATE
   const dirty =
     name !== (existingTool?.name ?? '') ||
     description !== (existingTool?.description ?? '') ||
@@ -87,11 +86,7 @@ function BridgeToolForm({
     if (inputSchemaRaw.trim()) {
       try {
         const parsed = JSON.parse(inputSchemaRaw) as unknown
-        if (
-          !parsed ||
-          typeof parsed !== 'object' ||
-          Array.isArray(parsed)
-        ) {
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
           setErr('Input schema must be a JSON object.')
           return
         }
@@ -145,7 +140,7 @@ function BridgeToolForm({
       setBusy(true)
       try {
         await createBridgeTool(agentId, parsed.data)
-        toast.success(`Bridge tool “${name.trim()}” added`)
+        toast.success(`Bridge tool "${name.trim()}" added`)
         onSaved()
       } catch (e) {
         setErr(
@@ -169,7 +164,7 @@ function BridgeToolForm({
       subtitle={
         isEdit
           ? 'Tweak the function the IDE sees.'
-          : "A bridge tool is a typed function your IDE calls into the agent."
+          : 'A bridge tool is a typed function your IDE calls into the agent.'
       }
       primaryLabel={isEdit ? 'Save changes' : 'Add bridge tool'}
       onPrimary={submit}
@@ -189,9 +184,11 @@ function BridgeToolForm({
           autoFocus
         />
         <span className="ab-field-help">
-          Letters / digits / underscores. Becomes the IDE-side function name
-          as <code className="ab-mono">query_&lt;slug&gt;__{name || '<name>'}</code>.
-          The reserved <code className="ab-mono">query_</code> prefix is
+          Letters / digits / underscores. Becomes the IDE-side function name as{' '}
+          <code className="ab-mono">
+            query_&lt;slug&gt;__{name || '<name>'}
+          </code>
+          . The reserved <code className="ab-mono">query_</code> prefix is
           rejected — the bridge owns it.
         </span>
       </div>
@@ -241,15 +238,19 @@ function BridgeToolForm({
         />
         <span className="ab-field-help">
           The agent fills <code className="ab-mono">{`{{field}}`}</code>{' '}
-          placeholders with values from the IDE call before passing the
-          rendered prompt to the LLM.
+          placeholders with values from the IDE call before passing the rendered
+          prompt to the LLM.
         </span>
       </div>
 
       <div className="ab-field">
         <label
           className="ab-field-label"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+          }}
         >
           <input
             type="checkbox"
@@ -259,8 +260,8 @@ function BridgeToolForm({
           Enabled
         </label>
         <span className="ab-field-help">
-          Disabled tools stay defined but the bridge stops advertising them
-          on the next IDE handshake.
+          Disabled tools stay defined but the bridge stops advertising them on
+          the next IDE handshake.
         </span>
       </div>
 

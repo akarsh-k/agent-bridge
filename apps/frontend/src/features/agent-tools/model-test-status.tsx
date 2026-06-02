@@ -8,8 +8,6 @@
  * test has actually fired.
  */
 
-import type { CSSProperties } from 'react'
-
 export type ModelTestState = 'pending' | 'ok' | 'error' | undefined
 
 export function ModelTestStatus({
@@ -22,27 +20,10 @@ export function ModelTestStatus({
   message: string | undefined
 }) {
   if (!model || !state) return null
-  const baseStyle: CSSProperties = {
-    marginTop: 6,
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 4,
-    padding: '3px 8px',
-    fontSize: 11,
-    fontWeight: 500,
-    borderRadius: 'var(--radius-sm)',
-    border: '1px solid var(--border)',
-    alignSelf: 'flex-start',
-  }
+
   if (state === 'pending') {
     return (
-      <span
-        style={{
-          ...baseStyle,
-          color: 'var(--text-muted)',
-          background: 'var(--surface-hi)',
-        }}
-      >
+      <span className="ab-model-test-status ab-model-test-status--pending">
         Testing {model}…
       </span>
     )
@@ -50,12 +31,7 @@ export function ModelTestStatus({
   if (state === 'ok') {
     return (
       <span
-        style={{
-          ...baseStyle,
-          color: 'var(--success)',
-          background: 'var(--success-bg)',
-          borderColor: 'var(--success-border)',
-        }}
+        className="ab-model-test-status ab-model-test-status--ok"
         title={message ?? undefined}
       >
         ✓ Passed{message ? ` · ${message}` : ''}
@@ -64,12 +40,7 @@ export function ModelTestStatus({
   }
   return (
     <span
-      style={{
-        ...baseStyle,
-        color: 'var(--danger)',
-        background: 'var(--danger-bg)',
-        borderColor: 'var(--danger-border)',
-      }}
+      className="ab-model-test-status ab-model-test-status--error"
       title={message ?? undefined}
     >
       ✕ Failed

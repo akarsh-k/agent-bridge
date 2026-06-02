@@ -24,13 +24,19 @@ function shortRepoName(remoteUrl: string): string {
 }
 
 export function RelationshipsSection({ agentId }: { agentId: string }) {
-  const { agentResources, createRepoRelationship, patchRepoRelationship, removeRepoRelationship } =
-    useWorkspace()
+  const {
+    agentResources,
+    createRepoRelationship,
+    patchRepoRelationship,
+    removeRepoRelationship,
+  } = useWorkspace()
   const resources = agentResources[agentId]
   const attached = resources?.attachedRepos ?? []
   const relationships = resources?.repoRelationships ?? []
   const [sheetOpen, setSheetOpen] = useState(false)
-  const [editingRelationshipId, setEditingRelationshipId] = useState<string | null>(null)
+  const [editingRelationshipId, setEditingRelationshipId] = useState<
+    string | null
+  >(null)
   const editingRelationship = editingRelationshipId
     ? (relationships.find((e) => e.id === editingRelationshipId) ?? null)
     : null
@@ -85,14 +91,15 @@ export function RelationshipsSection({ agentId }: { agentId: string }) {
           display: 'flex',
           alignItems: 'flex-start',
           justifyContent: 'space-between',
-          gap: 12,
+          gap: 'var(--space-3)',
         }}
       >
         <div style={{ minWidth: 0 }}>
           <div className="ab-section-title">Repo relations</div>
           <div className="ab-section-sub">
-            {relationships.length} {relationships.length === 1 ? 'relationship' : 'relationships'} · how
-            attached repos relate (uses, deploys to, depends on …)
+            {relationships.length}{' '}
+            {relationships.length === 1 ? 'relationship' : 'relationships'} ·
+            how attached repos relate (uses, deploys to, depends on …)
           </div>
         </div>
         <Button
@@ -226,8 +233,12 @@ function RelationshipForm({
   const [to, setTo] = useState<string | null>(
     editingRelationship?.toRepoId ?? opts[1]?.value ?? null,
   )
-  const [connector, setConnector] = useState(editingRelationship?.connector ?? 'uses')
-  const [description, setDescription] = useState(editingRelationship?.description ?? '')
+  const [connector, setConnector] = useState(
+    editingRelationship?.connector ?? 'uses',
+  )
+  const [description, setDescription] = useState(
+    editingRelationship?.description ?? '',
+  )
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 

@@ -62,8 +62,7 @@ function SkillForm({
   // decide whether to load the body, so the runtime falls back to
   // eager. This banner makes the resulting behaviour explicit on the
   // form so the operator isn't surprised.
-  const willBeLazy =
-    !alwaysInclude && description.trim().length > 0
+  const willBeLazy = !alwaysInclude && description.trim().length > 0
   const missingDescriptionForLazy =
     !alwaysInclude && description.trim().length === 0
 
@@ -110,7 +109,7 @@ function SkillForm({
       setBusy(true)
       try {
         await createSkill(agentId, parsed.data)
-        toast.success(`Skill “${name.trim()}” added`)
+        toast.success(`Skill "${name.trim()}" added`)
         onClose()
       } catch (e) {
         setErr(
@@ -167,16 +166,20 @@ function SkillForm({
           maxLength={280}
         />
         <span className="ab-field-help">
-          Frame it as a trigger condition so the agent has something to
-          match against. "Use when X" tends to work well. Skills with no
-          clear trigger (overall tone, persona, formatting rules) should
-          skip this and check the box below instead.
+          Frame it as a trigger condition so the agent has something to match
+          against. "Use when X" tends to work well. Skills with no clear trigger
+          (overall tone, persona, formatting rules) should skip this and check
+          the box below instead.
         </span>
       </div>
       <div className="ab-field">
         <label
           className="ab-field-label"
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 'var(--space-2)',
+          }}
         >
           <input
             type="checkbox"
@@ -199,7 +202,7 @@ function SkillForm({
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'space-between',
-            marginBottom: 6,
+            marginBottom: 'var(--space-1_5)',
           }}
         >
           <label className="ab-field-label" htmlFor="sk-body">
@@ -230,7 +233,7 @@ function SkillForm({
               minHeight: 200,
               maxHeight: 360,
               overflowY: 'auto',
-              padding: '12px 14px',
+              padding: 'var(--space-3) var(--space-3)',
               background: 'var(--surface-hi)',
               border: '1px solid var(--border)',
               borderRadius: 'var(--radius)',

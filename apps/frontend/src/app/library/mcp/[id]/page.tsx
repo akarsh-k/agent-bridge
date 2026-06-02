@@ -38,8 +38,12 @@ interface DiscoverSummary {
 }
 
 export function McpDetailPage({ id }: { id: string }) {
-  const { mcpConnections, patchMcpConnection, removeMcpConnection, agentResources } =
-    useWorkspace()
+  const {
+    mcpConnections,
+    patchMcpConnection,
+    removeMcpConnection,
+    agentResources,
+  } = useWorkspace()
   const conn = mcpConnections.find((m) => m.id === id)
   const dependentAgentIds = useMemo(() => {
     const ids = new Set<string>()
@@ -76,7 +80,7 @@ export function McpDetailPage({ id }: { id: string }) {
       <div className="ab-page">
         <div className="ab-card ab-card-pad">
           <div className="ab-section-title">MCP connection not found</div>
-          <div style={{ marginTop: 12 }}>
+          <div className="ab-not-found-action">
             <Link to="/library/mcp" className="ab-btn ab-btn-secondary">
               Back to MCPs
             </Link>
@@ -191,7 +195,7 @@ export function McpDetailPage({ id }: { id: string }) {
           } reference this connection — their allowlists will be cleared.`
     if (
       !(await confirmDialog({
-        title: `Delete MCP “${conn.name}”?`,
+        title: `Delete MCP "${conn.name}"?`,
         body,
         confirmLabel: 'Delete connection',
         destructive: true,
@@ -224,10 +228,8 @@ export function McpDetailPage({ id }: { id: string }) {
       </Link>
       <div className="ab-detail-header">
         <BrandGlyph kind={brandFor(conn.name)} />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 className="ab-page-title" style={{ marginBottom: 0 }}>
-            {conn.name}
-          </h1>
+        <div className="ab-detail-body">
+          <h1 className="ab-page-title ab-page-title--no-mb">{conn.name}</h1>
           <div className="ab-detail-meta">
             <Pill kind="neutral">{conn.transport}</Pill>
             <McpAuthBadge auth={conn.auth} />
@@ -235,11 +237,7 @@ export function McpDetailPage({ id }: { id: string }) {
           </div>
         </div>
         <div className="ab-page-actions">
-          <Button
-            variant="primary"
-            onClick={discover}
-            disabled={discovering}
-          >
+          <Button variant="primary" onClick={discover} disabled={discovering}>
             {discovering ? 'Discovering…' : 'Discover tools'}
           </Button>
         </div>
@@ -266,7 +264,11 @@ export function McpDetailPage({ id }: { id: string }) {
           </div>
           <div className="ab-field">
             <span className="ab-field-label">Transport</span>
-            <input className="ab-input ab-mono" value={conn.transport} disabled />
+            <input
+              className="ab-input ab-mono"
+              value={conn.transport}
+              disabled
+            />
           </div>
           <div className="ab-field ab-field-col">
             <label className="ab-field-label" htmlFor="md-cmd">
@@ -294,14 +296,7 @@ export function McpDetailPage({ id }: { id: string }) {
                 />
               </div>
               <div className="ab-field ab-field-col">
-                <label
-                  className="ab-field-label"
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 8,
-                  }}
-                >
+                <label className="ab-field-label ab-field-label--checkbox">
                   <input
                     type="checkbox"
                     checked={allowHostHome}
@@ -384,19 +379,15 @@ export function McpDetailPage({ id }: { id: string }) {
           // Calling this out here prevents the Notion-via-mcp-remote
           // class of confusion ("I authorized once, why does it look
           // like nothing's there?").
-          <div
-            className="ab-field-help"
-            style={{ marginTop: 8 }}
-          >
-            <strong>Note:</strong> stdio connections — auth is managed
-            by the subprocess itself (static env vars, CLI args, or a
-            wrapper like <code className="ab-mono">mcp-remote</code>{' '}
-            keeping its own token cache). Agent Bridge doesn't track
-            expiry or refresh tokens for stdio. For OAuth-protected
-            services with an HTTP MCP endpoint (Notion, Linear,
-            Atlassian, …), consider recreating this connection with{' '}
-            <code className="ab-mono">http</code> transport — Agent
-            Bridge will then handle the OAuth lifecycle for you.
+          <div className="ab-field-help ab-field-help--mt">
+            <strong>Note:</strong> stdio connections — auth is managed by the
+            subprocess itself (static env vars, CLI args, or a wrapper like{' '}
+            <code className="ab-mono">mcp-remote</code> keeping its own token
+            cache). Agent Bridge doesn't track expiry or refresh tokens for
+            stdio. For OAuth-protected services with an HTTP MCP endpoint
+            (Notion, Linear, Atlassian, …), consider recreating this connection
+            with <code className="ab-mono">http</code> transport — Agent Bridge
+            will then handle the OAuth lifecycle for you.
           </div>
         )}
       </div>
@@ -405,8 +396,8 @@ export function McpDetailPage({ id }: { id: string }) {
         <div className="ab-section-head">
           <div className="ab-section-title">Discovered tools</div>
           <div className="ab-section-sub">
-            Hit <strong>Discover tools</strong> to fetch the live tool list
-            from this MCP server.
+            Hit <strong>Discover tools</strong> to fetch the live tool list from
+            this MCP server.
           </div>
         </div>
         {discoverErr && (
@@ -439,12 +430,7 @@ export function McpDetailPage({ id }: { id: string }) {
                   {discoverSummary.serverVersion &&
                     ` · server ${discoverSummary.serverVersion}`}
                 </span>
-                {discoverSummary.message && (
-                  <>
-                    {' '}
-                    · {discoverSummary.message}
-                  </>
-                )}
+                {discoverSummary.message && <> · {discoverSummary.message}</>}
               </div>
             </div>
           </div>
@@ -459,22 +445,13 @@ export function McpDetailPage({ id }: { id: string }) {
           <div className="ab-card ab-list-card">
             {tools.map((t) => (
               <div className="ab-list-row is-static" key={t.name}>
-                <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
-                  ⚙
-                </div>
+                <div className="ab-glyph ab-glyph-violet ab-glyph-sm">⚙</div>
                 <div className="ab-list-row-head">
                   <div className="ab-list-row-title ab-mono">{t.name}</div>
                   {t.description && (
                     <div
-                      className="ab-list-row-sub"
+                      className="ab-list-row-sub ab-list-row-sub--clamp1"
                       title={t.description}
-                      style={{
-                        display: '-webkit-box',
-                        WebkitBoxOrient: 'vertical',
-                        WebkitLineClamp: 1,
-                        overflow: 'hidden',
-                        wordBreak: 'break-word',
-                      }}
                     >
                       {t.description}
                     </div>
@@ -486,18 +463,11 @@ export function McpDetailPage({ id }: { id: string }) {
         )}
       </div>
 
-      <div
-        style={{
-          display: 'flex',
-          gap: 8,
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
+      <div className="ab-detail-footer">
         <Button variant="danger" onClick={remove} disabled={busy}>
           Delete connection
         </Button>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div className="ab-page-actions">
           <Link to="/library/mcp" className="ab-btn ab-btn-ghost">
             Cancel
           </Link>

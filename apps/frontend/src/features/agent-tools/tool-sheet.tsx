@@ -45,17 +45,14 @@ const KIND_TEMPLATE: Record<ToolKind, string> = {
     null,
     2,
   ),
-  mastra_builtin: JSON.stringify(
-    { id: 'web-search', options: {} },
-    null,
-    2,
-  ),
+  mastra_builtin: JSON.stringify({ id: 'web-search', options: {} }, null, 2),
   custom: '{}',
 }
 
 const KIND_HINT: Record<ToolKind, string> = {
   http: 'Required: url, method. Optional: headers, body. Use {{input}} placeholders to inject the call args.',
-  shell: 'Required: command, args. Optional: env. INPUT is exposed as a string.',
+  shell:
+    'Required: command, args. Optional: env. INPUT is exposed as a string.',
   mastra_builtin: 'Required: id (the Mastra built-in name). Optional: options.',
   custom: 'Free-form JSON — your own runner reads this.',
 }
@@ -82,9 +79,7 @@ function ToolForm({
   const [description, setDescription] = useState(initial?.description ?? '')
   const [kind, setKind] = useState<ToolKind>(initial?.kind ?? 'http')
   const [configRaw, setConfigRaw] = useState(
-    initial
-      ? JSON.stringify(initial.configJson, null, 2)
-      : KIND_TEMPLATE.http,
+    initial ? JSON.stringify(initial.configJson, null, 2) : KIND_TEMPLATE.http,
   )
 
   // When the user changes kind on a NEW tool, swap in the matching
@@ -181,7 +176,7 @@ function ToolForm({
       setBusy(true)
       try {
         await createTool(agentId, parsed.data)
-        toast.success(`Tool “${name.trim()}” added`)
+        toast.success(`Tool "${name.trim()}" added`)
         onClose()
       } catch (e) {
         setErr(
@@ -205,7 +200,7 @@ function ToolForm({
       subtitle={
         isEdit
           ? 'Tweak the tool definition the agent calls during a run.'
-          : "A tool becomes a callable function the LLM can pick mid-run."
+          : 'A tool becomes a callable function the LLM can pick mid-run.'
       }
       primaryLabel={isEdit ? 'Save changes' : 'Add tool'}
       onPrimary={submit}

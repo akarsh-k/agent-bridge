@@ -268,7 +268,11 @@ export function RunDetailSheet({
 
         {error && (
           <div className="ab-detail-modal-state" role="alert">
-            <span style={{ color: 'var(--danger)' }}>{error}</span>
+            <span
+              style={{ color: 'var(--danger)', fontSize: 'var(--text-sm)' }}
+            >
+              {error}
+            </span>
           </div>
         )}
         {!error && !data && loading && (
@@ -295,7 +299,7 @@ function RunSubtitle({ run }: { run: RunDetailResponse['run'] }) {
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 8,
+        gap: 'var(--space-2)',
         flexWrap: 'wrap',
       }}
     >
@@ -303,7 +307,7 @@ function RunSubtitle({ run }: { run: RunDetailResponse['run'] }) {
         {status.label}
       </Pill>
       <Pill kind="neutral">{run.source}</Pill>
-      <span className="ab-mono" style={{ fontSize: 11 }}>
+      <span className="ab-mono" style={{ fontSize: 'var(--text-2xs)' }}>
         {run.agentSlug}
       </span>
       {run.callsite && <CallsiteBadge callsite={run.callsite} />}
@@ -356,21 +360,21 @@ function CallsiteBadge({ callsite }: { callsite: RunCallsite }) {
       style={{
         display: 'inline-flex',
         alignItems: 'center',
-        gap: 6,
-        padding: '3px 9px',
+        gap: 'var(--space-1_5)',
+        padding: 'var(--space-0_5) var(--space-2_5)',
         borderRadius: 'var(--radius-pill)',
         background: 'var(--accent-bg)',
         border: '1px solid var(--accent-border)',
         color: 'var(--accent-300)',
-        fontSize: 11,
-        fontWeight: 500,
+        fontSize: 'var(--text-2xs)',
+        fontWeight: 'var(--fw-medium)',
         maxWidth: 420,
       }}
     >
       <span
         className="ab-mono"
         style={{
-          fontSize: 11,
+          fontSize: 'var(--text-2xs)',
           color: 'var(--accent-300)',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
@@ -382,7 +386,7 @@ function CallsiteBadge({ callsite }: { callsite: RunCallsite }) {
       <span
         className="ab-mono"
         style={{
-          fontSize: 11,
+          fontSize: 'var(--text-2xs)',
           color: 'var(--text-dim)',
           overflow: 'hidden',
           textOverflow: 'ellipsis',
@@ -395,7 +399,7 @@ function CallsiteBadge({ callsite }: { callsite: RunCallsite }) {
         <span
           className="ab-mono"
           style={{
-            fontSize: 11,
+            fontSize: 'var(--text-2xs)',
             color: 'var(--text-dim)',
             overflow: 'hidden',
             textOverflow: 'ellipsis',
@@ -528,12 +532,18 @@ function RunMetaRail({
 function WorkerJobSubtitle({ job }: { job: WorkerJobDetailResponse['job'] }) {
   const status = workerStatusPill(job.status)
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+    <span
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 'var(--space-2)',
+      }}
+    >
       <Pill kind={status.kind} dot>
         {status.label}
       </Pill>
       <Pill kind="neutral">{job.jobKind}</Pill>
-      <span className="ab-mono" style={{ fontSize: 11 }}>
+      <span className="ab-mono" style={{ fontSize: 'var(--text-2xs)' }}>
         {job.repoLabel}
       </span>
     </span>
@@ -654,10 +664,22 @@ function StepLimitNotice({ stepLimit }: { stepLimit: StepLimitSummary }) {
         border: '1px solid var(--warn-border)',
       }}
     >
-      <div style={{ fontWeight: 600, marginBottom: 2, color: 'var(--text)' }}>
+      <div
+        style={{
+          fontWeight: 'var(--fw-semibold)',
+          marginBottom: 'var(--space-0_5)',
+          color: 'var(--text)',
+        }}
+      >
         Hit step limit ({stepLimit.stepCount}/{stepLimit.maxSteps})
       </div>
-      <div style={{ color: 'var(--text-dim)', fontSize: 13, lineHeight: 1.5 }}>
+      <div
+        style={{
+          color: 'var(--text-dim)',
+          fontSize: 'var(--text-sm)',
+          lineHeight: 1.5,
+        }}
+      >
         The agent loop ran out of steps before the model could write its final
         answer. The output below is likely missing the synthesis turn. Raise the
         agent's Step limit on its Configure tab if this is a deep-research
@@ -672,14 +694,17 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div>
       <div
         style={{
-          fontSize: 11,
+          fontSize: 'var(--text-2xs)',
           color: 'var(--text-muted)',
-          marginBottom: 2,
+          marginBottom: 'var(--space-0_5)',
         }}
       >
         {label}
       </div>
-      <div className="ab-mono" style={{ fontSize: 14, color: 'var(--text)' }}>
+      <div
+        className="ab-mono"
+        style={{ fontSize: 'var(--text-base)', color: 'var(--text)' }}
+      >
         {value}
       </div>
     </div>
@@ -691,9 +716,9 @@ function DebugCell({ label, value }: { label: string; value: string }) {
     <div>
       <div
         style={{
-          fontSize: 11,
+          fontSize: 'var(--text-2xs)',
           color: 'var(--text-muted)',
-          marginBottom: 2,
+          marginBottom: 'var(--space-0_5)',
         }}
       >
         {label}
@@ -701,7 +726,7 @@ function DebugCell({ label, value }: { label: string; value: string }) {
       <div
         className="ab-mono"
         style={{
-          fontSize: 12,
+          fontSize: 'var(--text-xs)',
           color: 'var(--text-dim)',
           wordBreak: 'break-all',
         }}
@@ -723,10 +748,10 @@ function RunErrorCard({ message }: { message: string }) {
     >
       <div
         style={{
-          fontSize: 12,
-          fontWeight: 600,
+          fontSize: 'var(--text-xs)',
+          fontWeight: 'var(--fw-semibold)',
           color: 'var(--danger)',
-          marginBottom: 6,
+          marginBottom: 'var(--space-1_5)',
         }}
       >
         Error
@@ -735,7 +760,7 @@ function RunErrorCard({ message }: { message: string }) {
         style={{
           margin: 0,
           fontFamily: 'var(--font-mono)',
-          fontSize: 12,
+          fontSize: 'var(--text-xs)',
           color: 'var(--text)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
@@ -780,7 +805,10 @@ function CollapsibleBody({
   }
   return (
     <div className="ab-card ab-card-pad ab-form-section">
-      <div className="ab-field-label-row" style={{ marginBottom: 8 }}>
+      <div
+        className="ab-field-label-row"
+        style={{ marginBottom: 'var(--space-2)' }}
+      >
         <span className="ab-field-label">{title}</span>
         <button
           type="button"
@@ -801,7 +829,10 @@ function CollapsibleBody({
           // Markdown carries its own block margins, so it needs less vertical
           // padding; both modes share 16px horizontal so column-0 lines don't
           // hug the border and the two stacked wells align their left edge.
-          padding: render === 'markdown' ? '2px 16px' : '10px 16px',
+          padding:
+            render === 'markdown'
+              ? 'var(--space-0_5) var(--space-4)'
+              : 'var(--space-2_5) var(--space-4)',
         }}
       >
         {render === 'markdown' ? (
@@ -811,7 +842,7 @@ function CollapsibleBody({
             style={{
               margin: 0,
               fontFamily: 'var(--font-mono)',
-              fontSize: 12,
+              fontSize: 'var(--text-xs)',
               color: 'var(--text)',
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',

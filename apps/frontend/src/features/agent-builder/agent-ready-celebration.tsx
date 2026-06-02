@@ -70,13 +70,13 @@ export function AgentReadyCelebration({
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 'min(480px, calc(100vw - 32px))',
+          width: 'min(480px, calc(100vw - var(--space-8)))',
           background: 'var(--surface)',
           border: '1px solid var(--border-strong)',
           borderRadius: 'var(--radius-lg)',
           boxShadow: 'var(--shadow-3)',
           zIndex: 102,
-          padding: '28px 24px 20px',
+          padding: 'var(--space-6) var(--space-6) var(--space-5)',
           animation: 'ab-dialog-in 220ms var(--ease-out)',
         }}
       >
@@ -86,15 +86,25 @@ export function AgentReadyCelebration({
           aria-label="Close"
           style={{
             position: 'absolute',
-            top: 10,
-            right: 10,
+            top: 'var(--space-2_5)',
+            right: 'var(--space-2_5)',
             background: 'transparent',
             border: 'none',
             color: 'var(--text-muted)',
             cursor: 'pointer',
-            padding: 6,
+            padding: 'var(--space-1_5)',
             borderRadius: 'var(--radius-xs)',
             display: 'flex',
+            transition:
+              'color var(--dur-1) var(--ease-out), background var(--dur-1) var(--ease-out)',
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.color = 'var(--text)'
+            e.currentTarget.style.background = 'var(--surface-hover)'
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = 'var(--text-muted)'
+            e.currentTarget.style.background = 'transparent'
           }}
         >
           <CloseIcon width={16} height={16} />
@@ -106,7 +116,7 @@ export function AgentReadyCelebration({
             flexDirection: 'column',
             alignItems: 'center',
             textAlign: 'center',
-            gap: 12,
+            gap: 'var(--space-3)',
           }}
         >
           <div
@@ -118,7 +128,7 @@ export function AgentReadyCelebration({
           <h2
             id="ab-celebration-title"
             className="ab-section-title"
-            style={{ margin: 0, fontSize: 18 }}
+            style={{ margin: 0, fontSize: 'var(--text-xl)' }}
           >
             Your agent's ready
           </h2>
@@ -134,8 +144,8 @@ export function AgentReadyCelebration({
         <div
           style={{
             display: 'flex',
-            gap: 10,
-            marginTop: 22,
+            gap: 'var(--space-2_5)',
+            marginTop: 'var(--space-5)',
           }}
         >
           <Button
@@ -163,15 +173,15 @@ export function AgentReadyCelebration({
         </div>
         <div
           style={{
-            marginTop: 14,
-            fontSize: 12,
+            marginTop: 'var(--space-4)',
+            fontSize: 'var(--text-xs)',
             color: 'var(--text-muted)',
             textAlign: 'center',
             lineHeight: 1.5,
           }}
         >
-          Bridge has the MCP config snippet for Cursor / Claude Code / Codex —
-          paste it once and your agent shows up as a callable tool inside the
+          Bridge has the MCP config snippet for Cursor, Claude Code, and Codex.
+          Paste it once and your agent shows up as a callable tool inside the
           IDE.
         </div>
       </div>

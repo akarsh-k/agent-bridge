@@ -6,11 +6,7 @@ import { Button } from '../../../ui/button'
 import { Pill } from '../../../ui/pill'
 import { EmptyState } from '../../../ui/empty'
 import { RowMenu } from '../../../ui/row-menu'
-import {
-  ChevronRightIcon,
-  PlusIcon,
-  ProvidersIcon,
-} from '../../../ui/icons'
+import { ChevronRightIcon, PlusIcon, ProvidersIcon } from '../../../ui/icons'
 import { ProviderCreateSheet } from '../../../features/library/provider-create-sheet'
 import { confirmDialog } from '../../../ui/dialog-store'
 import { toast } from '../../../ui/toast-store'
@@ -44,7 +40,7 @@ export function ProvidersPage() {
   const remove = async (id: string, label: string) => {
     if (
       !(await confirmDialog({
-        title: `Delete provider “${label}”?`,
+        title: `Delete provider "${label}"?`,
         body: 'Agents using it will lose their model assignment. This cannot be undone.',
         confirmLabel: 'Delete provider',
         destructive: true,
@@ -97,11 +93,10 @@ export function ProvidersPage() {
                 : 'Coding-helper agents need a workspace-wide embedding provider to search code. Without one, inspector tools fall back to keyword-only search.'}
             </div>
           </div>
-          <Button
-            variant="secondary"
-            onClick={() => openSheet(missingRole)}
-          >
-            {missingRole === 'chat' ? 'Add chat provider' : 'Add embedding provider'}
+          <Button variant="secondary" onClick={() => openSheet(missingRole)}>
+            {missingRole === 'chat'
+              ? 'Add chat provider'
+              : 'Add embedding provider'}
           </Button>
         </div>
       )}

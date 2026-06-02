@@ -56,19 +56,18 @@ function ScopeHelp({ agentId }: { agentId: string }) {
       <Link to={`/agents/${agentId}/chat`} className="ab-text-link">
         Chat tab
       </Link>{' '}
-      a "thread" is one of the conversations you start from the
-      conversation switcher. From your IDE every tool call is its own
-      thread — the bridge does not chain calls — so per-thread memory
-      effectively resets every IDE invocation. If this agent is mostly
-      called from an IDE, pick per-agent so memory survives between
-      calls.
+      a "thread" is one of the conversations you start from the conversation
+      switcher. From your IDE every tool call is its own thread — the bridge
+      does not chain calls — so per-thread memory effectively resets every IDE
+      invocation. If this agent is mostly called from an IDE, pick per-agent so
+      memory survives between calls.
       <br />
       <br />
-      <strong>Switching scope is non-destructive:</strong> content from
-      the previous scope stays in storage, just hidden from the agent
-      until you switch back. So flipping per-agent → per-thread doesn't
-      delete your accumulated agent-level notes — it just makes new
-      conversations start fresh.
+      <strong>Switching scope is non-destructive:</strong> content from the
+      previous scope stays in storage, just hidden from the agent until you
+      switch back. So flipping per-agent → per-thread doesn't delete your
+      accumulated agent-level notes — it just makes new conversations start
+      fresh.
     </>
   )
 }
@@ -137,9 +136,8 @@ export function MemoryTab({ agentId }: { agentId: string }) {
   // provider library to enable recall.
   const embeddingDefault = useMemo(
     () =>
-      llmProviders.find(
-        (p) => p.role === 'embedding' && !!p.defaultModel,
-      ) ?? null,
+      llmProviders.find((p) => p.role === 'embedding' && !!p.defaultModel) ??
+      null,
     [llmProviders],
   )
   const semanticPossible = !!embeddingDefault
@@ -167,14 +165,16 @@ export function MemoryTab({ agentId }: { agentId: string }) {
     const savedWmEnabled = cfg?.workingMemory?.enabled ?? false
     if (savedWmEnabled !== wmEnabled) return true
     if (wmEnabled) {
-      if ((cfg?.workingMemory?.template ?? '') !== wmTemplate.trim()) return true
+      if ((cfg?.workingMemory?.template ?? '') !== wmTemplate.trim())
+        return true
       if ((cfg?.workingMemory?.scope ?? 'thread') !== wmScope) return true
     }
     const savedSrEnabled = cfg?.semanticRecall !== undefined
     if (savedSrEnabled !== srEnabled) return true
     if (srEnabled) {
       if ((cfg?.semanticRecall?.topK ?? 5) !== srTopK) return true
-      if ((cfg?.semanticRecall?.messageRange ?? 2) !== srMessageRange) return true
+      if ((cfg?.semanticRecall?.messageRange ?? 2) !== srMessageRange)
+        return true
       if ((cfg?.semanticRecall?.scope ?? 'thread') !== srScope) return true
     }
     return false
@@ -219,9 +219,7 @@ export function MemoryTab({ agentId }: { agentId: string }) {
       await patchAgent(agent.id, {
         memoryEnabled: enabled,
         memoryConfig:
-          enabled && Object.keys(config).length > 0
-            ? (config as never)
-            : null,
+          enabled && Object.keys(config).length > 0 ? (config as never) : null,
       })
       toast.success('Memory settings saved')
     } catch (e) {
@@ -255,12 +253,20 @@ export function MemoryTab({ agentId }: { agentId: string }) {
       <div className="ab-card ab-card-pad ab-form-section">
         <div
           className="ab-section-head"
-          style={{ display: 'flex', alignItems: 'center', gap: 12 }}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 'var(--space-3)',
+          }}
         >
           <div style={{ flex: 1 }}>
             <div
               className="ab-section-title"
-              style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+              }}
             >
               Memory
               {isDirty && (
@@ -272,10 +278,10 @@ export function MemoryTab({ agentId }: { agentId: string }) {
               )}
             </div>
             <div className="ab-section-sub">
-              Master switch for {agent.name}'s memory subsystem. Turn this
-              on to enable any of the three strategies below — recent
-              messages, working memory, semantic recall. They're
-              independent; mix and match as needed.
+              Master switch for {agent.name}'s memory subsystem. Turn this on to
+              enable any of the three strategies below — recent messages,
+              working memory, semantic recall. They are independent; mix and
+              match as needed.
             </div>
           </div>
           <Pill kind={enabled ? 'success' : 'neutral'} dot>
@@ -292,14 +298,14 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 
       <div
         className="ab-card ab-card-pad ab-form-section"
-        style={enabled ? undefined : { opacity: 0.5, pointerEvents: 'none' }}
+        style={enabled ? undefined : { opacity: 0.45, pointerEvents: 'none' }}
       >
         <div className="ab-section-head">
           <div className="ab-eyebrow ab-mono">Strategy · sliding window</div>
           <div className="ab-section-title">Recent messages</div>
           <div className="ab-section-sub">
-            Replay the last N turns of the active thread before each
-            request. Higher N = better continuity, larger context window.
+            Replay the last N turns of the active thread before each request.
+            Higher N = better continuity, larger context window.
           </div>
         </div>
         <div className="ab-field-grid">
@@ -332,7 +338,11 @@ export function MemoryTab({ agentId }: { agentId: string }) {
           <div className="ab-field ab-field-col">
             <label
               className="ab-field-label"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+              }}
             >
               <input
                 type="checkbox"
@@ -342,8 +352,8 @@ export function MemoryTab({ agentId }: { agentId: string }) {
               Auto-generate thread titles
             </label>
             <span className="ab-field-help">
-              A short LLM-generated title replaces the truncated first
-              message in the thread list. Uses the agent's own model.
+              A short LLM-generated title replaces the truncated first message
+              in the thread list. Uses the agent's own model.
             </span>
           </div>
         </div>
@@ -351,32 +361,41 @@ export function MemoryTab({ agentId }: { agentId: string }) {
 
       <div
         className="ab-card ab-card-pad ab-form-section"
-        style={enabled ? undefined : { opacity: 0.5, pointerEvents: 'none' }}
+        style={enabled ? undefined : { opacity: 0.45, pointerEvents: 'none' }}
       >
         <div
           className="ab-section-head"
-          style={{ display: 'flex', alignItems: 'center', gap: 12 }}
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 'var(--space-3)',
+          }}
         >
           <div style={{ flex: 1 }}>
             <div className="ab-eyebrow ab-mono">Strategy · scratchpad</div>
             <div className="ab-section-title">Working memory</div>
             <div className="ab-section-sub">
-              A markdown notebook the agent reads and writes to across
-              turns — user preferences, names, project facts, anything
-              the agent should remember beyond the current message
-              window.
+              A markdown notebook the agent reads and writes to across turns —
+              user preferences, names, project facts, anything the agent should
+              remember beyond the current message window.
             </div>
             <div
               className="ab-field-help"
-              style={{ marginTop: 6, color: 'var(--warn)' }}
+              style={{
+                marginTop: 'var(--space-1_5)',
+                color: 'var(--warn)',
+                padding: 'var(--space-2_5) var(--space-3)',
+                background: 'var(--warn-bg)',
+                border: '1px solid var(--warn-border)',
+                borderRadius: 'var(--radius)',
+              }}
             >
-              Heads up: working memory injects a system message on every
-              turn. Cloud frontier models (OpenAI, Anthropic, Gemini)
-              accept this fine. Some local-model chat templates
-              (Qwen, certain Mistral variants) reject any system
-              message past position 0 with a Jinja error — disable
-              this on those agents and lean on <em>Recent messages</em>{' '}
-              for continuity.
+              Working memory injects a system message on every turn. Cloud
+              frontier models (OpenAI, Anthropic, Gemini) accept this fine. Some
+              local-model chat templates (Qwen, certain Mistral variants) reject
+              any system message past position 0 with a Jinja error. Disable
+              this on those agents and lean on <em>Recent messages</em> for
+              continuity.
             </div>
           </div>
           <Button
@@ -415,7 +434,10 @@ export function MemoryTab({ agentId }: { agentId: string }) {
                 Optional starter shape. The agent fills these in over time.
               </span>
             </div>
-            <div className="ab-field ab-field-col" style={{ gridColumn: '1 / -1' }}>
+            <div
+              className="ab-field ab-field-col"
+              style={{ gridColumn: '1 / -1' }}
+            >
               <CurrentScratchpad agentId={agentId} scope={wmScope} />
             </div>
           </div>
@@ -427,23 +449,28 @@ export function MemoryTab({ agentId }: { agentId: string }) {
         style={
           enabled && semanticPossible
             ? undefined
-            : { opacity: 0.5, pointerEvents: 'none' }
+            : { opacity: 0.45, pointerEvents: 'none' }
         }
       >
         <div
           className="ab-section-head"
-          style={{ display: 'flex', alignItems: 'center', gap: 12 }}
+          style={{
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 'var(--space-3)',
+          }}
         >
           <div style={{ flex: 1 }}>
-            <div className="ab-eyebrow ab-mono">Strategy · vector retrieval</div>
+            <div className="ab-eyebrow ab-mono">
+              Strategy · vector retrieval
+            </div>
             <div className="ab-section-title">Semantic recall</div>
             <div className="ab-section-sub">
-              Embed every assistant turn and pull the top-K most-similar
-              chunks back into context before answering. Useful when
-              relevant prior turns sit outside the recent-messages
-              window. Uses the workspace embedding default — set it
-              once in Library and every agent shares the same vector
-              space.
+              Embed every assistant turn and pull the top-K most-similar chunks
+              back into context before answering. Useful when relevant prior
+              turns sit outside the recent-messages window. Uses the workspace
+              embedding default — set it once in Library and every agent shares
+              the same vector space.
             </div>
           </div>
           {!semanticPossible && (
@@ -462,36 +489,30 @@ export function MemoryTab({ agentId }: { agentId: string }) {
         {semanticPossible && embeddingDefault && (
           <div
             className="ab-field-help"
-            style={{ marginTop: 8 }}
+            style={{ marginTop: 'var(--space-2)' }}
           >
-            Workspace embedder:{' '}
-            <strong>{embeddingDefault.label}</strong> ·{' '}
-            <code className="ab-mono">
-              {embeddingDefault.defaultModel}
-            </code>
+            Workspace embedder: <strong>{embeddingDefault.label}</strong> ·{' '}
+            <code className="ab-mono">{embeddingDefault.defaultModel}</code>
           </div>
         )}
         {!semanticPossible && (
           <div
             className="ab-field-help"
             style={{
-              marginTop: 8,
-              padding: '10px 12px',
+              marginTop: 'var(--space-2)',
+              padding: 'var(--space-2_5) var(--space-3)',
               background: 'var(--surface-hi)',
               borderRadius: 'var(--radius)',
               border: '1px solid var(--border)',
             }}
           >
             No embedding provider is configured. Add one in the{' '}
-            <Link
-              to="/library/providers"
-              style={{ color: 'var(--accent-300)' }}
-            >
-              provider library →
+            <Link to="/library/providers" className="ab-text-link">
+              provider library
             </Link>{' '}
-            (create a provider with role <code className="ab-mono">embedding</code>{' '}
-            and pick a model). One embedding provider serves the whole
-            workspace.
+            (create a provider with role{' '}
+            <code className="ab-mono">embedding</code> and pick a model). One
+            embedding provider serves the whole workspace.
           </div>
         )}
         {srEnabled && (
@@ -539,7 +560,6 @@ export function MemoryTab({ agentId }: { agentId: string }) {
           </div>
         )}
       </div>
-
     </div>
   )
 }
@@ -642,8 +662,8 @@ function CurrentScratchpad({
   return (
     <div
       style={{
-        marginTop: 6,
-        paddingTop: 14,
+        marginTop: 'var(--space-1_5)',
+        paddingTop: 'var(--space-4)',
         borderTop: '1px solid var(--border)',
       }}
     >
@@ -652,15 +672,24 @@ function CurrentScratchpad({
           display: 'flex',
           alignItems: 'baseline',
           justifyContent: 'space-between',
-          marginBottom: 8,
-          gap: 12,
+          marginBottom: 'var(--space-2)',
+          gap: 'var(--space-3)',
         }}
       >
         <div>
-          <div style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)' }}>
+          <div
+            style={{
+              fontSize: 'var(--text-sm)',
+              fontWeight: 'var(--fw-medium)',
+              color: 'var(--text)',
+            }}
+          >
             Current scratchpad
           </div>
-          <div className="ab-field-help" style={{ marginTop: 2 }}>
+          <div
+            className="ab-field-help"
+            style={{ marginTop: 'var(--space-0_5)' }}
+          >
             What the agent has actually written into the notebook.
             {scope === 'thread' && ' One per conversation.'}
           </div>
@@ -677,11 +706,11 @@ function CurrentScratchpad({
       </div>
 
       {scope === 'thread' && (
-        <div style={{ marginBottom: 10 }}>
+        <div style={{ marginBottom: 'var(--space-2_5)' }}>
           {threads.length === 0 ? (
             <div className="ab-field-help">
-              No conversations yet. Start one in the Chat tab to see
-              this thread's scratchpad here.
+              No conversations yet. Start one in the Chat tab to see this
+              thread's scratchpad here.
             </div>
           ) : (
             <Dropdown
@@ -702,8 +731,7 @@ function CurrentScratchpad({
 
       {!err && data?.disabled && (
         <div className="ab-field-help">
-          Working memory isn't enabled. Toggle it on above to start
-          recording.
+          Working memory isn't enabled. Toggle it on above to start recording.
         </div>
       )}
 
@@ -715,23 +743,22 @@ function CurrentScratchpad({
             </div>
           ) : data.content.trim() === '' ? (
             <div className="ab-field-help">
-              The agent hasn't written anything to the scratchpad yet.
-              On capable models this fills in as the conversation
-              progresses; on smaller models the scratchpad may stay
-              blank.
+              The agent hasn't written anything to the scratchpad yet. On
+              capable models this fills in as the conversation progresses; on
+              smaller models the scratchpad may stay blank.
             </div>
           ) : (
             <pre
               style={{
                 margin: 0,
-                padding: '12px 14px',
-                background: 'var(--surface-hi)',
-                border: '1px solid var(--border)',
+                padding: 'var(--space-3) var(--space-3)',
+                background: 'var(--code-well)',
+                border: '1px solid var(--code-well-border)',
                 borderRadius: 'var(--radius)',
                 whiteSpace: 'pre-wrap',
                 wordBreak: 'break-word',
                 fontFamily: 'var(--font-mono)',
-                fontSize: 12,
+                fontSize: 'var(--text-xs)',
                 lineHeight: 1.55,
                 color: 'var(--text)',
                 maxHeight: 320,

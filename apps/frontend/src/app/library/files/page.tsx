@@ -80,8 +80,14 @@ const FILTERS: ReadonlyArray<{ key: FilterKey; label: string }> = [
 ]
 
 export function FilesPage() {
-  const { files, uploadFile, patchFile, removeFile, reingestFile, refreshFile } =
-    useWorkspace()
+  const {
+    files,
+    uploadFile,
+    patchFile,
+    removeFile,
+    reingestFile,
+    refreshFile,
+  } = useWorkspace()
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [uploading, setUploading] = useState(false)
   const [reembedding, setReembedding] = useState(false)
@@ -333,7 +339,7 @@ export function FilesPage() {
         title="Files"
         subtitle="Knowledge documents you've uploaded locally. Attach them to an agent in its Resources panel so the agent can search them via search_knowledge."
         actions={
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div className="ab-page-actions">
             <Button
               variant="primary"
               leading={<PlusIcon strokeWidth={2.4} />}
@@ -378,7 +384,12 @@ export function FilesPage() {
       ) : visibleFiles.length === 0 ? (
         <div className="ab-card ab-files-no-match">
           No files match this view.
-          <button onClick={() => { setFilter('all'); setQuery('') }}>
+          <button
+            onClick={() => {
+              setFilter('all')
+              setQuery('')
+            }}
+          >
             Clear filters
           </button>
         </div>
@@ -443,11 +454,7 @@ function StatsStrip({ stats }: { stats: StatsValues }) {
         />
       )}
       {stats.errored > 0 && (
-        <Stat
-          label="Failed"
-          value={formatCount(stats.errored)}
-          tone="danger"
-        />
+        <Stat label="Failed" value={formatCount(stats.errored)} tone="danger" />
       )}
     </ul>
   )
@@ -579,10 +586,10 @@ function EmptyDropZone({
         <div className="ab-files-empty-title">
           {uploading ? 'Uploading…' : 'Drop files here or click to browse'}
         </div>
-        <div className="ab-files-empty-body" style={{ marginTop: 6 }}>
-          Upload a markdown, text, or PDF file to make it searchable by
-          your agents. We chunk it, embed it, and store everything
-          locally — press <kbd>Esc</kbd> to cancel a drag.
+        <div className="ab-files-empty-body">
+          Upload a markdown, text, or PDF file to make it searchable by your
+          agents. We chunk it, embed it, and store everything locally — press{' '}
+          <kbd>Esc</kbd> to cancel a drag.
         </div>
       </div>
     </div>
@@ -793,9 +800,11 @@ function FileRow({
     for (let i = ingestEvents.length - 1; i >= 0; i--) {
       const ev = ingestEvents[i]
       if (!ev || ev.kind !== 'knowledge.ingest.progress') continue
-      const payload = ev.data as
-        | { step?: string; chunksDone?: number; chunksTotal?: number }
-        | null
+      const payload = ev.data as {
+        step?: string
+        chunksDone?: number
+        chunksTotal?: number
+      } | null
       if (
         payload?.step === 'embedding' &&
         typeof payload.chunksDone === 'number' &&
@@ -876,8 +885,7 @@ function FileRow({
           />
         ) : sub ? (
           <div
-            className="ab-list-row-sub"
-            style={{ cursor: 'text' }}
+            className="ab-list-row-sub ab-files-row-sub--edit"
             onClick={() => setEditingDescription(true)}
             title="Click to edit description"
           >
@@ -885,12 +893,7 @@ function FileRow({
           </div>
         ) : (
           <div
-            className="ab-list-row-sub"
-            style={{
-              cursor: 'text',
-              fontStyle: 'italic',
-              opacity: 0.7,
-            }}
+            className="ab-list-row-sub ab-files-row-sub--edit ab-files-row-sub--placeholder"
             onClick={() => setEditingDescription(true)}
             title="Click to add a description"
           >
@@ -1006,7 +1009,7 @@ function RowMeta({
   return (
     <div className="ab-files-row-meta" title={file.filename}>
       {parts.map((p, i) => (
-        <span key={i} style={{ display: 'inline-flex', gap: 6 }}>
+        <span key={i} className="ab-files-row-meta-part">
           {i > 0 && <span className="ab-files-row-meta-sep">·</span>}
           {p}
         </span>

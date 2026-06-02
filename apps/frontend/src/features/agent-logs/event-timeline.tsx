@@ -150,7 +150,12 @@ export function EventTimeline({
           <div className="ab-section-head">
             <div className="ab-section-title">
               Event timeline{' '}
-              <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+              <span
+                style={{
+                  color: 'var(--text-muted)',
+                  fontWeight: 'var(--fw-regular)',
+                }}
+              >
                 ({allEvents.length} event{allEvents.length === 1 ? '' : 's'}
                 {liveEvents.length > 0 ? ` · +${liveEvents.length} live` : ''})
               </span>
@@ -165,7 +170,7 @@ export function EventTimeline({
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
-                      gap: 4,
+                      gap: 'var(--space-1)',
                       color: sse.connected
                         ? 'var(--success)'
                         : 'var(--text-muted)',
@@ -272,7 +277,7 @@ function TimelineFilterChips({
             {c.count !== undefined && (
               <span
                 style={{
-                  marginLeft: 5,
+                  marginLeft: 'var(--space-1)',
                   opacity: 0.6,
                   fontVariantNumeric: 'tabular-nums',
                 }}
@@ -893,7 +898,7 @@ function PayloadBlock({
             Loading payload ({(bytes / 1024).toFixed(1)} KB)…
           </div>
         ) : error !== null ? (
-          <div style={{ color: 'var(--danger)', fontSize: 12 }}>
+          <div style={{ color: 'var(--danger)', fontSize: 'var(--text-xs)' }}>
             Failed to load payload: {error}
           </div>
         ) : (

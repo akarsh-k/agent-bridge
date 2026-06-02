@@ -132,11 +132,16 @@ function TemplateCard({
           'border-color var(--dur-2) var(--ease-out), background var(--dur-2) var(--ease-out)',
       }}
     >
-      <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start' }}>
+      <div
+        style={{
+          display: 'flex',
+          gap: 'var(--space-4)',
+          alignItems: 'flex-start',
+        }}
+      >
         <div
           className={
-            'ab-glyph' +
-            (meta.glyph === 'violet' ? ' ab-glyph-violet' : '')
+            'ab-glyph' + (meta.glyph === 'violet' ? ' ab-glyph-violet' : '')
           }
           style={{ flexShrink: 0 }}
           aria-hidden="true"
@@ -152,8 +157,8 @@ function TemplateCard({
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: 8,
-              marginBottom: 4,
+              gap: 'var(--space-2)',
+              marginBottom: 'var(--space-1)',
               flexWrap: 'wrap',
             }}
           >
@@ -162,7 +167,10 @@ function TemplateCard({
             </span>
             {meta.recommended && <Pill kind="accent">Recommended</Pill>}
           </div>
-          <div className="ab-section-sub" style={{ marginBottom: 10 }}>
+          <div
+            className="ab-section-sub"
+            style={{ marginBottom: 'var(--space-2_5)' }}
+          >
             {meta.tagline}
           </div>
           <ul
@@ -172,8 +180,8 @@ function TemplateCard({
               listStyle: 'none',
               display: 'flex',
               flexDirection: 'column',
-              gap: 6,
-              fontSize: 12.5,
+              gap: 'var(--space-1_5)',
+              fontSize: 'var(--text-xs)',
               lineHeight: 1.5,
               color: 'var(--text-dim)',
             }}
@@ -184,13 +192,13 @@ function TemplateCard({
                 style={{
                   display: 'flex',
                   alignItems: 'flex-start',
-                  gap: 8,
+                  gap: 'var(--space-2)',
                 }}
               >
                 <span
                   aria-hidden="true"
                   style={{
-                    marginTop: 7,
+                    marginTop: 'var(--space-1_5)',
                     width: 3,
                     height: 3,
                     borderRadius: '50%',
@@ -229,13 +237,13 @@ function ToolPreviewCard({
   return (
     <div
       className="ab-card ab-card-pad"
-      style={{ background: 'var(--surface-hi)', marginTop: 4 }}
+      style={{ background: 'var(--surface-hi)', marginTop: 'var(--space-1)' }}
     >
       <div className="ab-eyebrow">In your IDE</div>
       <div
         className="ab-mono"
         style={{
-          fontSize: 13,
+          fontSize: 'var(--text-sm)',
           color: slugValid ? 'var(--text)' : 'var(--text-muted)',
           wordBreak: 'break-all',
           lineHeight: 1.4,
@@ -243,7 +251,7 @@ function ToolPreviewCard({
       >
         {fullName}
       </div>
-      <div className="ab-field-help" style={{ marginTop: 8 }}>
+      <div className="ab-field-help" style={{ marginTop: 'var(--space-2)' }}>
         {toolSuffix === 'inspect_codebase'
           ? 'Structured envelope: file paths, code snippets, related repos.'
           : 'Free-form Q&A. Replies in plain text.'}
@@ -275,12 +283,10 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
   // clears the textarea (the constant is only meaningful for inspector
   // agents — see `DEFAULT_INSPECTOR_SYSTEM_PROMPT` for why).
   const [systemPrompt, setSystemPrompt] = useState('')
-  const [systemPromptSeededFor, setSystemPromptSeededFor] = useState<
-    AgentTemplate | null
-  >(null)
+  const [systemPromptSeededFor, setSystemPromptSeededFor] =
+    useState<AgentTemplate | null>(null)
   const [providerId, setProviderId] = useState<string | null>(
-    defaultProviderId &&
-      llmProviders.some((p) => p.id === defaultProviderId)
+    defaultProviderId && llmProviders.some((p) => p.id === defaultProviderId)
       ? defaultProviderId
       : null,
   )
@@ -314,8 +320,7 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
     [llmProviders],
   )
 
-  const canSubmit =
-    template !== null && name.trim().length > 0 && slugValid
+  const canSubmit = template !== null && name.trim().length > 0 && slugValid
 
   const dirty =
     template !== null ||
@@ -347,9 +352,7 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
       onClose()
       navigate(`/agents/${created.id}`)
     } catch (err) {
-      toast.error(
-        err instanceof Error ? err.message : 'Failed to create agent',
-      )
+      toast.error(err instanceof Error ? err.message : 'Failed to create agent')
     } finally {
       setBusy(false)
     }
@@ -373,7 +376,7 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
           style={{
             display: 'flex',
             flexDirection: 'column',
-            gap: 12,
+            gap: 'var(--space-3)',
           }}
         >
           {TEMPLATES.map((t) => (
@@ -423,18 +426,22 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
           font: 'inherit',
           display: 'flex',
           alignItems: 'center',
-          gap: 12,
-          marginBottom: 18,
-          padding: '12px 14px',
+          gap: 'var(--space-3)',
+          marginBottom: 'var(--space-4)',
+          padding: 'var(--space-3) var(--space-3)',
         }}
         aria-label={`Template: ${chosen.title}. Click to change.`}
       >
         <div
           className={
-            'ab-glyph' +
-            (chosen.glyph === 'violet' ? ' ab-glyph-violet' : '')
+            'ab-glyph' + (chosen.glyph === 'violet' ? ' ab-glyph-violet' : '')
           }
-          style={{ flexShrink: 0, width: 32, height: 32, fontSize: 14 }}
+          style={{
+            flexShrink: 0,
+            width: 32,
+            height: 32,
+            fontSize: 'var(--text-base)',
+          }}
           aria-hidden="true"
         >
           {chosen.id === 'coding' ? (
@@ -444,19 +451,29 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
           )}
         </div>
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div className="ab-eyebrow" style={{ marginBottom: 2 }}>
+          <div
+            className="ab-eyebrow"
+            style={{ marginBottom: 'var(--space-0_5)' }}
+          >
             Template
           </div>
-          <div style={{ fontWeight: 600, fontSize: 13 }}>{chosen.title}</div>
+          <div
+            style={{
+              fontWeight: 'var(--fw-semibold)',
+              fontSize: 'var(--text-sm)',
+            }}
+          >
+            {chosen.title}
+          </div>
         </div>
         <span
           aria-hidden="true"
           style={{
             color: 'var(--text-muted)',
-            fontSize: 12,
+            fontSize: 'var(--text-xs)',
             display: 'inline-flex',
             alignItems: 'center',
-            gap: 4,
+            gap: 'var(--space-1)',
           }}
         >
           Change
@@ -469,8 +486,8 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
         style={{
           display: 'grid',
           gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)',
-          gap: 14,
-          marginBottom: 14,
+          gap: 'var(--space-4)',
+          marginBottom: 'var(--space-4)',
         }}
       >
         <div className="ab-field">
@@ -537,10 +554,15 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
         toolSuffix={chosen.toolSuffix}
       />
 
-      <div className="ab-field" style={{ marginTop: 18 }}>
+      <div className="ab-field" style={{ marginTop: 'var(--space-4)' }}>
         <label className="ab-field-label" htmlFor="ca-desc">
           Description
-          <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+          <span
+            style={{
+              color: 'var(--text-muted)',
+              fontWeight: 'var(--fw-regular)',
+            }}
+          >
             {' '}
             (optional)
           </span>
@@ -558,7 +580,7 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
         </span>
       </div>
 
-      <div className="ab-field" style={{ marginTop: 14 }}>
+      <div className="ab-field" style={{ marginTop: 'var(--space-4)' }}>
         <label className="ab-field-label" htmlFor="ca-prompt">
           System prompt
         </label>
@@ -580,7 +602,7 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
         </span>
       </div>
 
-      <div className="ab-field" style={{ marginTop: 14 }}>
+      <div className="ab-field" style={{ marginTop: 'var(--space-4)' }}>
         <span className="ab-field-label">Provider</span>
         {providerOpts.length === 0 ? (
           <div
@@ -615,8 +637,8 @@ function CreateAgentForm({ onClose }: { onClose: () => void }) {
               placeholder="Pick a provider"
             />
             <span className="ab-field-help">
-              The provider's default model is what the agent uses. Skip for
-              now if you want to wire one up later.
+              The provider's default model is what the agent uses. Skip for now
+              if you want to wire one up later.
             </span>
           </>
         )}

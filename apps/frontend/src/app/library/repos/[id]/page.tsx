@@ -12,12 +12,7 @@ import { navigate } from '../../../../lib/router'
 import { Button } from '../../../../ui/button'
 import { Pill, type PillKind } from '../../../../ui/pill'
 import { BrandGlyph } from '../../../../ui/brand-glyph'
-import {
-  ApiError,
-  cloneRepo,
-  indexRepo,
-  pullRepo,
-} from '../../../../lib/rpc'
+import { ApiError, cloneRepo, indexRepo, pullRepo } from '../../../../lib/rpc'
 import { toast } from '../../../../ui/toast-store'
 import { confirmDialog } from '../../../../ui/dialog-store'
 import { RepoLogTail } from '../../../../features/library/repo-log-tail'
@@ -67,7 +62,7 @@ export function RepoDetailPage({ id }: { id: string }) {
       <div className="ab-page">
         <div className="ab-card ab-card-pad">
           <div className="ab-section-title">Repository not found</div>
-          <div style={{ marginTop: 12 }}>
+          <div className="ab-not-found-action">
             <Link to="/library/repos" className="ab-btn ab-btn-secondary">
               Back to repos
             </Link>
@@ -135,7 +130,7 @@ export function RepoDetailPage({ id }: { id: string }) {
   // "rebuild from scratch" gesture for when the source tree is broken.
   const reclone = async () => {
     const confirmed = await confirmDialog({
-      title: `Re-clone “${shortRepoName(repo.remoteUrl)}”?`,
+      title: `Re-clone "${shortRepoName(repo.remoteUrl)}"?`,
       body:
         'Re-clone wipes the local source tree and the embedding cache, ' +
         'then re-clones from scratch. Use Pull if you just want to fetch ' +
@@ -161,7 +156,7 @@ export function RepoDetailPage({ id }: { id: string }) {
           } have this repo attached — they'll lose access. The local clone is removed too.`
     if (
       !(await confirmDialog({
-        title: `Delete repo “${shortRepoName(repo.remoteUrl)}”?`,
+        title: `Delete repo "${shortRepoName(repo.remoteUrl)}"?`,
         body,
         confirmLabel: 'Delete repository',
         destructive: true,
@@ -194,8 +189,8 @@ export function RepoDetailPage({ id }: { id: string }) {
       </Link>
       <div className="ab-detail-header">
         <BrandGlyph kind="github" />
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 className="ab-page-title" style={{ marginBottom: 0 }}>
+        <div className="ab-detail-body">
+          <h1 className="ab-page-title ab-page-title--no-mb">
             {shortRepoName(repo.remoteUrl)}
           </h1>
           <div className="ab-detail-meta">
@@ -241,10 +236,7 @@ export function RepoDetailPage({ id }: { id: string }) {
             </Button>
           )}
           {repo.indexSummary && (
-            <Button
-              variant="secondary"
-              onClick={() => setGraphOpen(true)}
-            >
+            <Button variant="secondary" onClick={() => setGraphOpen(true)}>
               View graph
             </Button>
           )}
@@ -266,21 +258,12 @@ export function RepoDetailPage({ id }: { id: string }) {
         // re-render of the page.
         <div
           role="status"
-          className="ab-alert ab-alert-danger"
-          style={{ alignItems: 'flex-start' }}
+          className="ab-alert ab-alert-danger ab-alert--align-start"
         >
           <span className="ab-alert-dot" aria-hidden="true" />
           <div className="ab-alert-body">
             <div className="ab-alert-title">Last error</div>
-            <div
-              className="ab-mono"
-              style={{
-                marginTop: 4,
-                fontSize: 12,
-                whiteSpace: 'pre-wrap',
-                color: 'var(--text)',
-              }}
-            >
+            <div className="ab-mono ab-alert-error-detail">
               {repo.lastError}
             </div>
           </div>
@@ -295,7 +278,9 @@ export function RepoDetailPage({ id }: { id: string }) {
           try {
             await patchRepo(repo.id, { embeddingNodeCap: 0 })
             await indexRepo(repo.id, { force: true })
-            toast.success('Embedding-cap disabled — re-indexing with embeddings')
+            toast.success(
+              'Embedding-cap disabled — re-indexing with embeddings',
+            )
           } catch (e) {
             toast.error(
               e instanceof ApiError
@@ -320,12 +305,13 @@ export function RepoDetailPage({ id }: { id: string }) {
         </div>
         {repo.indexSummary ? (
           <div className="ab-field-grid">
-            <Stat label="Indexed at" value={formatTs(repo.indexSummary.indexedAt)} />
+            <Stat
+              label="Indexed at"
+              value={formatTs(repo.indexSummary.indexedAt)}
+            />
             <Stat
               label="Commit"
-              value={
-                repo.indexSummary.indexedCommitSha?.slice(0, 7) ?? '—'
-              }
+              value={repo.indexSummary.indexedCommitSha?.slice(0, 7) ?? '—'}
               mono
             />
             <Stat
@@ -367,15 +353,14 @@ export function RepoDetailPage({ id }: { id: string }) {
             <label className="ab-field-label" htmlFor="rd-pat">
               Git PAT {repo.gitPat.set && '· (already set)'}
             </label>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="ab-input-row">
               <input
                 id="rd-pat"
-                className="ab-input ab-mono"
+                className="ab-input ab-mono ab-input--flex"
                 type="password"
                 value={pat}
                 onChange={(e) => setPat(e.target.value)}
                 placeholder={repo.gitPat.set ? '••••••••' : 'ghp_…'}
-                style={{ flex: 1 }}
               />
               <Button variant="primary" onClick={setKey} disabled={busy}>
                 {repo.gitPat.set && !pat ? 'Clear' : 'Save'}
@@ -385,14 +370,7 @@ export function RepoDetailPage({ id }: { id: string }) {
         </div>
       </div>
 
-      <div
-        style={{
-          display: 'flex',
-          gap: 8,
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
+      <div className="ab-detail-footer">
         <Button variant="danger" onClick={remove} disabled={busy}>
           Delete repository
         </Button>
@@ -423,9 +401,7 @@ function Stat({
   return (
     <div className="ab-field">
       <span className="ab-field-label">{label}</span>
-      <div className={mono ? 'ab-mono' : undefined} style={{ fontSize: 14 }}>
-        {value}
-      </div>
+      <div className={`ab-stat-value${mono ? ' ab-mono' : ''}`}>{value}</div>
     </div>
   )
 }
@@ -473,64 +449,28 @@ function EmbeddingsSkippedNotice({
   if (!skipDetected) return null
 
   return (
-    <div
-      role="status"
-      className="ab-alert ab-alert-warn"
-      style={{
-        // Multi-line body — the dot lives inline with the title row
-        // below instead of as a side-sibling, so the default
-        // `align-items: center` rule on .ab-alert doesn't pull it
-        // toward the body's vertical midpoint. Single-column flex.
-        flexDirection: 'column',
-        alignItems: 'stretch',
-        gap: 0,
-      }}
-    >
-      <div
-        className="ab-alert-body"
-        style={{ display: 'flex', flexDirection: 'column', gap: 6 }}
-      >
-        <div
-          className="ab-alert-title"
-          style={{ display: 'flex', alignItems: 'center', gap: 10 }}
-        >
-          <span
-            className="ab-alert-dot"
-            aria-hidden="true"
-            style={{ background: 'var(--warn)' }}
-          />
+    <div role="status" className="ab-alert ab-alert-warn ab-alert--column">
+      <div className="ab-alert-body ab-alert-body--col">
+        <div className="ab-alert-title ab-alert-title--inline-dot">
+          <span className="ab-alert-dot" aria-hidden="true" />
           Embeddings skipped
         </div>
-        <div
-          style={{
-            fontSize: 13,
-            lineHeight: 1.55,
-            color: 'var(--text-dim)',
-            paddingLeft: 18, /* dot (8) + gap (10) — line text up with title */
-          }}
-        >
+        <div className="ab-alert-sub ab-alert-sub--indented">
           gitnexus indexed{' '}
-          <span className="ab-mono" style={{ color: 'var(--text)' }}>
+          <span className="ab-mono ab-text">
             {summary?.nodes?.toLocaleString() ?? '?'}
           </span>{' '}
-          nodes, but skipped embedding generation because the count exceeded
-          its default{' '}
+          nodes, but skipped embedding generation because the count exceeded its
+          default{' '}
           <span className="ab-mono">
             {GITNEXUS_DEFAULT_EMBED_CAP.toLocaleString()}
           </span>
           -node safety cap. Without embeddings, semantic search falls back to
-          BM25 only. Inspector queries will be less precise. Enabling will
-          embed every node on the next analyze. The choice persists across
-          future pulls.
+          BM25 only. Inspector queries will be less precise. Enabling will embed
+          every node on the next analyze. The choice persists across future
+          pulls.
         </div>
-        <div
-          style={{
-            marginTop: 6,
-            display: 'flex',
-            gap: 8,
-            paddingLeft: 18,
-          }}
-        >
+        <div className="ab-alert-action ab-alert-action--indented">
           <Button variant="primary" onClick={onEnable} disabled={busy}>
             {busy ? 'Working…' : 'Enable embeddings for this repo'}
           </Button>

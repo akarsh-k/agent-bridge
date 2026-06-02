@@ -40,6 +40,22 @@
               })
           }
           document.documentElement.dataset.theme = theme
+
+          // Accent bootstrap — the accent ramp is derived in OKLCH from
+          // --accent-h / --accent-c, so set them before paint to avoid a flash
+          // of the default accent. KEEP THIS PALETTE IN SYNC with ACCENTS in
+          // src/lib/theme/index.ts.
+          var ACCENTS = {
+            teal: [195, 0.125],
+            cyan: [208, 0.115],
+            cobalt: [248, 0.15],
+            amber: [82, 0.135],
+            coral: [32, 0.15],
+            slate: [245, 0.035],
+          }
+          var a = ACCENTS[localStorage.getItem('ab.accent')] || ACCENTS.teal
+          document.documentElement.style.setProperty('--accent-h', a[0])
+          document.documentElement.style.setProperty('--accent-c', a[1])
         } catch (e) {
           /* private mode etc — fall through to default dark */
         }

@@ -43,9 +43,9 @@ const ChatTab = lazy(() =>
   })),
 )
 const BridgeToolsTab = lazy(() =>
-  import('../../../features/agent-bridge-tools/bridge-tools-tab').then(
-    (m) => ({ default: m.BridgeToolsTab }),
-  ),
+  import('../../../features/agent-bridge-tools/bridge-tools-tab').then((m) => ({
+    default: m.BridgeToolsTab,
+  })),
 )
 type TabId = 'configure' | 'resources' | 'chat' | 'bridge'
 
@@ -238,10 +238,10 @@ export function AgentDetailPage({
       <div className="ab-page">
         <div className="ab-card ab-card-pad">
           <div className="ab-section-title">Agent not found</div>
-          <div className="ab-section-sub" style={{ marginTop: 4 }}>
+          <div className="ab-section-sub ab-not-found-sub">
             The agent {id.slice(0, 8)}… doesn't exist or has been deleted.
           </div>
-          <div style={{ marginTop: 14 }}>
+          <div className="ab-not-found-action">
             <Button variant="secondary" onClick={() => navigate('/agents')}>
               Back to agents
             </Button>
@@ -259,10 +259,8 @@ export function AgentDetailPage({
         >
           {(agent.name ?? 'A').charAt(0).toUpperCase()}
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 className="ab-page-title" style={{ marginBottom: 0 }}>
-            {agent.name}
-          </h1>
+        <div className="ab-detail-title-col">
+          <h1 className="ab-page-title ab-page-title-flush">{agent.name}</h1>
           <div className="ab-detail-meta">
             <span className="ab-mono">{agent.slug}</span>
             <span>Updated {updatedLabel}</span>
@@ -274,10 +272,7 @@ export function AgentDetailPage({
             )}
           </div>
         </div>
-        <div
-          className="ab-page-actions"
-          style={{ position: 'relative' }}
-        >
+        <div className="ab-page-actions ab-page-actions-rel">
           <Button
             variant="primary"
             leading={<ChatIcon />}
@@ -308,7 +303,7 @@ export function AgentDetailPage({
                     setMenuOpen(false)
                     if (
                       !(await confirmDialog({
-                        title: `Delete agent “${agent.name}”?`,
+                        title: `Delete agent "${agent.name}"?`,
                         body: 'All chat history, skills, tool definitions, and bridge tools tied to this agent are removed. This cannot be undone.',
                         confirmLabel: 'Delete agent',
                         confirmText: agent.slug,
@@ -439,5 +434,3 @@ function EllipsisIcon() {
     </svg>
   )
 }
-
-

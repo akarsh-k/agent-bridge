@@ -112,7 +112,11 @@ function EditForm({
     // Backspace on an empty input pops the last chip. common
     // chip-input idiom that lets the operator correct typos without
     // reaching for the mouse.
-    if (e.key === 'Backspace' && aliasDraft.length === 0 && aliases.length > 0) {
+    if (
+      e.key === 'Backspace' &&
+      aliasDraft.length === 0 &&
+      aliases.length > 0
+    ) {
       e.preventDefault()
       const last = aliases[aliases.length - 1]
       if (last !== undefined) {
@@ -198,19 +202,26 @@ function EditForm({
           style={{
             display: 'flex',
             flexWrap: 'wrap',
-            gap: 6,
-            padding: aliases.length > 0 ? '8px 8px 4px' : 0,
+            gap: 'var(--space-1_5)',
+            padding:
+              aliases.length > 0
+                ? 'var(--space-2) var(--space-2) var(--space-1)'
+                : 0,
             border: aliases.length > 0 ? '1px solid var(--border)' : 'none',
             borderRadius: 'var(--radius)',
             background: aliases.length > 0 ? 'var(--surface)' : 'transparent',
-            marginBottom: aliases.length > 0 ? 6 : 0,
+            marginBottom: aliases.length > 0 ? 'var(--space-1_5)' : 0,
           }}
         >
           {aliases.map((alias) => (
             <span
               key={alias}
               className="ab-pill ab-pill-accent"
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 'var(--space-1)',
+              }}
             >
               {alias}
               <button
@@ -224,7 +235,7 @@ function EditForm({
                   cursor: 'pointer',
                   padding: 0,
                   font: 'inherit',
-                  fontSize: '14px',
+                  fontSize: 'var(--text-base)',
                   lineHeight: 1,
                   opacity: 0.7,
                 }}
@@ -263,9 +274,9 @@ function EditForm({
           </span>
         ) : (
           <span className="ab-field-help">
-            Add anything a coding agent might use to refer to this repo -
-            local folder names (e.g. <code>web-app</code>), short codes
-            (<code>fe</code>, <code>bff</code>), legacy names. The toolkit
+            Add anything a coding agent might use to refer to this repo - local
+            folder names (e.g. <code>web-app</code>), short codes (
+            <code>fe</code>, <code>bff</code>), legacy names. The toolkit
             fuzzy-matches against these. Press Enter or comma to add.
           </span>
         )}

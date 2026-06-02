@@ -247,10 +247,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
   const isDirty = useMemo(() => {
     if (!provider) return false
     if (label.trim() !== (provider.label ?? '').trim()) return true
-    if (
-      isLocal &&
-      (baseUrl.trim() || null) !== (provider.baseUrl ?? null)
-    ) {
+    if (isLocal && (baseUrl.trim() || null) !== (provider.baseUrl ?? null)) {
       return true
     }
     if ((defaultModel.trim() || null) !== (provider.defaultModel ?? null)) {
@@ -266,15 +263,25 @@ export function ProviderDetailPage({ id }: { id: string }) {
     }
     if (apiKey.trim() !== '') return true
     return false
-  }, [provider, label, baseUrl, isLocal, defaultModel, isEmbedding, embeddingDims, apiKey])
+  }, [
+    provider,
+    label,
+    baseUrl,
+    isLocal,
+    defaultModel,
+    isEmbedding,
+    embeddingDims,
+    apiKey,
+  ])
 
   // Re-tick "Catalog refreshed Xs ago" labels on a timer so the value
   // doesn't lie to anyone reading the page for several minutes. Hook
   // call must run on every render (Rules of Hooks) — derive the Date
   // up here and let the hook handle the not-yet-fetched / no-provider
   // cases with a null input.
-  const fetchedAtDate =
-    provider?.models?.fetchedAt ? new Date(provider.models.fetchedAt) : null
+  const fetchedAtDate = provider?.models?.fetchedAt
+    ? new Date(provider.models.fetchedAt)
+    : null
   const catalogRefreshedLabel = useTimeAgo(fetchedAtDate, {
     compact: true,
     fallback: '—',
@@ -333,9 +340,9 @@ export function ProviderDetailPage({ id }: { id: string }) {
     setBusy(true)
     try {
       // Parse embedding dims at submit time. Empty input → null
-       // (use gitnexus's 384 default). Non-empty + non-numeric or
-       // out-of-range → reject before sending so the operator sees a
-       // local error instead of a backend 400.
+      // (use gitnexus's 384 default). Non-empty + non-numeric or
+      // out-of-range → reject before sending so the operator sees a
+      // local error instead of a backend 400.
       let embeddingDimsValue: number | null = null
       if (provider.role === 'embedding') {
         const trimmed = embeddingDims.trim()
@@ -494,7 +501,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
     } else {
       const usingNames = dependentAgents
         .slice(0, 3)
-        .map((a) => `“${a.name}”`)
+        .map((a) => `"${a.name}"`)
         .join(', ')
       body =
         dependentAgents.length === 0
@@ -502,12 +509,14 @@ export function ProviderDetailPage({ id }: { id: string }) {
           : `${dependentAgents.length} agent${
               dependentAgents.length === 1 ? '' : 's'
             } use this provider${
-              dependentAgents.length <= 3 ? ` (${usingNames})` : ` (${usingNames}, …)`
+              dependentAgents.length <= 3
+                ? ` (${usingNames})`
+                : ` (${usingNames}, …)`
             }. They'll lose their model assignment. This cannot be undone.`
     }
     if (
       !(await confirmDialog({
-        title: `Delete provider “${provider.label}”?`,
+        title: `Delete provider "${provider.label}"?`,
         body,
         confirmLabel: 'Delete provider',
         confirmText: dependentAgents.length > 0 ? provider.label : undefined,
@@ -550,12 +559,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
             <Button variant="ghost" size="sm" onClick={discard} disabled={busy}>
               Discard
             </Button>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={save}
-              disabled={busy}
-            >
+            <Button variant="primary" size="sm" onClick={save} disabled={busy}>
               {busy ? 'Saving…' : 'Save changes'}
             </Button>
           </div>
@@ -565,8 +569,8 @@ export function ProviderDetailPage({ id }: { id: string }) {
         <div className="ab-detail-glyph ab-glyph ab-glyph-violet">
           {provider.label.charAt(0).toUpperCase()}
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 className="ab-page-title" style={{ marginBottom: 0 }}>
+        <div className="ab-detail-body">
+          <h1 className="ab-page-title ab-page-title--no-mb">
             {provider.label}
           </h1>
           <div className="ab-detail-meta">
@@ -619,7 +623,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
             disabled={!defaultModel.trim() || headerTestState === 'pending'}
             title={
               !defaultModel.trim()
-                ? 'Pick a chat default first — there\'s nothing to test against.'
+                ? "Pick a chat default first — there's nothing to test against."
                 : `Send a one-token chat to ${defaultModel} to verify the endpoint.`
             }
           >
@@ -680,8 +684,8 @@ export function ProviderDetailPage({ id }: { id: string }) {
         <div className="ab-section-head">
           <div className="ab-section-title">Connection</div>
           <div className="ab-section-sub">
-            Encrypted API key + paste-only rotation. Leave blank to keep
-            the current key.
+            Encrypted API key + paste-only rotation. Leave blank to keep the
+            current key.
           </div>
         </div>
         <div className="ab-field-grid">
@@ -689,15 +693,14 @@ export function ProviderDetailPage({ id }: { id: string }) {
             <label className="ab-field-label" htmlFor="pd-key">
               API key {provider.apiKey.set && '· (already set)'}
             </label>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="ab-input-row">
               <input
                 id="pd-key"
-                className="ab-input ab-mono"
+                className="ab-input ab-mono ab-input--flex"
                 type="password"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder={provider.apiKey.set ? '••••••••' : 'sk-…'}
-                style={{ flex: 1 }}
               />
               {provider.apiKey.set && (
                 <Button variant="ghost" onClick={clearKey} disabled={busy}>
@@ -799,16 +802,17 @@ export function ProviderDetailPage({ id }: { id: string }) {
           <div className="ab-section-head">
             <div className="ab-section-title">Vector dimension</div>
             <div className="ab-section-sub">
-              How many numbers each embedding vector contains. MUST match
-              what your model actually returns — gitnexus crashes during
-              repo indexing with{' '}
-              <code className="ab-mono">Embedding dimension mismatch</code>{' '}
-              if this is wrong. Leave empty to use gitnexus's 384 default.
-              Common values: <code className="ab-mono">384</code> (default),{' '}
+              How many numbers each embedding vector contains. MUST match what
+              your model actually returns — gitnexus crashes during repo
+              indexing with{' '}
+              <code className="ab-mono">Embedding dimension mismatch</code> if
+              this is wrong. Leave empty to use gitnexus's 384 default. Common
+              values: <code className="ab-mono">384</code> (default),{' '}
               <code className="ab-mono">768</code> (all-mpnet-base),{' '}
-              <code className="ab-mono">1024</code> (BGE-large, Qwen3-Embedding-0.6B),{' '}
-              <code className="ab-mono">1536</code> (text-embedding-3-small),{' '}
-              <code className="ab-mono">3072</code> (text-embedding-3-large).
+              <code className="ab-mono">1024</code> (BGE-large,
+              Qwen3-Embedding-0.6B), <code className="ab-mono">1536</code>{' '}
+              (text-embedding-3-small), <code className="ab-mono">3072</code>{' '}
+              (text-embedding-3-large).
             </div>
           </div>
           <div className="ab-field">
@@ -817,7 +821,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
             </label>
             <input
               id="pd-embedding-dims"
-              className="ab-input ab-mono"
+              className="ab-input ab-mono ab-input--narrow"
               type="number"
               min={8}
               max={8192}
@@ -826,38 +830,29 @@ export function ProviderDetailPage({ id }: { id: string }) {
               value={embeddingDims}
               onChange={(e) => setEmbeddingDims(e.target.value)}
               placeholder="384 (default)"
-              style={{ maxWidth: 200 }}
             />
             <span className="ab-field-help">
               Saved on this provider; forwarded to gitnexus as{' '}
-              <code className="ab-mono">GITNEXUS_EMBEDDING_DIMS</code> on
-              every <code className="ab-mono">analyze</code> run.
+              <code className="ab-mono">GITNEXUS_EMBEDDING_DIMS</code> on every{' '}
+              <code className="ab-mono">analyze</code> run.
             </span>
           </div>
         </div>
       )}
 
       <div className="ab-card ab-card-pad ab-form-section">
-        <div
-          className="ab-section-head"
-          style={{
-            display: 'flex',
-            alignItems: 'flex-end',
-            gap: 12,
-          }}
-        >
-          <div style={{ flex: 1 }}>
+        <div className="ab-section-head ab-section-head--row">
+          <div className="ab-section-head-body">
             <div className="ab-section-title">Cached models</div>
             <div className="ab-section-sub">
-              Snapshot of <code className="ab-mono">/v1/models</code>. Click
-              any model to send a one-token test prompt and verify your key
-              + endpoint.
+              Snapshot of <code className="ab-mono">/v1/models</code>. Click any
+              model to send a one-token test prompt and verify your key +
+              endpoint.
             </div>
           </div>
           {provider.models?.fetchedAt && (
             <span
-              className="ab-field-help"
-              style={{ margin: 0, whiteSpace: 'nowrap' }}
+              className="ab-field-help ab-field-help--nowrap"
               title={new Date(provider.models.fetchedAt).toLocaleString()}
             >
               Refreshed {catalogRefreshedLabel}
@@ -866,7 +861,7 @@ export function ProviderDetailPage({ id }: { id: string }) {
         </div>
         {provider.models && provider.models.models.length > 0 ? (
           <>
-            <div className="ab-field" style={{ marginBottom: 12 }}>
+            <div className="ab-field ab-field--mb">
               <input
                 type="search"
                 className="ab-input ab-mono"
@@ -877,39 +872,24 @@ export function ProviderDetailPage({ id }: { id: string }) {
             </div>
             {groupedModels.length === 0 ? (
               <div className="ab-field-help">
-                No models match “{modelSearch}”.
+                No models match "{modelSearch}".
               </div>
             ) : (
-              <div
-                style={{ display: 'flex', flexDirection: 'column', gap: 14 }}
-              >
+              <div className="ab-model-groups">
                 {groupedModels.map(([groupName, models]) => {
-                  const isReadOnlyGroup = READONLY_GRID_CATEGORIES.has(groupName)
+                  const isReadOnlyGroup =
+                    READONLY_GRID_CATEGORIES.has(groupName)
                   return (
                     <div key={groupName || 'all'}>
                       {groupName && (
-                        <div
-                          style={{
-                            marginBottom: 8,
-                            fontSize: 11,
-                            textTransform: 'uppercase',
-                            letterSpacing: '0.04em',
-                            color: 'var(--text-muted)',
-                          }}
-                        >
+                        <div className="ab-model-group-label">
                           {groupName}{' '}
-                          <span style={{ opacity: 0.6 }}>
+                          <span className="ab-model-group-count">
                             ({models.length})
                           </span>
                         </div>
                       )}
-                      <div
-                        style={{
-                          display: 'flex',
-                          flexWrap: 'wrap',
-                          gap: 6,
-                        }}
-                      >
+                      <div className="ab-model-chip-grid">
                         {models.map((m) => {
                           const isDefault = provider.defaultModel === m
                           const flagClass = isDefault ? ' is-default' : ''
@@ -1038,8 +1018,8 @@ export function ProviderDetailPage({ id }: { id: string }) {
           </>
         ) : (
           <div className="ab-field-help">
-            No models cached yet. Hit{' '}
-            <strong>Refresh models</strong> after setting a key.
+            No models cached yet. Hit <strong>Refresh models</strong> after
+            setting a key.
           </div>
         )}
       </div>
@@ -1048,30 +1028,15 @@ export function ProviderDetailPage({ id }: { id: string }) {
           for users who scroll-to-end-then-commit by habit. Both spots
           call the same handlers. Delete stays on the left, away from
           the primary save action. */}
-      <div
-        style={{
-          display: 'flex',
-          gap: 8,
-          justifyContent: 'space-between',
-          alignItems: 'center',
-        }}
-      >
+      <div className="ab-detail-footer">
         <Button variant="danger" onClick={remove} disabled={busy}>
           Delete provider
         </Button>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Button
-            variant="ghost"
-            onClick={discard}
-            disabled={busy || !isDirty}
-          >
+        <div className="ab-page-actions">
+          <Button variant="ghost" onClick={discard} disabled={busy || !isDirty}>
             Discard
           </Button>
-          <Button
-            variant="primary"
-            onClick={save}
-            disabled={busy || !isDirty}
-          >
+          <Button variant="primary" onClick={save} disabled={busy || !isDirty}>
             {busy ? 'Saving…' : 'Save changes'}
           </Button>
         </div>
@@ -1085,10 +1050,10 @@ function NotFound() {
     <div className="ab-page">
       <div className="ab-card ab-card-pad">
         <div className="ab-section-title">Provider not found</div>
-        <div className="ab-section-sub" style={{ marginTop: 4 }}>
+        <div className="ab-section-sub ab-section-sub--mt">
           Provider may have been deleted.
         </div>
-        <div style={{ marginTop: 12 }}>
+        <div className="ab-not-found-action">
           <Link to="/library/providers" className="ab-btn ab-btn-secondary">
             Back to providers
           </Link>

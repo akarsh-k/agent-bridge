@@ -107,20 +107,21 @@ export function NavGuardModal() {
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 'min(460px, calc(100vw - 32px))',
+          width: 'min(460px, calc(100vw - var(--space-8)))',
           background: 'var(--surface)',
           border: '1px solid var(--border-strong)',
-          borderRadius: 'var(--radius-lg)',
+          borderRadius: 'var(--radius-xl)',
           boxShadow: 'var(--shadow-3)',
+          /* 102: above .ab-sheet-backdrop(100)+sheet(101); see dialog.tsx note */
           zIndex: 102,
-          padding: '22px 22px 18px',
-          animation: 'ab-dialog-in 200ms var(--ease-out)',
+          padding: 'var(--space-6) var(--space-6) var(--space-5)',
+          animation: 'ab-dialog-in var(--dur-2) var(--ease-out)',
         }}
       >
         <div
           id="ab-navguard-title"
           className="ab-section-title"
-          style={{ marginBottom: 8 }}
+          style={{ marginBottom: 'var(--space-2)' }}
         >
           {count === 1
             ? 'You have unsaved changes'
@@ -128,7 +129,7 @@ export function NavGuardModal() {
         </div>
         <div
           className="ab-section-sub"
-          style={{ marginBottom: 14, lineHeight: 1.55 }}
+          style={{ marginBottom: 'var(--space-4)', lineHeight: 1.55 }}
         >
           Save them before leaving, discard them, or stay on this page to keep
           editing.
@@ -137,13 +138,13 @@ export function NavGuardModal() {
           <div
             role="alert"
             style={{
-              marginBottom: 14,
-              padding: '8px 10px',
+              marginBottom: 'var(--space-4)',
+              padding: 'var(--space-2) var(--space-2_5)',
               borderRadius: 'var(--radius)',
               border: '1px solid var(--danger-border)',
               background: 'var(--danger-bg)',
               color: 'var(--danger)',
-              fontSize: 12,
+              fontSize: 'var(--text-xs)',
               lineHeight: 1.5,
             }}
           >
@@ -155,7 +156,7 @@ export function NavGuardModal() {
           style={{
             display: 'flex',
             justifyContent: 'flex-end',
-            gap: 8,
+            gap: 'var(--space-2)',
             flexWrap: 'wrap',
           }}
         >
@@ -166,11 +167,7 @@ export function NavGuardModal() {
           >
             Stay
           </Button>
-          <Button
-            variant="secondary"
-            onClick={onDiscard}
-            disabled={busy}
-          >
+          <Button variant="secondary" onClick={onDiscard} disabled={busy}>
             Discard &amp; continue
           </Button>
           <Button

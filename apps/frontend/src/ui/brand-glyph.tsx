@@ -4,11 +4,12 @@
  * library rows were explicitly called out as a polish failure.
  */
 
+import type { ComponentType } from 'react'
 import { GithubMark, LinearMark, McpIcon, NotionMark } from './icons'
 
 export type BrandKind = 'github' | 'linear' | 'notion' | 'mcp'
 
-const meta: Record<BrandKind, { cls: string; mark: React.ComponentType }> = {
+const meta: Record<BrandKind, { cls: string; mark: ComponentType }> = {
   github: { cls: 'ab-brand-github', mark: GithubMark },
   linear: { cls: 'ab-brand-linear', mark: LinearMark },
   notion: { cls: 'ab-brand-notion', mark: NotionMark },

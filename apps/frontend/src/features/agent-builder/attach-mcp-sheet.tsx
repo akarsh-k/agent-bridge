@@ -56,7 +56,9 @@ function AttachMcpForm({
     [agentResources, agentId, connectionId],
   )
   const [allowed, setAllowed] = useState<Set<string>>(initiallyAllowed)
-  const [allowedConnId, setAllowedConnId] = useState<string | null>(connectionId)
+  const [allowedConnId, setAllowedConnId] = useState<string | null>(
+    connectionId,
+  )
   if (allowedConnId !== connectionId) {
     setAllowedConnId(connectionId)
     setAllowed(new Set(initiallyAllowed))
@@ -214,7 +216,10 @@ function AttachMcpForm({
         agentResources[agentId]?.mcpAllowlist ?? []
       )
         .filter((m) => m.mcpConnectionId !== connectionId && m.enabled)
-        .map((m) => ({ mcpConnectionId: m.mcpConnectionId, toolName: m.toolName }))
+        .map((m) => ({
+          mcpConnectionId: m.mcpConnectionId,
+          toolName: m.toolName,
+        }))
       const here: AllowlistEntry[] = [...allowed].map((toolName) => ({
         mcpConnectionId: connectionId,
         toolName,
@@ -248,9 +253,12 @@ function AttachMcpForm({
     >
       {mcpConnections.length === 0 ? (
         <div className="ab-field" style={{ alignItems: 'flex-start' }}>
-          <div className="ab-field-help" style={{ marginBottom: 10 }}>
-            No MCP servers in your library yet. Create one to attach it
-            to this agent.
+          <div
+            className="ab-field-help"
+            style={{ marginBottom: 'var(--space-2_5)' }}
+          >
+            No MCP servers in your library yet. Create one to attach it to this
+            agent.
           </div>
           <Button
             variant="primary"
@@ -265,7 +273,13 @@ function AttachMcpForm({
         <>
           <div className="ab-field">
             <span className="ab-field-label">Connection</span>
-            <div style={{ display: 'flex', gap: 8, alignItems: 'stretch' }}>
+            <div
+              style={{
+                display: 'flex',
+                gap: 'var(--space-2)',
+                alignItems: 'stretch',
+              }}
+            >
               <div style={{ flex: 1, minWidth: 0 }}>
                 <Dropdown
                   value={connectionId}

@@ -92,40 +92,38 @@ function ConfirmModal({ entry }: { entry: PendingConfirm }) {
           top: '50%',
           left: '50%',
           transform: 'translate(-50%, -50%)',
-          width: 'min(440px, calc(100vw - 32px))',
+          width: 'min(440px, calc(100vw - var(--space-8)))',
           background: 'var(--surface)',
           border: '1px solid var(--border-strong)',
-          borderRadius: 'var(--radius-lg)',
+          borderRadius: 'var(--radius-xl)',
           boxShadow: 'var(--shadow-3)',
+          /* z-index 102: above the .ab-sheet-backdrop (100) + .ab-sheet (101).
+           * Intentional deviation from --z-modal (50) until shell.css backdrop
+           * migrates to --z-overlay (40) so the token scale is self-consistent. */
           zIndex: 102,
-          padding: '22px 22px 18px',
-          animation: 'ab-dialog-in 200ms var(--ease-out)',
+          padding: 'var(--space-6) var(--space-6) var(--space-5)',
+          animation: 'ab-dialog-in var(--dur-2) var(--ease-out)',
         }}
       >
         <div
           id={`ab-dialog-title-${id}`}
           className="ab-section-title"
-          style={{ marginBottom: 8 }}
+          style={{ marginBottom: 'var(--space-2)' }}
         >
           {req.title}
         </div>
         {req.body && (
           <div
             className="ab-section-sub"
-            style={{ marginBottom: 18, lineHeight: 1.55 }}
+            style={{ marginBottom: 'var(--space-5)', lineHeight: 1.55 }}
           >
             {req.body}
           </div>
         )}
         {req.confirmText && (
-          <div className="ab-field" style={{ marginBottom: 18 }}>
-            <label
-              className="ab-field-label"
-              htmlFor={`ab-dialog-input-${id}`}
-            >
-              Type{' '}
-              <code className="ab-mono">{req.confirmText}</code>
-              {' '}to confirm
+          <div className="ab-field" style={{ marginBottom: 'var(--space-5)' }}>
+            <label className="ab-field-label" htmlFor={`ab-dialog-input-${id}`}>
+              Type <code className="ab-mono">{req.confirmText}</code> to confirm
             </label>
             <input
               id={`ab-dialog-input-${id}`}
@@ -145,7 +143,11 @@ function ConfirmModal({ entry }: { entry: PendingConfirm }) {
           </div>
         )}
         <div
-          style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}
+          style={{
+            display: 'flex',
+            justifyContent: 'flex-end',
+            gap: 'var(--space-2)',
+          }}
         >
           <Button
             variant="ghost"
@@ -172,8 +174,7 @@ function ConfirmModal({ entry }: { entry: PendingConfirm }) {
                 ? 'Delete'
                 : kind === 'warning'
                   ? 'Continue'
-                  : 'Confirm')) +
-              (secondsLeft > 0 ? ` (${secondsLeft})` : '')}
+                  : 'Confirm')) + (secondsLeft > 0 ? ` (${secondsLeft})` : '')}
           </Button>
         </div>
       </div>

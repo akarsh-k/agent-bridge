@@ -13,12 +13,12 @@
 
 .ab-files-stats {
   display: flex;
-  gap: 28px;
+  gap: var(--space-6);
   /* No negative top margin: the LibraryAttachNote sits between the
    * page header and the stats strip, so a -12 top would pull the
    * stats up into the note. 8px keeps just enough air between the
    * two without an awkward gap. */
-  margin: 8px 0 24px;
+  margin: var(--space-2) 0 var(--space-6);
   padding: 0;
   list-style: none;
   flex-wrap: wrap;
@@ -27,19 +27,19 @@
 .ab-files-stat {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--space-0_5);
   min-width: 0;
 }
 
 .ab-files-stat-label {
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 500;
   color: var(--text-dim);
 }
 
 .ab-files-stat-value {
   font-family: var(--font-mono);
-  font-size: 17px;
+  font-size: var(--text-lg);
   font-weight: 500;
   color: var(--text);
   font-variant-numeric: tabular-nums;
@@ -60,27 +60,27 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 14px;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
   flex-wrap: wrap;
 }
 
 .ab-files-filter-row {
   display: inline-flex;
-  gap: 6px;
+  gap: var(--space-1_5);
   flex-wrap: wrap;
 }
 
 .ab-files-chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 11px;
+  gap: var(--space-2);
+  padding: var(--space-1_5) var(--space-3);
   border-radius: var(--radius-pill);
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-dim);
-  font-size: 12px;
+  font-size: var(--text-xs);
   font-weight: 500;
   cursor: pointer;
   transition:
@@ -102,11 +102,11 @@
 
 .ab-files-chip-count {
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--text-2xs);
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
-  padding: 1px 6px;
+  padding: 1px var(--space-1_5);
   border-radius: var(--radius-pill);
   background: var(--surface-hi);
 }
@@ -125,8 +125,8 @@
 
 .ab-files-search input {
   width: 100%;
-  padding: 6px 10px 6px 30px;
-  font-size: 12.5px;
+  padding: var(--space-1_5) var(--space-2_5) var(--space-1_5) 30px;
+  font-size: var(--text-xs);
   font-family: var(--font-sans);
   color: var(--text);
   background: var(--surface);
@@ -214,7 +214,7 @@
 
 .ab-files-drop-panel {
   width: min(540px, 80vw);
-  padding: 48px 36px;
+  padding: var(--space-12) 36px;
   border: 2px dashed var(--accent-400);
   border-radius: var(--radius-xl);
   background: var(--accent-bg);
@@ -237,7 +237,7 @@
 .ab-files-drop-panel-icon {
   width: 48px;
   height: 48px;
-  margin: 0 auto 16px;
+  margin: 0 auto var(--space-4);
   display: grid;
   place-items: center;
   border-radius: var(--radius-lg);
@@ -247,22 +247,22 @@
 }
 
 .ab-files-drop-panel-title {
-  font-size: 18px;
+  font-size: var(--text-xl);
   font-weight: 600;
   color: var(--text);
   letter-spacing: -0.01em;
-  margin-bottom: 6px;
+  margin-bottom: var(--space-1_5);
 }
 
 .ab-files-drop-panel-sub {
-  font-size: 12.5px;
+  font-size: var(--text-xs);
   color: var(--text-dim);
 }
 
 .ab-files-drop-panel-sub code {
   font-family: var(--font-mono);
-  font-size: 11.5px;
-  padding: 1px 6px;
+  font-size: var(--text-2xs);
+  padding: 1px var(--space-1_5);
   border-radius: var(--radius-xs);
   background: var(--surface-hi);
   color: var(--text);
@@ -275,8 +275,8 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  padding: 64px 32px;
+  gap: var(--space-4);
+  padding: var(--space-16) var(--space-8);
   border: 1.5px dashed var(--border-strong);
   border-radius: var(--radius-lg);
   background: var(--surface);
@@ -314,23 +314,24 @@
 }
 
 .ab-files-empty-title {
-  font-size: 16px;
+  font-size: var(--text-lg);
   font-weight: 600;
   color: var(--text);
   letter-spacing: -0.01em;
 }
 
 .ab-files-empty-body {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--text-dim);
   max-width: 380px;
   line-height: 1.55;
+  margin-top: var(--space-1_5);
 }
 
 .ab-files-empty-body kbd {
   font-family: var(--font-mono);
-  font-size: 11px;
-  padding: 1px 6px;
+  font-size: var(--text-2xs);
+  padding: 1px var(--space-1_5);
   border-radius: var(--radius-xs);
   background: var(--surface-hi);
   border: 1px solid var(--border);
@@ -340,14 +341,14 @@
 /* ─── Filtered-empty (search returned nothing) ────────────────────── */
 
 .ab-files-no-match {
-  padding: 36px 16px;
+  padding: 36px var(--space-4);
   text-align: center;
-  font-size: 12.5px;
+  font-size: var(--text-xs);
   color: var(--text-dim);
 }
 
 .ab-files-no-match button {
-  margin-left: 6px;
+  margin-left: var(--space-1_5);
   background: transparent;
   border: none;
   color: var(--accent-300, var(--accent-400));
@@ -434,15 +435,15 @@
  * chunks · relative time. Tabular numerics so columns of facts line
  * up vertically across rows when scanning. */
 .ab-files-row-meta {
-  margin-top: 6px;
-  font-size: 11.5px;
+  margin-top: var(--space-1_5);
+  font-size: var(--text-2xs);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
   /* `inline-flex` instead of `block` so the row meta sits in a single
    * baseline line even when the description above it wraps. */
   display: inline-flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: var(--space-1_5);
   align-items: baseline;
 }
 
@@ -471,9 +472,9 @@
 .ab-files-retry {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 3px 8px;
-  font-size: 11px;
+  gap: var(--space-1);
+  padding: 3px var(--space-2);
+  font-size: var(--text-2xs);
   font-weight: 500;
   color: var(--danger);
   background: var(--danger-bg);
@@ -493,7 +494,7 @@
 /* ─── Error tooltip text shown under the row title ────────────────── */
 
 .ab-files-error-text {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--danger);
   line-height: 1.45;
   display: -webkit-box;
@@ -508,8 +509,8 @@
 .ab-files-desc {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 2px;
+  gap: var(--space-1_5);
+  margin-top: var(--space-0_5);
   width: 100%;
   /* The editor takes the row's middle column; nudge it left to align
    * the textarea text with the title baseline above it. */
@@ -521,9 +522,9 @@
   resize: none;
   min-height: 72px;
   max-height: 240px;
-  padding: 10px 12px;
+  padding: var(--space-2_5) var(--space-3);
   font-family: var(--font-sans);
-  font-size: 12.5px;
+  font-size: var(--text-xs);
   line-height: 1.55;
   color: var(--text);
   background: var(--surface-hi);
@@ -544,20 +545,20 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: var(--space-3);
   flex-wrap: wrap;
 }
 
 .ab-files-desc-hint {
-  font-size: 11px;
+  font-size: var(--text-2xs);
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .ab-files-desc-hint kbd {
   font-family: var(--font-mono);
-  font-size: 10.5px;
-  padding: 1px 5px;
+  font-size: var(--text-3xs);
+  padding: 1px var(--space-1_5);
   border-radius: var(--radius-xs);
   background: var(--surface);
   border: 1px solid var(--border);
@@ -566,7 +567,7 @@
 
 .ab-files-desc-hint .ab-files-desc-count {
   font-family: var(--font-mono);
-  margin-left: 8px;
+  margin-left: var(--space-2);
 }
 
 .ab-files-desc-hint .ab-files-desc-count.is-warn {
@@ -575,12 +576,12 @@
 
 .ab-files-desc-actions {
   display: inline-flex;
-  gap: 6px;
+  gap: var(--space-1_5);
 }
 
 .ab-files-desc-btn {
-  padding: 4px 10px;
-  font-size: 11.5px;
+  padding: var(--space-1) var(--space-2_5);
+  font-size: var(--text-2xs);
   font-weight: 500;
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -612,6 +613,26 @@
   border-color: var(--border-strong);
 }
 
+/* Clickable description sub-line. `cursor: text` signals the field is
+ * editable; the is-placeholder variant dims the hint copy without
+ * relying on an inline opacity. */
+.ab-files-row-sub--edit {
+  cursor: text;
+}
+
+.ab-files-row-sub--placeholder {
+  font-style: italic;
+  color: var(--text-muted);
+}
+
+/* Inline-flex span that wraps each meta part so they align on the same
+ * baseline row. Replaces the `style={{ display: 'inline-flex', gap: 6 }}`
+ * one-off. */
+.ab-files-row-meta-part {
+  display: inline-flex;
+  gap: var(--space-1_5);
+}
+
 /* While editing, the meta column (pill, retry, kebab, size/time
  * facts) wraps below the textarea and stacks vertically, ballooning
  * the row height to nothing useful. The operator's focus is on the
@@ -621,15 +642,15 @@
  * paused during editing anyway. */
 .ab-list-row.is-files-row.is-files-editing {
   align-items: flex-start;
-  padding-top: 12px;
-  padding-bottom: 12px;
+  padding-top: var(--space-3);
+  padding-bottom: var(--space-3);
 }
 
 .ab-list-row.is-files-row.is-files-editing .ab-glyph {
   /* The glyph is normally centered vertically with the single-line
    * subtitle; in edit mode the row grows downward with the textarea,
    * so align the glyph to the title baseline instead. */
-  margin-top: 2px;
+  margin-top: var(--space-0_5);
 }
 
 .ab-list-row.is-files-row.is-files-editing .ab-list-row-meta {

@@ -12,13 +12,7 @@
  * Open delay: 500 ms. Close delay: 100 ms.
  */
 
-import {
-  useEffect,
-  useId,
-  useRef,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 type Side = 'top' | 'bottom' | 'left' | 'right'
@@ -150,13 +144,16 @@ export function Tooltip({
               border: '1px solid var(--border-strong)',
               borderRadius: 'var(--radius-sm)',
               boxShadow: 'var(--shadow-2)',
-              padding: '5px 9px',
-              fontSize: 12,
+              padding: 'var(--space-1_5) var(--space-2_5)',
+              fontSize: 'var(--text-xs)',
               lineHeight: 1.4,
               whiteSpace: 'nowrap',
               pointerEvents: 'none',
+              /* 200: above .ab-sheet-backdrop(100)+sheet(101)+modal(102).
+               * --z-tooltip (80) undershots the shell.css backdrop layer;
+               * keep 200 until the backdrop migrates to --z-overlay. */
               zIndex: 200,
-              animation: 'ab-tooltip-in 120ms var(--ease-out)',
+              animation: 'ab-tooltip-in var(--dur-1) var(--ease-out)',
             }}
           >
             {label}

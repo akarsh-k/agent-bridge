@@ -42,7 +42,10 @@ export function ContextMenu({
           e.preventDefault()
           // Clamp to viewport so the menu doesn't render off-screen.
           const x = Math.min(e.clientX, window.innerWidth - 200)
-          const y = Math.min(e.clientY, window.innerHeight - 12 - items.length * 36)
+          const y = Math.min(
+            e.clientY,
+            window.innerHeight - 12 - items.length * 36,
+          )
           setPos({ x, y })
         }}
         style={{ display: 'contents' }}
@@ -61,9 +64,9 @@ export function ContextMenu({
             border: '1px solid var(--border-strong)',
             borderRadius: 'var(--radius)',
             boxShadow: 'var(--shadow-2)',
-            padding: 4,
+            padding: 'var(--space-1)',
             minWidth: 160,
-            zIndex: 60,
+            zIndex: 60 /* --z-popover */,
             animation: 'ab-fadeup 120ms var(--ease-out)',
           }}
         >
@@ -73,30 +76,11 @@ export function ContextMenu({
               type="button"
               role="menuitem"
               disabled={item.disabled}
+              className={`ab-menu-item${item.destructive ? ' ab-menu-item-danger' : ''}`}
               onClick={() => {
                 setPos(null)
                 item.onClick()
               }}
-              style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                padding: '7px 10px',
-                borderRadius: 7,
-                background: 'transparent',
-                border: 'none',
-                color: item.destructive ? 'var(--danger)' : 'var(--text)',
-                fontSize: 13,
-                cursor: item.disabled ? 'not-allowed' : 'pointer',
-                opacity: item.disabled ? 0.5 : 1,
-                font: 'inherit',
-              }}
-              onMouseEnter={(e) =>
-                (e.currentTarget.style.background = 'var(--surface-hover)')
-              }
-              onMouseLeave={(e) =>
-                (e.currentTarget.style.background = 'transparent')
-              }
             >
               {item.label}
             </button>

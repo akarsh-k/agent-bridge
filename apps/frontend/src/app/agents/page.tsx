@@ -159,7 +159,7 @@ export function AgentsListPage() {
                   onDelete={async () => {
                     if (
                       !(await confirmDialog({
-                        title: `Delete agent “${a.name}”?`,
+                        title: `Delete agent "${a.name}"?`,
                         body: 'All chat history, skills, and bridge tools tied to this agent are removed. This cannot be undone.',
                         confirmLabel: 'Delete agent',
                         destructive: true,
@@ -241,7 +241,7 @@ function AgentCard({
           <div className={`ab-glyph ab-glyph-${agentGlyphKind(agent.id)}`}>
             {(agent.name ?? 'A').charAt(0).toUpperCase()}
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="ab-agent-head-text">
             <div className="ab-agent-name">{agent.name}</div>
             <div className="ab-agent-slug">{agent.slug}</div>
           </div>
@@ -257,9 +257,7 @@ function AgentCard({
         </div>
         <div className="ab-agent-body">
           {agent.description?.trim() || (
-            <span style={{ color: 'var(--text-muted)' }}>
-              No description yet.
-            </span>
+            <span className="ab-agent-body-empty">No description yet.</span>
           )}
         </div>
       </Link>

@@ -40,20 +40,7 @@ type SystemToolsState =
 // Small uppercase caption that separates the operator-authored rows
 // from the always-attached built-in rows inside a Tools / Skills card.
 function BuiltInSubhead() {
-  return (
-    <div
-      style={{
-        margin: '18px 4px 8px',
-        fontSize: 11,
-        fontWeight: 600,
-        letterSpacing: '0.06em',
-        textTransform: 'uppercase',
-        color: 'var(--text-muted)',
-      }}
-    >
-      Built-in
-    </div>
-  )
+  return <div className="ab-builtin-subhead">Built-in</div>
 }
 
 // Pull a one-line summary out of a tool description so the System
@@ -97,8 +84,7 @@ export function ToolsTab({ agentId }: { agentId: string }) {
     if (!agent || enabling) return
     const ok = await confirmDialog({
       title: 'Enable Inspector toolkit?',
-      body:
-        'This attaches the six built-in wrappers (find / trace / impact / debug / understand / list) and the IDE-facing tool will switch to <slug>__inspect_codebase. Requires an embedding provider in the workspace if you have repos attached.',
+      body: 'This attaches the six built-in wrappers (find / trace / impact / debug / understand / list) and the IDE-facing tool will switch to <slug>__inspect_codebase. Requires an embedding provider in the workspace if you have repos attached.',
       confirmLabel: 'Enable',
     })
     if (!ok) return
@@ -156,10 +142,7 @@ export function ToolsTab({ agentId }: { agentId: string }) {
   const renderSystemRows = () => {
     if (systemTools.status === 'loading') {
       return (
-        <div
-          className="ab-list-row"
-          style={{ opacity: 0.6, fontSize: 13, color: 'var(--text-dim)' }}
-        >
+        <div className="ab-list-row is-static" style={{ opacity: 0.6 }}>
           <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
             <ToolIcon />
           </div>
@@ -171,13 +154,15 @@ export function ToolsTab({ agentId }: { agentId: string }) {
     }
     if (systemTools.status === 'error') {
       return (
-        <div className="ab-list-row" style={{ fontSize: 13 }}>
+        <div className="ab-list-row is-static">
           <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
             <ToolIcon />
           </div>
           <div className="ab-list-row-head">
-            <div className="ab-list-row-title">Built-in tools (unavailable)</div>
-            <div className="ab-list-row-sub" style={{ color: 'var(--warn)' }}>
+            <div className="ab-list-row-title">
+              Built-in tools (unavailable)
+            </div>
+            <div className="ab-list-row-sub ab-list-row-error">
               {systemTools.message}
             </div>
           </div>
@@ -202,22 +187,17 @@ export function ToolsTab({ agentId }: { agentId: string }) {
       const hasMore = summary !== t.description.trim() || Boolean(t.mountWhen)
       const isExpanded = expandedSystemTool === t.name
       return (
-        <div key={t.name}>
+        <div
+          key={t.name}
+          className="ab-system-tool"
+          style={groupDimmed ? { opacity: 0.6 } : undefined}
+        >
           <button
             type="button"
-            className="ab-list-row"
+            className="ab-system-tool-summary"
             onClick={hasMore ? () => toggleSystemTool(t.name) : undefined}
             disabled={!hasMore}
             aria-expanded={hasMore ? isExpanded : undefined}
-            style={{
-              width: '100%',
-              background: 'transparent',
-              border: 'none',
-              font: 'inherit',
-              textAlign: 'left',
-              cursor: hasMore ? 'pointer' : 'default',
-              opacity: groupDimmed ? 0.6 : 1,
-            }}
           >
             <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
               <ToolIcon />
@@ -230,13 +210,8 @@ export function ToolsTab({ agentId }: { agentId: string }) {
               <Pill kind="accent">Built-in</Pill>
               {hasMore && (
                 <span
-                  className="ab-row-affordance"
+                  className="ab-row-affordance ab-system-tool-chevron"
                   aria-hidden="true"
-                  style={{
-                    transform: isExpanded ? 'rotate(180deg)' : undefined,
-                    transition: 'transform 160ms var(--ease-out)',
-                    display: 'inline-flex',
-                  }}
                 >
                   <ChevronDownIcon />
                 </span>
@@ -244,30 +219,23 @@ export function ToolsTab({ agentId }: { agentId: string }) {
             </div>
           </button>
           {isExpanded && (
-            <div
-              style={{
-                padding: '14px 18px 14px 62px',
-                fontSize: 13,
-                lineHeight: 1.55,
-                background: 'var(--surface-hi)',
-                borderTop: '1px solid var(--border)',
-                whiteSpace: 'pre-wrap',
-              }}
-            >
-              {t.description.trim()}
-              {t.mountWhen && (
-                <div
-                  style={{
-                    marginTop: 10,
-                    fontSize: 11.5,
-                    color: 'var(--text-muted)',
-                    fontStyle: 'italic',
-                    whiteSpace: 'normal',
-                  }}
-                >
-                  {t.mountWhen}
-                </div>
-              )}
+            <div className="ab-system-tool-detail">
+              <pre>
+                {t.description.trim()}
+                {t.mountWhen && (
+                  <>
+                    {'\n\n'}
+                    <span
+                      style={{
+                        fontStyle: 'italic',
+                        color: 'var(--text-muted)',
+                      }}
+                    >
+                      {t.mountWhen}
+                    </span>
+                  </>
+                )}
+              </pre>
             </div>
           )}
         </div>
@@ -284,24 +252,9 @@ export function ToolsTab({ agentId }: { agentId: string }) {
         {builtinRows.length > 0 && (
           <>
             {inspectorRows.length > 0 && (
-              <div
-                style={{
-                  padding: '10px 18px 6px',
-                  fontSize: 10.5,
-                  fontWeight: 600,
-                  letterSpacing: '0.12em',
-                  textTransform: 'uppercase',
-                  color: 'var(--text-muted)',
-                  borderTop: '1px solid var(--border)',
-                  background: 'var(--surface)',
-                }}
-              >
-                Workspace built-ins
-              </div>
+              <div className="ab-list-group-divider">Workspace built-ins</div>
             )}
-            <div>
-              {builtinRows.map((t) => renderRow(t, false))}
-            </div>
+            <div>{builtinRows.map((t) => renderRow(t, false))}</div>
           </>
         )}
       </div>
@@ -314,7 +267,7 @@ export function ToolsTab({ agentId }: { agentId: string }) {
   const renderInactiveRows = () => (
     <div className="ab-card ab-list-card" style={{ opacity: 0.85 }}>
       {tools.map((t) => (
-        <div className="ab-list-row" key={t.id} style={{ cursor: 'default' }}>
+        <div className="ab-list-row is-static" key={t.id}>
           <div className="ab-glyph ab-glyph-violet ab-glyph-sm">
             <ToolIcon />
           </div>
@@ -354,12 +307,12 @@ export function ToolsTab({ agentId }: { agentId: string }) {
             <>
               <div
                 className="ab-field-help"
-                style={{ marginBottom: 8, fontStyle: 'italic' }}
+                style={{ marginBottom: 'var(--space-2)', fontStyle: 'italic' }}
               >
                 The {tools.length} tool{tools.length === 1 ? '' : 's'} below
                 {tools.length === 1 ? ' was' : ' were'} authored before
-                native-tool support was deferred. They're persisted but
-                not currently mounted on the agent.
+                native-tool support was deferred. They're persisted but not
+                currently mounted on the agent.
               </div>
               {renderInactiveRows()}
             </>
@@ -374,10 +327,13 @@ export function ToolsTab({ agentId }: { agentId: string }) {
               <div className="ab-list-row-head">
                 <div className="ab-list-row-title">Inspector toolkit</div>
                 <div className="ab-list-row-sub">
-                  Six wrappers for codebase Q&A: find_in_codebase,
-                  trace_flow, assess_change_impact, debug_help,
-                  understand_module, list_repos. Switches the IDE-facing
-                  tool to <span className="ab-mono">&lt;slug&gt;__inspect_codebase</span>.
+                  Six wrappers for codebase Q&A: find_in_codebase, trace_flow,
+                  assess_change_impact, debug_help, understand_module,
+                  list_repos. Switches the IDE-facing tool to{' '}
+                  <span className="ab-mono">
+                    &lt;slug&gt;__inspect_codebase
+                  </span>
+                  .
                 </div>
               </div>
               <div className="ab-list-row-meta">
@@ -406,15 +362,14 @@ export function ToolsTab({ agentId }: { agentId: string }) {
           title="Tools"
           sub={
             <>
-              {systemToolCount} built-in · the inspector wrappers query
-              attached repos (auto-mounted when this agent has at least
-              one indexed repo), plus workspace-level tools like{' '}
-              <code className="ab-mono">search_knowledge</code> for
-              uploaded files and{' '}
-              <code className="ab-mono">read_skill</code> for
-              lazy-loaded skills. Expand a row for the full description
-              and mount condition. For tools the IDE calls into the
-              agent, see the <strong>Bridge tools</strong> tab.
+              {systemToolCount} built-in · the inspector wrappers query attached
+              repos (auto-mounted when this agent has at least one indexed
+              repo), plus workspace-level tools like{' '}
+              <code className="ab-mono">search_knowledge</code> for uploaded
+              files and <code className="ab-mono">read_skill</code> for
+              lazy-loaded skills. Expand a row for the full description and
+              mount condition. For tools the IDE calls into the agent, see the{' '}
+              <strong>Bridge tools</strong> tab.
             </>
           }
           glyph={<ToolIcon width={18} height={18} strokeWidth={1.7} />}
@@ -424,11 +379,11 @@ export function ToolsTab({ agentId }: { agentId: string }) {
         {readyRepos.length === 0 && systemTools.status === 'ready' && (
           <div
             className="ab-field-help"
-            style={{ marginBottom: 10, color: 'var(--warn)' }}
+            style={{ marginBottom: 'var(--space-2_5)', color: 'var(--warn)' }}
           >
-            No indexed repositories attached. The built-in tools below
-            are listed for reference but won't have data to query until
-            at least one repo finishes indexing.
+            No indexed repositories attached. The built-in tools below are
+            listed for reference but won't have data to query until at least one
+            repo finishes indexing.
           </div>
         )}
 
@@ -446,12 +401,12 @@ export function ToolsTab({ agentId }: { agentId: string }) {
           <>
             <div
               className="ab-field-help"
-              style={{ marginBottom: 8, fontStyle: 'italic' }}
+              style={{ marginBottom: 'var(--space-2)', fontStyle: 'italic' }}
             >
               The {tools.length} tool{tools.length === 1 ? '' : 's'} below
               {tools.length === 1 ? ' was' : ' were'} authored before
-              native-tool support was deferred. They're persisted but
-              not currently mounted on the agent.
+              native-tool support was deferred. They're persisted but not
+              currently mounted on the agent.
             </div>
             {renderInactiveRows()}
             <BuiltInSubhead />

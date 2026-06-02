@@ -20,6 +20,7 @@ import {
   matchLibraryRepos,
   matchLogs,
   matchOAuthCallback,
+  matchDesign,
   matchSettings,
   navigate,
   usePathname,
@@ -49,6 +50,7 @@ import { BridgePage } from './bridge/page'
 import { LogsPage } from './logs/page'
 import { SettingsPage } from './settings/page'
 import { OAuthCallbackPage } from './oauth/callback/page'
+import { DesignShowcase } from './_design/page'
 
 function RouterOutlet() {
   const path = usePathname()
@@ -79,6 +81,7 @@ function RouterOutlet() {
     if (matchBridge(path)) return { kind: 'bridge' as const }
     if (matchLogs(path)) return { kind: 'logs' as const }
     if (matchSettings(path)) return { kind: 'settings' as const }
+    if (matchDesign(path)) return { kind: 'design' as const }
     return { kind: 'not-found' as const }
   }, [path])
 
@@ -141,6 +144,8 @@ function RouterOutlet() {
         return [{ label: 'Workspace', to: '/' }, { label: 'Logs' }]
       case 'settings':
         return [{ label: 'Workspace', to: '/' }, { label: 'Settings' }]
+      case 'design':
+        return [{ label: 'Workspace', to: '/' }, { label: 'Design language' }]
       default:
         return [{ label: 'Not found' }]
     }
@@ -151,14 +156,7 @@ function RouterOutlet() {
       <>
         <Topbar crumbs={[{ label: 'Loading…' }]} />
         <div className="ab-page">
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              color: 'var(--text-dim)',
-            }}
-          >
+          <div className="ab-loading-row">
             <span className="ab-pulse-dot" />
             Loading workspace…
           </div>
@@ -195,14 +193,18 @@ function RouterOutlet() {
       {route.kind === 'bridge' && <BridgePage />}
       {route.kind === 'logs' && <LogsPage />}
       {route.kind === 'settings' && <SettingsPage />}
+      {route.kind === 'design' && <DesignShowcase />}
       {route.kind === 'not-found' && (
         <div className="ab-page">
           <div className="ab-card ab-card-pad">
             <div className="ab-section-title">Page not found</div>
-            <div className="ab-section-sub" style={{ marginTop: 4 }}>
+            <div
+              className="ab-section-sub"
+              style={{ marginTop: 'var(--space-1)' }}
+            >
               <code className="ab-mono">{path}</code> doesn't match any route.
             </div>
-            <div style={{ marginTop: 12 }}>
+            <div style={{ marginTop: 'var(--space-3)' }}>
               <button
                 type="button"
                 className="ab-btn ab-btn-secondary"
@@ -257,10 +259,7 @@ export function AppLayout() {
 function AppGrid() {
   const { override } = useSidebarState()
   return (
-    <div
-      className="ab-app"
-      data-sidebar={override ?? undefined}
-    >
+    <div className="ab-app" data-sidebar={override ?? undefined}>
       <Sidebar />
       <main className="ab-main">
         <RouterOutlet />

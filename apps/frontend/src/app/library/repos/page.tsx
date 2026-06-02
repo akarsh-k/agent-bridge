@@ -7,11 +7,7 @@ import { Pill, type PillKind } from '../../../ui/pill'
 import { EmptyState } from '../../../ui/empty'
 import { BrandGlyph } from '../../../ui/brand-glyph'
 import { RowMenu } from '../../../ui/row-menu'
-import {
-  ChevronRightIcon,
-  PlusIcon,
-  ReposIcon,
-} from '../../../ui/icons'
+import { ChevronRightIcon, PlusIcon, ReposIcon } from '../../../ui/icons'
 import { RepoCreateSheet } from '../../../features/library/repo-create-sheet'
 import { confirmDialog } from '../../../ui/dialog-store'
 import { LibraryAttachNote } from '../../../ui/library-attach-note'
@@ -21,7 +17,10 @@ import { ApiError } from '../../../lib/rpc'
 // Dot only on truly live, in-flight states (`cloning`, `pulling`,
 // `indexing`); the terminal labels (`pending`, `cloned`, `ready`,
 // `error`) stay static so the row reads as resolved at a glance.
-const STATUS_PILL: Record<string, { kind: PillKind; label: string; dot?: boolean }> = {
+const STATUS_PILL: Record<
+  string,
+  { kind: PillKind; label: string; dot?: boolean }
+> = {
   pending: { kind: 'neutral', label: 'Pending' },
   cloning: { kind: 'warn', label: 'Cloning', dot: true },
   cloned: { kind: 'neutral', label: 'Cloned' },
@@ -38,7 +37,7 @@ export function ReposPage() {
   const remove = async (id: string, label: string) => {
     if (
       !(await confirmDialog({
-        title: `Delete repo “${label}”?`,
+        title: `Delete repo "${label}"?`,
         body: 'Agents using it lose the attachment. The local clone is removed too.',
         confirmLabel: 'Delete repository',
         destructive: true,
@@ -105,7 +104,9 @@ export function ReposPage() {
               >
                 <BrandGlyph kind="github" />
                 <div className="ab-list-row-head">
-                  <div className="ab-list-row-title">{shortRepoName(r.remoteUrl)}</div>
+                  <div className="ab-list-row-title">
+                    {shortRepoName(r.remoteUrl)}
+                  </div>
                   <div className="ab-list-row-sub ab-mono">
                     {r.remoteUrl} · {r.branch}
                   </div>

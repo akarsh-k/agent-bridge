@@ -49,14 +49,14 @@ export function SectionHead({
         display: 'flex',
         alignItems: 'flex-start',
         justifyContent: 'space-between',
-        gap: 12,
+        gap: 'var(--space-3)',
       }}
     >
       <div
         style={{
           display: 'flex',
           alignItems: 'center',
-          gap: 14,
+          gap: 'var(--space-3)',
           minWidth: 0,
         }}
       >
@@ -65,11 +65,10 @@ export function SectionHead({
             aria-hidden="true"
             style={{
               width: 3,
-              height: 36,
+              height: 'calc(var(--space-8) + var(--space-1))',
               flexShrink: 0,
-              borderRadius: 999,
-              background: `linear-gradient(to bottom, ${color} 0%, ${color} 55%, color-mix(in srgb, ${color} 30%, transparent) 100%)`,
-              boxShadow: `0 0 14px 0 color-mix(in srgb, ${color} 35%, transparent)`,
+              borderRadius: 'var(--radius-pill)',
+              background: color,
             }}
           />
         )}
@@ -90,12 +89,7 @@ export function SectionHead({
           </span>
         )}
         <div style={{ minWidth: 0 }}>
-          <div
-            className="ab-section-title"
-            style={{ letterSpacing: '-0.01em' }}
-          >
-            {title}
-          </div>
+          <div className="ab-section-title">{title}</div>
           <div className="ab-section-sub">{sub}</div>
         </div>
       </div>
