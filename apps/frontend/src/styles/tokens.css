@@ -164,15 +164,20 @@
   --space-12: 48px;
   --space-16: 64px;
 
-  /* Z-index scale — replaces the ad-hoc 1…200 integers, in semantic order. */
+  /* Z-index scale. The app's floating layers (backdrops, sheets, modals,
+   * popovers) historically use hardcoded values in the 100–200 band; these
+   * tokens sit ABOVE that band so a token-driven overlay (a menu, a nested
+   * "view JSON" modal opened over the run-detail modal, the notification
+   * flyout) always renders on top of it rather than behind. Page chrome
+   * (sticky header, sidebar) stays below the content. */
   --z-sticky: 10;
   --z-sidebar: 20;
-  --z-dropdown: 30;
-  --z-overlay: 40;
-  --z-modal: 50;
-  --z-popover: 60;
-  --z-toast: 70;
-  --z-tooltip: 80;
+  --z-dropdown: 300;
+  --z-overlay: 400;
+  --z-modal: 500;
+  --z-popover: 600;
+  --z-toast: 700;
+  --z-tooltip: 800;
 
   /* Info — a fixed sky-blue, distinct from the user-chosen accent, for
    * info-level signals. Replaces the orphan cyan literal (#38bdf8) hardcoded

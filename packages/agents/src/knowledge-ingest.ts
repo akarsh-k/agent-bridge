@@ -53,10 +53,7 @@ import {
 } from '@agent-bridge/shared'
 
 import { resolveBaseUrl } from './build-agent.js'
-import {
-  ensureFileChunksDim,
-  FileChunksDimMismatch,
-} from './knowledge-dim.js'
+import { ensureFileChunksDim, FileChunksDimMismatch } from './knowledge-dim.js'
 
 // ─── Public surface ──────────────────────────────────────────────────────
 
@@ -100,9 +97,7 @@ export async function ingestKnowledgeFile(
   }
 }
 
-async function ingestInner(
-  input: IngestKnowledgeFileInput,
-): Promise<void> {
+async function ingestInner(input: IngestKnowledgeFileInput): Promise<void> {
   const { db, fileId, publish } = input
   const startedAt = Date.now()
   const emit = makeIngestEmit(fileId, publish)
@@ -216,9 +211,9 @@ async function ingestInner(
     const extracted = await extractText(file)
     if (!extracted.text.trim()) {
       await fail(
-        "This PDF has no selectable text. It looks like a scanned image. " +
-          "Run it through an OCR tool (Acrobat, ocrmypdf, or Preview) so " +
-          "the pages get a text layer, then upload again.",
+        'This PDF has no selectable text. It looks like a scanned image. ' +
+          'Run it through an OCR tool (Acrobat, ocrmypdf, or Preview) so ' +
+          'the pages get a text layer, then upload again.',
       )
       return
     }
@@ -232,13 +227,17 @@ async function ingestInner(
         .set({ pageCount: extracted.pageCount })
         .where(eq(schema.files.id, fileId))
     }
-    const text = extracted.text
+    // Strip NUL bytes the extractor may have carried out of a malformed
+    // PDF / OCR layer. They're meaningless in document text and Postgres
+    // rejects them on insert, so clean once here — every chunk, section
+    // path, embedding input, and the auto-description derive from `text`.
+    const text = stripNul(extracted.text)
 
     // ── Chunk ──────────────────────────────────────────────────────────
     await transition('chunking')
-    const mode = (file.chunkingMode === 'hierarchical'
-      ? 'hierarchical'
-      : 'flat') as 'flat' | 'hierarchical'
+    const mode = (
+      file.chunkingMode === 'hierarchical' ? 'hierarchical' : 'flat'
+    ) as 'flat' | 'hierarchical'
     const plan = chunkDocument({
       text,
       kind: file.kind,
@@ -287,12 +286,14 @@ async function ingestInner(
               sectionPath: c.sectionPath,
               page: c.page,
             }))
-      contextBlurbs = await maybeGenerateContextBlurbs({
-        db,
-        fileName: file.name,
-        docPreview: text.slice(0, 2000),
-        chunks: targets,
-      })
+      contextBlurbs = (
+        await maybeGenerateContextBlurbs({
+          db,
+          fileName: file.name,
+          docPreview: text.slice(0, 2000),
+          chunks: targets,
+        })
+      ).map(stripNul)
     }
 
     // ── Embed + write ─────────────────────────────────────────────────
@@ -343,7 +344,7 @@ async function ingestInner(
     if (description) {
       await db.db
         .update(schema.files)
-        .set({ description })
+        .set({ description: stripNul(description) })
         .where(eq(schema.files.id, fileId))
     }
 
@@ -400,11 +401,7 @@ function formatIngestError(err: unknown): string {
     parts.push(`body="${e.responseBody.slice(0, 400)}"`)
   }
   // For wrapped errors that aren't APICallError but carry a cause.
-  if (
-    e.cause instanceof Error &&
-    e.cause.message &&
-    e.cause.message !== base
-  ) {
+  if (e.cause instanceof Error && e.cause.message && e.cause.message !== base) {
     parts.push(`cause=${e.cause.message}`)
   }
   // Detect the most common misconfiguration: the embedder is returning
@@ -546,9 +543,7 @@ function stripPdfChrome(pages: ReadonlyArray<string>): string {
     lines
       .filter(
         (line) =>
-          line.length > 0 &&
-          !chromeLines.has(line) &&
-          !isPageNumberLine(line),
+          line.length > 0 && !chromeLines.has(line) && !isPageNumberLine(line),
       )
       .join('\n'),
   )
@@ -682,9 +677,7 @@ function hierarchicalize(flat: ReadonlyArray<RawChunk>): ChunkPlan {
   return { mode: 'hierarchical', flat: [], parents, children }
 }
 
-function commonSectionAncestor(
-  bucket: ReadonlyArray<RawChunk>,
-): string | null {
+function commonSectionAncestor(bucket: ReadonlyArray<RawChunk>): string | null {
   const paths = bucket
     .map((c) => c.sectionPath)
     .filter((p): p is string => p !== null && p.length > 0)
@@ -1161,7 +1154,8 @@ async function tryAutoDescribe(args: {
   const agent = new Agent({
     id: `file-describer:${file.id}`,
     name: 'file-describer',
-    description: 'Generates a short description for an uploaded knowledge file.',
+    description:
+      'Generates a short description for an uploaded knowledge file.',
     instructions: '',
     model: modelConfig,
   })
@@ -1345,6 +1339,17 @@ function makeIngestEmit(
 
 // ─── Status helpers ─────────────────────────────────────────────────────
 
+/**
+ * Strip NUL (U+0000) before any text is persisted to Postgres. `text` /
+ * `varchar` columns reject 0x00 ("invalid byte sequence for encoding
+ * UTF8: 0x00"); it carries no meaning in document text and only shows up
+ * as binary noise from malformed PDFs / OCR output. Left unstripped it
+ * aborts the chunk insert — and then the error-recording write too.
+ */
+function stripNul(value: string): string {
+  return value.replace(/\0/g, '')
+}
+
 async function setStatus(
   db: AgentBridgeDb,
   fileId: string,
@@ -1363,7 +1368,7 @@ async function markError(
 ): Promise<void> {
   await db.db
     .update(schema.files)
-    .set({ ingestStatus: 'error', ingestError: message })
+    .set({ ingestStatus: 'error', ingestError: stripNul(message) })
     .where(eq(schema.files.id, fileId))
 }
 

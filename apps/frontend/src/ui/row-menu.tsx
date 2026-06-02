@@ -114,7 +114,9 @@ export function RowMenu({
               borderRadius: 'var(--radius)',
               boxShadow: 'var(--shadow-2)',
               padding: 'var(--space-1)',
-              zIndex: 70 /* --z-toast */,
+              // Portaled menu: must sit above page content AND any sheet/modal
+              // a triggering row lives inside (those use the 100–200 band).
+              zIndex: 'var(--z-popover)',
               animation: 'ab-fadeup 140ms var(--ease-out)',
             }}
           >

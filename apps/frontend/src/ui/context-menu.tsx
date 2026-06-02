@@ -66,7 +66,9 @@ export function ContextMenu({
             boxShadow: 'var(--shadow-2)',
             padding: 'var(--space-1)',
             minWidth: 160,
-            zIndex: 60 /* --z-popover */,
+            // Portaled menu: above page content AND any sheet/modal it opens
+            // within (those use the 100–200 band).
+            zIndex: 'var(--z-popover)',
             animation: 'ab-fadeup 120ms var(--ease-out)',
           }}
         >
