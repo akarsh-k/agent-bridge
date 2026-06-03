@@ -218,7 +218,7 @@ function AgentCard({
       <Link
         to={`/agents/${agent.id}`}
         className={
-          'ab-card ab-card-link ab-card-pad' +
+          'ab-card ab-card-link ab-card-pad ab-card-has-menu' +
           (featured ? ' ab-card-featured' : '')
         }
       >
@@ -231,7 +231,7 @@ function AgentCard({
         {!featured && !ready && (
           <div
             className="ab-agent-state ab-agent-state-draft"
-            title={`${remaining} setup step${remaining === 1 ? '' : 's'} remaining — open the agent to finish.`}
+            title={`${remaining} setup step${remaining === 1 ? '' : 's'} remaining. Open the agent to finish.`}
           >
             <span className="ab-agent-state-dot" aria-hidden="true" />
             {remaining} step{remaining === 1 ? '' : 's'} left
@@ -245,6 +245,13 @@ function AgentCard({
             <div className="ab-agent-name">{agent.name}</div>
             <div className="ab-agent-slug">{agent.slug}</div>
           </div>
+        </div>
+        <div className="ab-agent-body">
+          {agent.description?.trim() || (
+            <span className="ab-agent-body-empty">No description yet.</span>
+          )}
+        </div>
+        <div className="ab-card-menu">
           <RowMenu
             items={[
               {
@@ -254,11 +261,6 @@ function AgentCard({
               },
             ]}
           />
-        </div>
-        <div className="ab-agent-body">
-          {agent.description?.trim() || (
-            <span className="ab-agent-body-empty">No description yet.</span>
-          )}
         </div>
       </Link>
     </ContextMenu>

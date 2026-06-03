@@ -22,7 +22,7 @@ import type {
 } from '@agent-bridge/shared'
 import { stripPromptEnrichments } from '@agent-bridge/shared'
 import { Pill } from '../../ui/pill'
-import { ChatIcon, CloseIcon } from '../../ui/icons'
+import { ChatIcon, CheckIcon, CloseIcon, CopyIcon } from '../../ui/icons'
 import { Markdown } from '../../ui/markdown'
 import {
   ApiError,
@@ -807,15 +807,16 @@ function CollapsibleBody({
     <div className="ab-card ab-card-pad ab-form-section">
       <div
         className="ab-field-label-row"
-        style={{ marginBottom: 'var(--space-2)' }}
+        style={{ alignItems: 'center', marginBottom: 'var(--space-2)' }}
       >
         <span className="ab-field-label">{title}</span>
         <button
           type="button"
-          className="ab-inline-action"
+          className="ab-tool-chip"
           onClick={onCopy}
           title="Copy raw text"
         >
+          {copied ? <CheckIcon /> : <CopyIcon />}
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>

@@ -1144,6 +1144,66 @@
 [data-theme='light'] .ab-inline-action {
   color: var(--accent-500);
 }
+
+/* ---- Tool chips (code + data surfaces) ------------------------------------ */
+
+/* One quiet chip vocabulary for the small actions that sit on log payloads,
+ * run detail, and other code/data blocks (copy / view / wrap / expand / raw)
+ * so they read as a consistent toolbar instead of loose accent text links.
+ * Pairs with .ab-icon-btn for a modal's close. */
+.ab-tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1_5);
+  height: 24px;
+  padding: 0 var(--space-2_5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hi);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: var(--text-2xs);
+  font-weight: var(--fw-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out),
+    color var(--dur-1) var(--ease-out);
+}
+.ab-tool-chip svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+.ab-tool-chip:hover {
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+.ab-tool-chip:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 4px var(--border-focus);
+}
+/* Toggle "on" state (e.g. line wrap active) — accent tint, still restrained. */
+.ab-tool-chip.is-active {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--accent-300);
+}
+[data-theme='light'] .ab-tool-chip.is-active {
+  color: var(--accent-500);
+}
+/* Disclosure chevron that flips when its block is expanded. */
+.ab-tool-chip-chev {
+  transition: transform var(--dur-1) var(--ease-out);
+}
+.ab-tool-chip.is-open .ab-tool-chip-chev {
+  transform: rotate(180deg);
+}
+
 .ab-field-help {
   font-size: var(--text-xs);
   color: var(--text-muted);
@@ -1636,6 +1696,24 @@ button.ab-list-row {
   gap: var(--space-3);
   margin-bottom: var(--space-4);
 }
+
+/* ---- Card overflow menu (top-right corner) -------------------------------- */
+/* Pin the kebab to the card's corner so its position is identical across the
+ * grid, instead of riding the header down whenever a state badge is present. */
+.ab-card-has-menu {
+  position: relative;
+}
+.ab-card-menu {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  z-index: 1;
+}
+/* Reserve the corner so a long agent name never runs under the menu. */
+.ab-card-has-menu .ab-agent-head {
+  padding-right: var(--space-6);
+}
+
 .ab-agent-name {
   font-weight: 600;
   font-size: var(--text-lg);
@@ -2655,6 +2733,59 @@ button.ab-list-row {
   color: var(--text-dim);
   padding: var(--space-5) 0;
   font-size: var(--text-sm);
+}
+
+/* ---- Skeleton loading placeholders ---------------------------------------- */
+
+/* Theme-adaptive tint via color-mix, so blocks stay visible on white cards
+ * (in light theme --surface-hi/-raised collapse to near-white) and on dark
+ * cards alike, with no per-theme token upkeep. A highlight band sweeps. */
+.ab-skel {
+  display: block;
+  flex: none;
+  border-radius: var(--radius-sm);
+  background-image: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--text) 7%, transparent) 25%,
+    color-mix(in srgb, var(--text) 13%, transparent) 37%,
+    color-mix(in srgb, var(--text) 7%, transparent) 63%
+  );
+  background-size: 400% 100%;
+  animation: ab-skel-shimmer 1.4s ease infinite;
+}
+@keyframes ab-skel-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+/* Tab skeletons hold back ~120ms before fading in, so a fast (cached) chunk
+ * load swaps straight to content with no skeleton flash; a slow load eases
+ * the placeholder in. */
+.ab-tab-skeleton {
+  animation: ab-skel-appear 0.24s var(--ease-out) 0.12s both;
+}
+@keyframes ab-skel-appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ab-skel {
+    animation: none;
+    background-image: none;
+    background-color: color-mix(in srgb, var(--text) 9%, transparent);
+  }
+  .ab-tab-skeleton {
+    animation: none;
+  }
 }
 
 /* ---- Form sections (cards) ----------------------------------------------- */

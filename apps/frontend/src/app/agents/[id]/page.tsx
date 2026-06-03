@@ -24,6 +24,12 @@ import { AgentReadinessCard } from '../../../features/agent-builder/agent-readin
 import { AgentReadyCelebration } from '../../../features/agent-builder/agent-ready-celebration'
 import { hasCelebratedAgentReady } from '../../../features/agent-builder/agent-ready-celebration-flag'
 import { requestNavigation } from '../../../lib/nav-guard'
+import {
+  BridgeTabSkeleton,
+  ChatTabSkeleton,
+  ConfigureTabSkeleton,
+  ResourcesTabSkeleton,
+} from './tab-skeletons'
 // Code-split the heavier tabs: configure pulls in the build / memory
 // forms, resources pulls in the attached-resources panel + tools tab,
 // chat pulls in the run state machine + SSE plumbing.
@@ -232,7 +238,7 @@ export function AgentDetailPage({
     // guard, navigating to a freshly-created agent lands on "not
     // found" before the workspace refetch has populated the new row.
     if (status === 'loading') {
-      return <LoadingRow label="Loading agent…" inPage />
+      return <LoadingRow label="Loading agent…" />
     }
     return (
       <div className="ab-page">
@@ -354,22 +360,22 @@ export function AgentDetailPage({
       <Tabs value={tab} onChange={setTabAndUrl} tabs={TABS} />
 
       {tab === 'configure' && (
-        <Suspense fallback={<LoadingRow label="Loading…" />}>
+        <Suspense fallback={<ConfigureTabSkeleton />}>
           <ConfigureTab agentId={agent.id} />
         </Suspense>
       )}
       {tab === 'resources' && (
-        <Suspense fallback={<LoadingRow label="Loading…" />}>
+        <Suspense fallback={<ResourcesTabSkeleton />}>
           <ResourcesTab agentId={agent.id} />
         </Suspense>
       )}
       {tab === 'chat' && (
-        <Suspense fallback={<LoadingRow label="Loading…" />}>
+        <Suspense fallback={<ChatTabSkeleton />}>
           <ChatTab agentId={agent.id} initialThreadId={initialThreadId} />
         </Suspense>
       )}
       {tab === 'bridge' && (
-        <Suspense fallback={<LoadingRow label="Loading…" />}>
+        <Suspense fallback={<BridgeTabSkeleton />}>
           <BridgeToolsTab agentId={agent.id} />
         </Suspense>
       )}
@@ -378,21 +384,20 @@ export function AgentDetailPage({
 }
 
 /**
- * Shared "still working…" row: pulsing dot + dim label. Used by every
- * tab's Suspense fallback AND the page-level loading state. `inPage`
- * wraps in `.ab-page` so the top-level loading state inherits the
- * page's gutters; tab fallbacks don't need that since they render
- * inside the already-padded page container.
+ * Page-level loading state: a pulsing dot + dim label shown while the
+ * agent itself is still being fetched. Wrapped in `.ab-page` so it
+ * inherits the page gutters. (The lazy tab panels render the richer
+ * skeletons from `tab-skeletons.tsx` as their Suspense fallback.)
  */
-function LoadingRow({ label, inPage }: { label: string; inPage?: boolean }) {
-  const row = (
-    <div className="ab-loading-row">
-      <span className="ab-pulse-dot" />
-      {label}
+function LoadingRow({ label }: { label: string }) {
+  return (
+    <div className="ab-page">
+      <div className="ab-loading-row">
+        <span className="ab-pulse-dot" />
+        {label}
+      </div>
     </div>
   )
-  if (inPage) return <div className="ab-page">{row}</div>
-  return row
 }
 
 function MenuItem({

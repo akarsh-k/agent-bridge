@@ -25,6 +25,7 @@
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { CheckIcon, ChevronDownIcon, CloseIcon, CopyIcon } from '../../ui/icons'
 
 const LONG_STRING_PREVIEW = 280
 const NESTED_MAX_HEIGHT = 280
@@ -177,7 +178,7 @@ function CodebaseInspectionReportView({
   const toggle = (
     <button
       type="button"
-      className="ab-inline-action"
+      className="ab-tool-chip"
       onClick={() => setShowRaw((v) => !v)}
     >
       {showRaw ? 'Formatted' : 'Raw JSON'}
@@ -432,9 +433,10 @@ export function CopyJsonButton({ payload }: { payload: unknown }) {
     <button
       type="button"
       onClick={onCopy}
-      className="ab-inline-action"
+      className="ab-tool-chip"
       title="Copy raw payload JSON"
     >
+      {copied ? <CheckIcon /> : <CopyIcon />}
       {copied ? 'Copied' : 'Copy JSON'}
     </button>
   )
@@ -460,7 +462,7 @@ export function ViewJsonButton({ payload }: { payload: unknown }) {
         ref={triggerRef}
         type="button"
         onClick={() => setOpen(true)}
-        className="ab-inline-action"
+        className="ab-tool-chip"
         title="View full JSON"
       >
         View JSON
@@ -568,32 +570,42 @@ function JsonModal({
           >
             {json.length.toLocaleString()} chars
           </span>
-          <button
-            type="button"
-            onClick={() => setWrap((w) => !w)}
-            className="ab-inline-action"
-            title="Toggle line wrap"
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--space-1_5)',
+            }}
           >
-            {wrap ? 'No wrap' : 'Wrap'}
-          </button>
-          <button
-            type="button"
-            onClick={onCopy}
-            className="ab-inline-action"
-            title="Copy raw payload JSON"
-          >
-            {copied ? 'Copied' : 'Copy JSON'}
-          </button>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            className="ab-inline-action"
-            title="Close (Esc)"
-            aria-label="Close"
-          >
-            Close
-          </button>
+            <button
+              type="button"
+              onClick={() => setWrap((w) => !w)}
+              className={`ab-tool-chip${wrap ? ' is-active' : ''}`}
+              title="Toggle line wrap"
+              aria-pressed={wrap}
+            >
+              Wrap
+            </button>
+            <button
+              type="button"
+              onClick={onCopy}
+              className="ab-tool-chip"
+              title="Copy raw payload JSON"
+            >
+              {copied ? <CheckIcon /> : <CopyIcon />}
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+            <button
+              ref={closeRef}
+              type="button"
+              onClick={onClose}
+              className="ab-icon-btn"
+              title="Close (Esc)"
+              aria-label="Close"
+            >
+              <CloseIcon />
+            </button>
+          </div>
         </div>
         <pre
           style={{
@@ -746,9 +758,10 @@ function StringValue({ value }: { value: string }) {
       <button
         type="button"
         onClick={() => setExpanded((e) => !e)}
-        className="ab-inline-action"
-        style={{ marginTop: 'var(--space-1)' }}
+        className={`ab-tool-chip${expanded ? ' is-open' : ''}`}
+        style={{ marginTop: 'var(--space-1_5)' }}
       >
+        <ChevronDownIcon className="ab-tool-chip-chev" />
         {expanded
           ? 'Show less'
           : `Show all (${value.length.toLocaleString()} chars)`}
@@ -787,9 +800,10 @@ function NestedJson({ value }: { value: unknown }) {
         <button
           type="button"
           onClick={() => setExpanded((e) => !e)}
-          className="ab-inline-action"
-          style={{ marginTop: 'var(--space-1)' }}
+          className={`ab-tool-chip${expanded ? ' is-open' : ''}`}
+          style={{ marginTop: 'var(--space-1_5)' }}
         >
+          <ChevronDownIcon className="ab-tool-chip-chev" />
           {expanded
             ? 'Collapse'
             : `Expand (${json.length.toLocaleString()} chars)`}
