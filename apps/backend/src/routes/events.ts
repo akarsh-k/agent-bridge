@@ -2,7 +2,11 @@ import { zValidator } from '@hono/zod-validator'
 import { Hono } from 'hono'
 import { streamSSE } from 'hono/streaming'
 import { z } from 'zod'
-import { runEventSchema, type RunEvent } from '@agent-bridge/shared'
+import {
+  ALL_AGENTS_STREAM_ID,
+  runEventSchema,
+  type RunEvent,
+} from '@agent-bridge/shared'
 import { getEventBus } from '../event-bus.js'
 
 /**
@@ -31,13 +35,21 @@ export const eventsRouter = new Hono()
       async (stream) => {
         const bus = getEventBus()
 
-        const unsubscribe = await bus.subscribe(streamId, (event) => {
+        const onEvent = (event: RunEvent) => {
           void stream.writeSSE({
             event: event.kind,
             data: JSON.stringify(event),
             id: `${event.ts}`,
           })
-        })
+        }
+
+        // The aggregator sentinel pattern-subscribes to every `agent:*`
+        // channel so the browser opens ONE connection for all agents instead
+        // of one per agent (which saturates the HTTP/1.1 per-host cap).
+        const unsubscribe =
+          streamId === ALL_AGENTS_STREAM_ID
+            ? await bus.subscribeAllAgents(onEvent)
+            : await bus.subscribe(streamId, onEvent)
 
         stream.onAbort(() => {
           void unsubscribe().catch((err: unknown) => {

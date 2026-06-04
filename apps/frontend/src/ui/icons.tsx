@@ -100,7 +100,10 @@ export const CheckIcon = base(<polyline points="20 6 9 17 4 12" />)
 export const ArrowRightIcon = base(<path d="M5 12h14M13 6l6 6-6 6" />)
 export const PlayIcon = base(<polygon points="5 3 19 12 5 21 5 3" />)
 export const ChatIcon = base(
-  <path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+  <>
+    <path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4c0-1.1.9-2 2-2h8a2 2 0 0 1 2 2Z" />
+    <path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" />
+  </>,
 )
 export const CloseIcon = base(<path d="M18 6L6 18M6 6l12 12" />)
 export const TrashIcon = base(
@@ -171,7 +174,12 @@ export const ToolIcon = base(
 const filled = (children: React.ReactNode) =>
   function Icon(props: IProps) {
     return (
-      <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
+      <svg
+        viewBox="0 0 24 24"
+        fill="currentColor"
+        aria-hidden="true"
+        {...props}
+      >
         {children}
       </svg>
     )

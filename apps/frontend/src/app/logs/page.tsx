@@ -24,7 +24,7 @@ import type {
   RunStatus,
   WorkerJobListRow,
 } from '@agent-bridge/shared'
-import { agentStreamId } from '@agent-bridge/shared'
+import { ALL_AGENTS_STREAM_ID } from '@agent-bridge/shared'
 import { useWorkspace } from '../../lib/workspace-context'
 import {
   ApiError,
@@ -96,13 +96,13 @@ export function LogsPage() {
   const [runs, setRuns] = useState<readonly RunListRow[]>([])
   const [workerJobs, setWorkerJobs] = useState<readonly WorkerJobListRow[]>([])
   const [configEvents, setConfigEvents] = useState<readonly FeedRow[]>([])
-  const [loading, setLoading] = useState(false)
+  // Starts true so the first paint shows the loading state instead of a
+  // brief flash of the empty state before the initial fetch resolves.
+  const [loading, setLoading] = useState(true)
   const [err, setErr] = useState<string | null>(null)
   const [reloadTick, setReloadTick] = useState(0)
-  // Aggregate count of currently-open EventSource streams across all
-  // agents. Drives the "Streaming" pill in the page header. Each
-  // <AgentEventSink/> below reports its own connected state via the
-  // `onConnected` callback.
+  // Open/closed state of the single aggregated activity stream (0 or 1),
+  // reported by <AgentEventSink/> below. Drives the "Streaming" pill.
   const [connectedCount, setConnectedCount] = useState(0)
 
   const [agentFilter, setAgentFilter] = useState<Set<string>>(new Set())
@@ -331,14 +331,12 @@ export function LogsPage() {
               className={`ab-logs-live${connectedCount > 0 ? ' is-on' : ''}`}
               title={
                 connectedCount > 0
-                  ? `Listening to ${connectedCount} of ${agents.length} agent stream(s). New runs and config events refresh automatically.`
-                  : 'No SSE streams connected. Refresh to pull updates.'
+                  ? 'Live activity streaming. New runs and config changes refresh automatically.'
+                  : 'Live stream offline. Refresh to pull updates.'
               }
             >
               {connectedCount > 0 && <span className="ab-pulse-dot" />}
-              {connectedCount > 0
-                ? `Streaming · ${connectedCount}/${agents.length}`
-                : 'Offline'}
+              {connectedCount > 0 ? 'Streaming' : 'Offline'}
             </span>
             <Button
               variant="secondary"
@@ -351,14 +349,15 @@ export function LogsPage() {
           </>
         }
       />
-      {agents.map((a) => (
-        <AgentEventSink
-          key={a.id}
-          agentId={a.id}
-          onEvent={handleLiveEvent}
-          onConnectedChange={handleConnectedChange}
-        />
-      ))}
+      {/* ONE aggregated SSE stream for every agent's activity: the backend
+          pattern-subscribes to all `agent:*` channels and fans them out on a
+          single connection. This replaces the old one-EventSource-per-agent
+          fan-out, which saturated the browser's ~6-per-host HTTP/1.1
+          connection cap and starved the list/detail fetches. */}
+      <AgentEventSink
+        onEvent={handleLiveEvent}
+        onConnectedChange={handleConnectedChange}
+      />
 
       <FilterBar
         agents={agents}
@@ -872,29 +871,25 @@ function SourcePill({ source }: { source: RunSource }) {
 }
 
 /**
- * Headless SSE subscriber. One per attached agent; opens an
- * EventSource against `agentStreamId(agentId)`, forwards new events
- * via the `onEvent` callback, and reports connection lifecycle
- * (open/close) via `onConnectedChange(±1)` so the parent can show
- * a count without coordinating connection state itself.
+ * Headless SSE subscriber for the whole workspace's activity feed. Opens a
+ * single EventSource against the aggregator stream (`ALL_AGENTS_STREAM_ID`),
+ * which the backend pattern-subscribes to every `agent:*` channel — so this
+ * one connection carries every agent's run + config events. Forwards new
+ * events via `onEvent` and reports connection lifecycle via
+ * `onConnectedChange(±1)`.
  *
- * Caveat: the browser's per-host HTTP/1.1 EventSource limit is
- * around 6. Workspaces with > 6 attached agents will leave some
- * streams disconnected; the streaming pill reflects how many are
- * actually live ("Streaming · 6/12"). When this becomes a problem
- * the right fix is a server-side aggregator stream that fans out
- * every agent's events on one channel — out of scope here.
+ * Replaced an earlier one-EventSource-per-agent fan-out that saturated the
+ * browser's ~6-per-host HTTP/1.1 connection limit and starved the page's
+ * other fetches.
  */
 function AgentEventSink({
-  agentId,
   onEvent,
   onConnectedChange,
 }: {
-  agentId: string
   onEvent: (e: RunEvent) => void
   onConnectedChange: (delta: number) => void
 }) {
-  const { events, connected } = useSSE(agentStreamId(agentId), { cap: 50 })
+  const { events, connected } = useSSE(ALL_AGENTS_STREAM_ID, { cap: 200 })
   // Track last-pumped index so callbacks fire only on new events.
   // The hook's buffer is rolling (capped) so we use the highest ts
   // seen, not the array length.

@@ -830,6 +830,15 @@ export function agentStreamId(agentId: string): string {
   return `agent:${agentId}`
 }
 
+/**
+ * Sentinel streamId for the workspace-wide activity aggregator. The SSE route
+ * special-cases it to Redis pattern-subscribe every `agent:*` channel and fan
+ * them out on ONE connection, so the /logs page opens a single EventSource
+ * instead of one per agent — which would saturate the browser's HTTP/1.1
+ * per-host connection cap. Safe as a global tap because this is single-tenant.
+ */
+export const ALL_AGENTS_STREAM_ID = 'agents:all'
+
 // ─── `agent.config.changed` payload ──────────────────────────────────────
 
 /**

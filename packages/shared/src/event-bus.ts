@@ -38,6 +38,15 @@ export interface EventBus {
     streamId: string,
     handler: (event: RunEvent) => void,
   ) => Promise<() => Promise<void>>
+  /**
+   * Subscribe to EVERY per-agent channel at once via Redis pattern-subscribe
+   * (`agent:*`). Lets the /logs activity aggregator tail all agents over ONE
+   * SSE connection instead of one per agent. Same per-connection / close
+   * semantics as `subscribe`.
+   */
+  subscribeAllAgents: (
+    handler: (event: RunEvent) => void,
+  ) => Promise<() => Promise<void>>
   /** Close the shared publisher connection. */
   close: () => Promise<void>
 }
@@ -96,6 +105,50 @@ export function createEventBus(options: EventBusOptions): EventBus {
       return async () => {
         try {
           await subscriber.unsubscribe(streamChannel(streamId))
+        } finally {
+          subscriber.disconnect()
+        }
+      }
+    },
+    async subscribeAllAgents(handler) {
+      const subscriber = new Redis(redisUrl, {
+        ...redisOptions,
+        maxRetriesPerRequest: null,
+        enableReadyCheck: false,
+      })
+
+      subscriber.on('error', (err) => {
+        console.error('[event-bus:psub:agent:*] error:', err.message)
+      })
+
+      subscriber.on('pmessage', (_pattern, _channel, payload) => {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(payload)
+        } catch (err) {
+          console.error(
+            '[event-bus:psub:agent:*] bad JSON:',
+            (err as Error).message,
+          )
+          return
+        }
+        const result = runEventSchema.safeParse(parsed)
+        if (!result.success) {
+          console.error(
+            '[event-bus:psub:agent:*] invalid event:',
+            result.error.issues,
+          )
+          return
+        }
+        handler(result.data)
+      })
+
+      const pattern = `${STREAM_CHANNEL_PREFIX}agent:*`
+      await subscriber.psubscribe(pattern)
+
+      return async () => {
+        try {
+          await subscriber.punsubscribe(pattern)
         } finally {
           subscriber.disconnect()
         }
