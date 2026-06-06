@@ -1806,7 +1806,8 @@ working-memory + Jinja interaction on local templates.
 `agent-runs`, `agent-threads`, `agent-config-events`,
 `agent-mcp-tools`, `agent-repos`, `agent-files` (attach/detach
 workspace knowledge files), `agent-token-estimate`,
-`agent-working-memory`). Workspace-global resources
+`agent-working-memory`, `agent-scorecard` (retrieval scorecard,
+§12.8)). Workspace-global resources
 mount at the API root (`llm-providers`, `mcp-connections`, `repos`,
 `files` (knowledge document CRUD + ingest controls — see §12),
 `runs`, `worker-jobs`, `bridge`). Read-only system surface lives under
@@ -2084,7 +2085,48 @@ dispatched run (the pure-function smoke + direct library callers
 exercise this), so the tool runs silently with no telemetry surface
 in those contexts.
 
-### 12.8 Known limitations / deferred
+### 12.8 Retrieval scorecard
+
+An operator-driven eval for §12.3: does retrieval surface the right
+passage, and did a change help or hurt? The operator writes a golden
+set (query → answer-bearing snippets) once, runs it through the same
+vector / BM25 / RRF / rerank primitives `search_knowledge` uses, and
+reads a per-strategy scorecard. Per-agent, on the agent's **Scorecard**
+tab; engine in `packages/agents/src/knowledge-eval.ts:runScorecard`.
+
+**Schema** (both `agent_id` FK cascade):
+
+| Table               | Role                                                                                                                                                                                |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scorecard_queries` | The golden set. `query`, `expected_snippets` (jsonb `string[]`), `expected_page` (nullable fallback), `note`, `position`. Saved whole-list (replace-all), the way the editor authors it. |
+| `scorecard_runs`    | One row per run, aggregate scores only. `top_k`, `query_count`, `judged_count`, `embedding_model`, `duration_ms`, `strategy_ids`, `aggregates` (jsonb), `is_baseline`, `label`. Index on `(agent_id, created_at)`. |
+
+**Strategies** (closed set, `scorecardStrategyIds`): `vector` (semantic
+only), `bm25` (keyword only), `rrf` (hybrid, no rerank), `rrf_rerank`
+(production: RRF + LLM-as-judge). Each runs the §12.3 arms in isolation,
+so the table shows where the answer is found vs lost.
+
+**Scoring.** Embed each query once, run the selected strategies over the
+agent's attached files, and mark a retrieved chunk _relevant_ when its
+text contains any `expected_snippets` substring (case- and
+whitespace-insensitive), falling back to `expected_page` when no
+snippets are set.
+Reports hit-rate, MRR, nDCG, and precision per strategy over the judged
+queries, plus a per-query drill-down of what each strategy returned.
+The run is synchronous (sized for the tens-of-questions sets this
+targets).
+
+**Before/after comparison.** Every run is persisted (`insertRun`); then
+`getComparisonRun` picks what to measure against — the pinned baseline
+if set, else the immediately-previous run (null on the first run). `POST
+/run` returns the new run's id plus that comparison run, and the results
+table renders a per-metric ▲/▼ delta. **Set as baseline** (`POST
+/runs/:runId/baseline` → `setBaseline`, transactional: clear the agent's
+other flags, set this one) fixes the reference so runs compare against it
+instead of drifting run-to-run. Routes live on the `agent-scorecard`
+router: `GET`/`PUT /queries`, `POST /run`, `POST /runs/:runId/baseline`.
+
+### 12.9 Known limitations / deferred
 
 - **DOCX support** — `mammoth` not yet wired; FILE_KINDS = ['md', 'txt', 'pdf'].
 - **Layout-aware PDF extraction** — `pdf-parse` is text-only; tables, figures, multi-column layouts not preserved. Phase 4 (Unstructured.io / `pdfplumber` / MinerU).
@@ -2093,5 +2135,5 @@ in those contexts.
 - **Embedding-drift sampler** — no nightly job to detect silent provider-side model updates that shift geometry without changing the fingerprint string.
 - **Contextual Retrieval (Anthropic)** — implemented but env-gated (`AGENT_BRIDGE_CONTEXTUAL_RETRIEVAL=true`) due to ingest cost (one LLM call per chunk).
 - **Cross-encoder reranker sidecar** — current rerank is LLM-as-judge through the workspace chat provider; a dedicated cross-encoder would be faster + cheaper.
-- **Eval harness** — no nightly retrieval-quality regression suite. The e2e smoke catches "search returned chunks" but not "the right chunk ranked first" beyond a few hand-picked queries.
+- **Automated eval harness** — the retrieval scorecard (§12.8) gives on-demand, operator-run quality measurement, but there's no nightly/CI regression suite that runs a golden set and fails on a drop. The e2e smoke still only asserts "search returned chunks", not ranking quality.
 - **File versioning** — re-uploading a slightly edited file is delete + re-upload today (different sha256 → different `files` row). No history of older versions, no thread-level pin to a specific version.

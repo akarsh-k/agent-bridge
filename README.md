@@ -207,6 +207,12 @@ Agent Bridge agent  ─── Mastra agent runtime
                     └── optional external MCPs
 ```
 
+Knowledge retrieval is measurable: each agent has a **Scorecard** tab
+that runs an operator-authored set of test questions through the
+semantic, keyword, hybrid, and reranked strategies and reports hit-rate,
+MRR, nDCG, and precision, with before/after deltas against a pinned
+baseline so you can tell whether a retrieval change actually helped.
+
 Full design reference: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
 ## Quickstart
