@@ -148,6 +148,13 @@
       "when": 1780740467796,
       "tag": "0020_yellow_amphibian",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1780755760634,
+      "tag": "0021_previous_wild_pack",
+      "breakpoints": true
     }
   ]
 }

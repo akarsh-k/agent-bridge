@@ -6,10 +6,16 @@
  * per-row CRUD. Reads are ordered by `position` then `created_at`.
  */
 
-import { asc, eq } from 'drizzle-orm'
+import { and, asc, desc, eq, ne } from 'drizzle-orm'
 
 import type { AgentBridgeDb } from './client.js'
-import { scorecardQueries, type ScorecardQueryDbRow } from './schema.js'
+import {
+  scorecardQueries,
+  scorecardRuns,
+  type ScorecardQueryDbRow,
+  type ScorecardRunDbInsert,
+  type ScorecardRunDbRow,
+} from './schema.js'
 
 export interface ScorecardQueryInputRow {
   readonly query: string
@@ -56,5 +62,76 @@ export async function replaceQueries(
         })),
       )
       .returning()
+  })
+}
+
+// ─── Saved runs (for before/after comparison) ──────────────────────────────
+
+/** Persist one run's aggregate scores. */
+export async function insertRun(
+  handle: AgentBridgeDb,
+  input: Omit<
+    ScorecardRunDbInsert,
+    'id' | 'createdAt' | 'isBaseline' | 'label'
+  > & {
+    label?: string
+  },
+): Promise<ScorecardRunDbRow> {
+  const [row] = await handle.db.insert(scorecardRuns).values(input).returning()
+  return row!
+}
+
+/**
+ * The run a new run should be compared against: the pinned baseline if one
+ * exists (and isn't the run we just created), otherwise the most recent
+ * prior run. Null when this is the agent's first run.
+ */
+export async function getComparisonRun(
+  handle: AgentBridgeDb,
+  agentId: string,
+  excludeRunId: string,
+): Promise<ScorecardRunDbRow | null> {
+  const [baseline] = await handle.db
+    .select()
+    .from(scorecardRuns)
+    .where(
+      and(
+        eq(scorecardRuns.agentId, agentId),
+        eq(scorecardRuns.isBaseline, true),
+      ),
+    )
+    .limit(1)
+  if (baseline && baseline.id !== excludeRunId) return baseline
+  const [prev] = await handle.db
+    .select()
+    .from(scorecardRuns)
+    .where(
+      and(
+        eq(scorecardRuns.agentId, agentId),
+        ne(scorecardRuns.id, excludeRunId),
+      ),
+    )
+    .orderBy(desc(scorecardRuns.createdAt))
+    .limit(1)
+  return prev ?? null
+}
+
+/** Pin one run as the agent's baseline (clears the flag on the others). */
+export async function setBaseline(
+  handle: AgentBridgeDb,
+  agentId: string,
+  runId: string,
+): Promise<void> {
+  await handle.db.transaction(async (tx) => {
+    await tx
+      .update(scorecardRuns)
+      .set({ isBaseline: false })
+      .where(eq(scorecardRuns.agentId, agentId))
+    await tx
+      .update(scorecardRuns)
+      .set({ isBaseline: true })
+      .where(
+        and(eq(scorecardRuns.id, runId), eq(scorecardRuns.agentId, agentId)),
+      )
   })
 }

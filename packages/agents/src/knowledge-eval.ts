@@ -49,9 +49,9 @@ import {
   type FusedChunk,
 } from './knowledge-tool.js'
 
-// Mirror the production retrieval shape so the scorecard measures the
-// real thing: 20 candidates per arm, 3-per-file diversity cap, top-8
-// into the reranker. See knowledge-tool.ts.
+// Mirror the production retrieval shape so the scorecard measures the real
+// thing: 20 candidates per arm, a per-file diversity cap, top-8 into the
+// reranker. See knowledge-tool.ts.
 const PER_FILE_CAP = 3
 const RERANK_CANDIDATE_CAP = 8
 
@@ -208,6 +208,9 @@ export async function runScorecard(
         bm25Hits,
         query: q.query,
         rerankerAgent,
+        // Match production: no per-file cap for a single-file scope, else
+        // the candidate pool caps at 3 and the reranker never runs.
+        perFileCap: scope.length === 1 ? Infinity : PER_FILE_CAP,
       })
       const flags = ranked.map((c) => judge(c.text, c.page, gold))
       const metrics = scoreRanked(flags, ranked.length)
@@ -279,8 +282,17 @@ async function rankForStrategy(args: {
   bm25Hits: ReadonlyArray<ChunkHit>
   query: string
   rerankerAgent: ReturnType<typeof buildRerankerAgent> | null
+  perFileCap: number
 }): Promise<ChunkHit[]> {
-  const { strategyId, topK, vectorHits, bm25Hits, query, rerankerAgent } = args
+  const {
+    strategyId,
+    topK,
+    vectorHits,
+    bm25Hits,
+    query,
+    rerankerAgent,
+    perFileCap,
+  } = args
   switch (strategyId) {
     case 'vector':
       return vectorHits.slice(0, topK)
@@ -290,7 +302,7 @@ async function rankForStrategy(args: {
       return rrfFuse(vectorHits, bm25Hits).slice(0, topK)
     case 'rrf_rerank': {
       const fused = rrfFuse(vectorHits, bm25Hits)
-      const diverse = diversify(fused)
+      const diverse = diversify(fused, perFileCap)
       const candidates = diverse.slice(0, RERANK_CANDIDATE_CAP)
       const ordered =
         rerankerAgent && candidates.length > 3
@@ -301,15 +313,17 @@ async function rankForStrategy(args: {
   }
 }
 
-/** Per-file diversity cap, mirroring the production tool: at most
- *  `PER_FILE_CAP` chunks from one file in the candidate pool so a single
- *  long doc can't crowd out the rest. */
-function diversify(fused: ReadonlyArray<FusedChunk>): FusedChunk[] {
+/** Per-file diversity cap so one long doc can't dominate the candidate
+ *  pool. Pass Infinity to disable (e.g. a single-file scope). */
+function diversify(
+  fused: ReadonlyArray<FusedChunk>,
+  perFileCap: number,
+): FusedChunk[] {
   const seen = new Map<string, number>()
   const out: FusedChunk[] = []
   for (const c of fused) {
     const n = seen.get(c.fileId) ?? 0
-    if (n >= PER_FILE_CAP) continue
+    if (n >= perFileCap) continue
     seen.set(c.fileId, n + 1)
     out.push(c)
   }

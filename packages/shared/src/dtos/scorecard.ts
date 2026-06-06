@@ -170,3 +170,30 @@ export const scorecardRunResultSchema = z.object({
   perQuery: z.array(scorecardQueryResultSchema),
 })
 export type ScorecardRunResult = z.infer<typeof scorecardRunResultSchema>
+
+// ─── Saved runs + before/after comparison ───────────────────────────────────
+
+/** A persisted run: aggregate scores only (no per-question detail), used to
+ *  compare a new run against a baseline. */
+export const scorecardRunRecordSchema = z.object({
+  id: z.uuid(),
+  createdAt: z.string(),
+  label: z.string(),
+  isBaseline: z.boolean(),
+  topK: z.number(),
+  queryCount: z.number(),
+  judgedCount: z.number(),
+  embeddingModel: z.string(),
+  durationMs: z.number(),
+  strategyIds: z.array(z.enum(scorecardStrategyIds)),
+  aggregates: z.array(scorecardStrategyAggregateSchema),
+})
+export type ScorecardRunRecord = z.infer<typeof scorecardRunRecordSchema>
+
+/** The run response: the full result plus the persisted run id and the run to
+ *  compare against (pinned baseline, else the previous run; null on first run). */
+export const scorecardRunResponseSchema = scorecardRunResultSchema.extend({
+  runId: z.uuid(),
+  baseline: scorecardRunRecordSchema.nullable(),
+})
+export type ScorecardRunResponse = z.infer<typeof scorecardRunResponseSchema>

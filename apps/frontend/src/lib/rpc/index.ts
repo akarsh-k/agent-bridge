@@ -38,7 +38,7 @@ import type {
   ScorecardQueryInput,
   ScorecardQueryRow,
   ScorecardRunInput,
-  ScorecardRunResult,
+  ScorecardRunResponse,
 } from '@agent-bridge/shared'
 
 const DEV_DEFAULT_BASE_URL = 'http://127.0.0.1:3001'
@@ -367,8 +367,8 @@ export async function saveScorecardQueries(
 export async function runScorecard(
   agentId: string,
   input: ScorecardRunInput,
-): Promise<ScorecardRunResult> {
-  return callApi<ScorecardRunResult>(
+): Promise<ScorecardRunResponse> {
+  return callApi<ScorecardRunResponse>(
     fetch(
       `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/scorecard/run`,
       {
@@ -376,6 +376,19 @@ export async function runScorecard(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(input),
       },
+    ),
+  )
+}
+
+/** Pin a run as the baseline that future runs compare against. */
+export async function setScorecardBaseline(
+  agentId: string,
+  runId: string,
+): Promise<void> {
+  await callApi<{ ok: true }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/scorecard/runs/${encodeURIComponent(runId)}/baseline`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' } },
     ),
   )
 }

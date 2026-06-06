@@ -40,10 +40,82 @@
 .ab-sc-q:focus-within {
   border-color: var(--border-strong);
 }
-.ab-sc-q-top {
+.ab-sc-q-edit {
+  animation: ab-sc-q-reveal var(--dur-2) var(--ease-out);
+}
+@keyframes ab-sc-q-reveal {
+  from {
+    opacity: 0.5;
+    transform: translateY(-2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Read-only card: a saved question at rest. */
+.ab-sc-q-view {
+  gap: var(--space-1_5);
+}
+.ab-sc-q-view-head {
   display: flex;
-  gap: var(--space-2);
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.ab-sc-q-view-q {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+  line-height: 1.45;
+  min-width: 0;
+  text-wrap: pretty;
+}
+.ab-sc-q-view-actions {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+.ab-sc-q-view-meta {
+  display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  min-width: 0;
+}
+/* Hairline middot between meta facts (expects · page · note). */
+.ab-sc-q-view-meta > * + *::before {
+  content: '·';
+  margin-right: var(--space-2);
+  color: var(--text-muted);
+}
+.ab-sc-q-expects-snippet {
+  display: inline-block;
+  max-width: min(46ch, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+  color: var(--text-dim);
+}
+.ab-sc-q-expects-more {
+  margin-left: var(--space-1);
+  color: var(--text-muted);
+}
+.ab-sc-q-muted {
+  color: var(--text-muted);
+}
+.ab-sc-q-clip {
+  display: inline-block;
+  max-width: min(48ch, 100%);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
 }
 .ab-sc-q-meta {
   display: flex;
@@ -62,7 +134,38 @@
   margin-top: var(--space-3);
   flex-wrap: wrap;
 }
-.ab-sc-editor-msg {
+/* Per-card edit footer + inline validation/save error. */
+.ab-sc-q-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+.ab-sc-q-error {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--danger);
+}
+
+/* Empty state (no questions yet). */
+.ab-sc-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-5);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-hi);
+}
+.ab-sc-empty-title {
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: var(--fw-medium);
+  color: var(--text);
+}
+.ab-sc-empty-sub {
+  margin: 0 0 var(--space-1);
   font-size: var(--text-xs);
   color: var(--text-dim);
 }
@@ -163,10 +266,29 @@
 }
 
 /* ── Results: aggregate table ────────────────────────────────────────── */
+.ab-sc-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+.ab-sc-results-head .ab-section-title {
+  margin: 0;
+}
+/* Run metadata: the summary + comparison lines, grouped tight, with a
+   clear gap before the table. */
+.ab-sc-meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1_5);
+  margin-bottom: var(--space-5);
+}
 .ab-sc-summary {
+  margin: 0;
   font-size: var(--text-xs);
   color: var(--text-dim);
-  margin: 0 0 var(--space-4);
 }
 .ab-sc-summary code {
   font-family: var(--font-mono);
@@ -213,6 +335,33 @@
 .ab-sc-cell-best {
   color: var(--accent-500);
   font-weight: var(--fw-semibold);
+}
+
+/* Comparison line: which run the deltas are measured against, plus a
+   ▲/▼ legend colored to match the per-cell deltas. */
+.ab-sc-compare-label {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  line-height: 1.5;
+}
+.ab-sc-compare-label .up {
+  color: var(--success);
+}
+.ab-sc-compare-label .down {
+  color: var(--danger);
+}
+.ab-sc-delta {
+  margin-left: var(--space-2);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.ab-sc-delta.up {
+  color: var(--success);
+}
+.ab-sc-delta.down {
+  color: var(--danger);
 }
 
 /* ── Results: per-question drill-down ────────────────────────────────── */
@@ -342,5 +491,8 @@
   .ab-sc-strat,
   .ab-sc-strat-check {
     transition: none;
+  }
+  .ab-sc-q-edit {
+    animation: none;
   }
 }

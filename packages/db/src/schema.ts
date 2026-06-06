@@ -45,6 +45,7 @@ import type {
   RepoStatus,
   RepoWikiStatus,
   RunStatus,
+  ScorecardStrategyAggregate,
   ToolConfig,
   ToolKind,
 } from '@agent-bridge/shared'
@@ -643,6 +644,42 @@ export const scorecardQueries = pgTable(
   (t) => [index('scorecard_queries_agent_idx').on(t.agentId)],
 )
 
+// ─── scorecard_runs ───────────────────────────────────────────────────────
+// One row per scorecard run, holding just the aggregate scores so a later
+// run can show a before/after delta. Pin one as `is_baseline` to compare
+// against it instead of the immediately-previous run.
+
+export const scorecardRuns = pgTable(
+  'scorecard_runs',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    /** Optional operator label for the run. */
+    label: text('label').notNull().default(''),
+    /** When true, this is the run future runs compare against. */
+    isBaseline: boolean('is_baseline').notNull().default(false),
+    topK: integer('top_k').notNull(),
+    queryCount: integer('query_count').notNull(),
+    judgedCount: integer('judged_count').notNull(),
+    embeddingModel: text('embedding_model').notNull(),
+    durationMs: integer('duration_ms').notNull(),
+    /** Strategy ids scored in this run (ScorecardStrategyId[]). */
+    strategyIds: jsonb('strategy_ids')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /** Per-strategy aggregate metrics. */
+    aggregates: jsonb('aggregates')
+      .$type<ScorecardStrategyAggregate[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    createdAt: createdAt(),
+  },
+  (t) => [index('scorecard_runs_agent_idx').on(t.agentId, t.createdAt)],
+)
+
 // ─── mcp_connections ──────────────────────────────────────────────────────
 // Global (single-operator). Per-agent selection happens in `agent_mcp_tools`.
 
@@ -1104,6 +1141,9 @@ export type ThreadFileInsert = typeof threadFiles.$inferInsert
 export type ScorecardQueryDbRow = typeof scorecardQueries.$inferSelect
 export type ScorecardQueryDbInsert = typeof scorecardQueries.$inferInsert
 
+export type ScorecardRunDbRow = typeof scorecardRuns.$inferSelect
+export type ScorecardRunDbInsert = typeof scorecardRuns.$inferInsert
+
 export type McpConnectionRow = typeof mcpConnections.$inferSelect
 export type McpConnectionInsert = typeof mcpConnections.$inferInsert
 
@@ -1153,6 +1193,7 @@ export const allTables = [
   agentFiles,
   threadFiles,
   scorecardQueries,
+  scorecardRuns,
   mcpConnections,
   mcpOauthState,
   agentMcpTools,

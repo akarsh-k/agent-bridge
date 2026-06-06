@@ -19,6 +19,9 @@ import {
   scorecardRunInputSchema,
   type ScorecardQueryInput,
   type ScorecardQueryRow,
+  type ScorecardRunRecord,
+  type ScorecardStrategyAggregate,
+  type ScorecardStrategyId,
 } from '@agent-bridge/shared'
 import { scorecardsRepo } from '@agent-bridge/db'
 import { runScorecard, ScorecardError } from '@agent-bridge/agents'
@@ -26,6 +29,7 @@ import { getDb } from '../db.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 
 const paramSchema = z.object({ agentId: z.uuid() })
+const baselineParamSchema = z.object({ agentId: z.uuid(), runId: z.uuid() })
 
 type ScorecardQueryDbRow = Awaited<
   ReturnType<typeof scorecardsRepo.listQueries>
@@ -50,6 +54,24 @@ function toRepoInput(q: ScorecardQueryInput) {
     expectedSnippets: q.expectedSnippets ?? [],
     expectedPage: q.expectedPage ?? null,
     note: q.note ?? '',
+  }
+}
+
+type ScorecardRunDbRow = Awaited<ReturnType<typeof scorecardsRepo.insertRun>>
+
+function toRunDto(row: ScorecardRunDbRow): ScorecardRunRecord {
+  return {
+    id: row.id,
+    createdAt: row.createdAt.toISOString(),
+    label: row.label,
+    isBaseline: row.isBaseline,
+    topK: row.topK,
+    queryCount: row.queryCount,
+    judgedCount: row.judgedCount,
+    embeddingModel: row.embeddingModel,
+    durationMs: row.durationMs,
+    strategyIds: (row.strategyIds ?? []) as ScorecardStrategyId[],
+    aggregates: (row.aggregates ?? []) as ScorecardStrategyAggregate[],
   }
 }
 
@@ -125,7 +147,30 @@ export const agentScorecardRouter = new Hono()
           topK: body.topK,
           queries,
         })
-        return c.json({ ok: true as const, ...result })
+        // Persist the run's scores so later runs can show a before/after
+        // delta, then resolve what to compare against (pinned baseline, else
+        // the previous run; null on the first run).
+        const run = await scorecardsRepo.insertRun(db, {
+          agentId,
+          topK: result.topK,
+          queryCount: result.queryCount,
+          judgedCount: result.judgedCount,
+          embeddingModel: result.embeddingModel,
+          durationMs: result.durationMs,
+          strategyIds: body.strategyIds,
+          aggregates: result.aggregates,
+        })
+        const comparison = await scorecardsRepo.getComparisonRun(
+          db,
+          agentId,
+          run.id,
+        )
+        return c.json({
+          ok: true as const,
+          ...result,
+          runId: run.id,
+          baseline: comparison ? toRunDto(comparison) : null,
+        })
       } catch (err) {
         if (err instanceof ScorecardError) {
           return httpError(c, {
@@ -135,6 +180,18 @@ export const agentScorecardRouter = new Hono()
         }
         throw err
       }
+    },
+  )
+  .post(
+    '/runs/:runId/baseline',
+    zValidator('param', baselineParamSchema, (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    }),
+    async (c) => {
+      const { agentId, runId } = c.req.valid('param')
+      await scorecardsRepo.setBaseline(getDb(), agentId, runId)
+      return c.json({ ok: true as const })
     },
   )
 
