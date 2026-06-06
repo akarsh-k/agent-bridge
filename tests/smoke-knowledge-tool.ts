@@ -13,6 +13,9 @@
  *   5. `buildSearchKnowledgeTool` returns null when no attached files
  *      OR no embedding provider, and a Tool with id `search_knowledge`
  *      when both are present.
+ *   6. Page-aware PDF chunking: `stripPdfChrome` emits page offsets and
+ *      `chunkDocument` stamps each chunk with its source page (null for
+ *      non-PDF). Guards the "PDF chunks had no page" regression.
  *
  * Pure-function smoke — no DB, no LLM, no embedder. The end-to-end
  * SQL + embedding path needs a real test workspace + real provider
@@ -25,9 +28,11 @@
 
 import {
   buildSearchKnowledgeTool,
+  chunkDocument,
   parseRerankResponse,
   resolveBaseUrl,
   rrfFuse,
+  stripPdfChrome,
   type ChunkHit,
 } from '@agent-bridge/agents'
 import type { LlmProviderRow } from '@agent-bridge/db/schema'
@@ -297,6 +302,77 @@ check(
   'resolveBaseUrl throws for openai_compatible when no URL stored',
   threwForMissingLocalUrl,
   'belt-and-brace against the DTO validation that already requires it',
+)
+
+// ── page-aware PDF chunking ─────────────────────────────────────────────
+// Regression guard: PDF chunks used to come back with page=null because
+// extraction flattened all pages into one string.
+
+// Pages big enough to each flush as their own chunk; the middle page is
+// empty (chrome-only) so it's dropped, but original page numbers survive.
+const bigPage = (label: string): string => `${label} ` + 'lorem '.repeat(700)
+const stripped = stripPdfChrome([bigPage('PAGEONE'), '', bigPage('PAGETHREE')])
+check(
+  'stripPdfChrome returns text plus page boundaries',
+  typeof stripped.text === 'string' && Array.isArray(stripped.boundaries),
+)
+check(
+  'empty page is skipped but original page numbers are preserved',
+  stripped.boundaries.length === 2 &&
+    stripped.boundaries[0]?.page === 1 &&
+    stripped.boundaries[1]?.page === 3,
+  `pages=${stripped.boundaries.map((b) => b.page).join(',')}`,
+)
+
+const pdfPlan = chunkDocument({
+  text: stripped.text,
+  kind: 'pdf',
+  fileName: 'fixture.pdf',
+  mode: 'flat',
+  pageBoundaries: stripped.boundaries,
+})
+const pageOf = (needle: string): number | null =>
+  pdfPlan.flat.find((c) => c.text.includes(needle))?.page ?? null
+check(
+  'every PDF chunk carries a non-null page',
+  pdfPlan.flat.length > 0 && pdfPlan.flat.every((c) => c.page !== null),
+  `${pdfPlan.flat.length} chunks, pages=${pdfPlan.flat.map((c) => c.page).join(',')}`,
+)
+check(
+  'chunks map to the correct source page',
+  pageOf('PAGEONE') === 1 && pageOf('PAGETHREE') === 3,
+  `PAGEONE→${pageOf('PAGEONE')} PAGETHREE→${pageOf('PAGETHREE')}`,
+)
+
+// Small pages merge into one chunk; it's attributed to where it began.
+const merged = stripPdfChrome([
+  'STARTPAGE ' + 'a '.repeat(30),
+  'NEXTPAGE ' + 'b '.repeat(30),
+])
+const mergedPlan = chunkDocument({
+  text: merged.text,
+  kind: 'pdf',
+  fileName: 'merge.pdf',
+  mode: 'flat',
+  pageBoundaries: merged.boundaries,
+})
+check(
+  'a merged cross-page chunk is attributed to its start page',
+  mergedPlan.flat.length === 1 && mergedPlan.flat[0]?.page === 1,
+  `chunks=${mergedPlan.flat.length} page=${mergedPlan.flat[0]?.page}`,
+)
+
+// Non-PDF input carries no page boundaries → page stays null.
+const txtPlan = chunkDocument({
+  text: 'Plain notes. ' + 'words '.repeat(60),
+  kind: 'txt',
+  fileName: 'notes.txt',
+  mode: 'flat',
+})
+check(
+  'non-PDF chunks have a null page',
+  txtPlan.flat.length > 0 && txtPlan.flat.every((c) => c.page === null),
+  `${txtPlan.flat.length} chunks`,
 )
 
 // ── Summary ────────────────────────────────────────────────────────────

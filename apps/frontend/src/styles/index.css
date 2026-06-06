@@ -19,3 +19,4 @@
  * Vite dev server bundles them once and the cascade order is explicit. */
 @import '../app/library/files/files-page.css';
 @import '../app/logs/logs-page.css';
+@import '../features/agent-scorecard/scorecard.css';

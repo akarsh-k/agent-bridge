@@ -1,0 +1,346 @@
+/* Retrieval Scorecard tab.
+ *
+ * Composes the shared ab-* card / input / pill vocabulary; only the
+ * scorecard-specific surfaces (strategy toggles, the metrics table, the
+ * per-question drill-down) live here. Token-driven and flat: hairline
+ * borders + tonal steps, the one accent reserved for selection and
+ * best-result emphasis, no shadows or glow. Imported via styles/index.css.
+ */
+
+/* ── Card header (title + trailing meta) ─────────────────────────────── */
+.ab-sc-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+.ab-sc-count {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* ── Question editor ─────────────────────────────────────────────────── */
+.ab-sc-questions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+.ab-sc-q {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-hi);
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  transition: border-color var(--dur-1) var(--ease-out);
+}
+.ab-sc-q:focus-within {
+  border-color: var(--border-strong);
+}
+.ab-sc-q-top {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+.ab-sc-q-meta {
+  display: flex;
+  gap: var(--space-2);
+}
+.ab-sc-page {
+  flex: 0 0 110px;
+}
+.ab-sc-note {
+  flex: 1;
+}
+.ab-sc-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  flex-wrap: wrap;
+}
+.ab-sc-editor-msg {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+
+/* ── Strategy picker ─────────────────────────────────────────────────── */
+.ab-sc-strats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(208px, 1fr));
+  gap: var(--space-2);
+}
+.ab-sc-strat {
+  text-align: left;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: var(--space-2_5) var(--space-3);
+  color: var(--text);
+  font: inherit;
+  transition:
+    border-color var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out);
+}
+.ab-sc-strat:hover:not(.is-on) {
+  border-color: var(--border-strong);
+  background: var(--surface-hi);
+}
+.ab-sc-strat:focus-visible {
+  outline: none;
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+.ab-sc-strat.is-on {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+.ab-sc-strat-label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: var(--fw-medium);
+}
+.ab-sc-strat.is-on .ab-sc-strat-label {
+  color: var(--accent-500);
+}
+.ab-sc-strat-check {
+  width: 15px;
+  height: 15px;
+  border-radius: var(--radius-xs);
+  border: 1px solid var(--border-strong);
+  display: inline-grid;
+  place-items: center;
+  flex-shrink: 0;
+  color: transparent;
+  transition:
+    background var(--dur-1) var(--ease-out),
+    border-color var(--dur-1) var(--ease-out);
+}
+.ab-sc-strat.is-on .ab-sc-strat-check {
+  background: var(--accent-solid);
+  border-color: var(--accent-solid);
+  color: var(--accent-fg);
+}
+.ab-sc-strat-check svg {
+  width: 10px;
+  height: 10px;
+}
+.ab-sc-strat-blurb {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  margin-top: var(--space-1);
+  line-height: 1.45;
+}
+
+/* ── Run controls ────────────────────────────────────────────────────── */
+.ab-sc-run {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  flex-wrap: wrap;
+}
+.ab-sc-topk {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+.ab-sc-topk .ab-input {
+  width: 60px;
+  text-align: center;
+}
+.ab-sc-run-error {
+  font-size: var(--text-sm);
+  color: var(--danger);
+}
+
+/* ── Results: aggregate table ────────────────────────────────────────── */
+.ab-sc-summary {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  margin: 0 0 var(--space-4);
+}
+.ab-sc-summary code {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-muted);
+}
+.ab-sc-table-wrap {
+  overflow-x: auto;
+}
+.ab-sc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+.ab-sc-table th {
+  text-align: right;
+  font-weight: var(--fw-medium);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.ab-sc-table th:first-child,
+.ab-sc-table td:first-child {
+  text-align: left;
+}
+.ab-sc-table td {
+  padding: var(--space-2_5) var(--space-3);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.ab-sc-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.ab-sc-table tbody tr:hover td {
+  background: var(--surface-hover);
+}
+.ab-sc-strategy-name {
+  font-weight: var(--fw-medium);
+}
+.ab-sc-cell-best {
+  color: var(--accent-500);
+  font-weight: var(--fw-semibold);
+}
+
+/* ── Results: per-question drill-down ────────────────────────────────── */
+.ab-sc-perq {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-top: var(--space-5);
+}
+.ab-sc-qr {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-hi);
+}
+.ab-sc-qr[open] {
+  border-color: var(--border-strong);
+}
+.ab-sc-qr-summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2_5) var(--space-3);
+  border-radius: var(--radius);
+}
+.ab-sc-qr-summary::-webkit-details-marker {
+  display: none;
+}
+.ab-sc-qr-summary:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--border-focus);
+}
+.ab-sc-qr-q {
+  font-size: var(--text-sm);
+  min-width: 0;
+}
+.ab-sc-qr-badges {
+  display: flex;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.ab-sc-qr-body {
+  padding: var(--space-3) var(--space-3) var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  border-top: 1px solid var(--border);
+}
+.ab-sc-strat-block-label {
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+  margin-bottom: var(--space-1_5);
+}
+.ab-sc-hits {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1_5);
+}
+.ab-sc-hit {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: var(--space-2) var(--space-2_5);
+  font-size: var(--text-xs);
+  color: var(--text-dim);
+}
+.ab-sc-hit.is-relevant {
+  border-color: var(--success-border);
+  background: var(--success-bg);
+}
+.ab-sc-hit-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text);
+  margin-bottom: var(--space-0_5);
+}
+.ab-sc-hit-rank {
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+.ab-sc-hit-loc {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--text-dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ab-sc-hit-match {
+  margin-left: auto;
+  color: var(--success);
+  font-size: var(--text-2xs);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+}
+.ab-sc-hit-match svg {
+  width: 10px;
+  height: 10px;
+}
+.ab-sc-hit-snippet {
+  line-height: 1.5;
+}
+.ab-sc-empty {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+.ab-sc-unjudged {
+  font-size: var(--text-xs);
+  color: var(--warn);
+}
+
+/* ── Data-load state ─────────────────────────────────────────────────── */
+.ab-sc-loading {
+  font-size: var(--text-sm);
+  color: var(--text-dim);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ab-sc-q,
+  .ab-sc-strat,
+  .ab-sc-strat-check {
+    transition: none;
+  }
+}

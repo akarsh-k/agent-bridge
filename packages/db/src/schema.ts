@@ -609,6 +609,40 @@ export const threadFiles = pgTable(
   ],
 )
 
+// ─── scorecard_queries (retrieval eval golden set) ────────────────────────
+// Operator-authored test questions for the per-agent Retrieval Scorecard.
+// Each row = one query + the answer-bearing snippet(s) the right chunk
+// should contain. The scorecard runs these through the hybrid-retrieval
+// strategies and scores hit-rate / MRR / nDCG. Scoped to an agent because
+// relevance depends on which files are attached.
+
+export const scorecardQueries = pgTable(
+  'scorecard_queries',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    agentId: uuid('agent_id')
+      .notNull()
+      .references(() => agents.id, { onDelete: 'cascade' }),
+    /** The retrieval query, exactly as it would be sent to search. */
+    query: text('query').notNull(),
+    /** Answer-bearing substrings; a retrieved chunk is "relevant" when it
+     *  contains any of these (case/whitespace-insensitive). */
+    expectedSnippets: jsonb('expected_snippets')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'::jsonb`),
+    /** Optional page fallback, used only when `expected_snippets` is empty. */
+    expectedPage: integer('expected_page'),
+    /** Operator note — why this question matters / what it probes. */
+    note: text('note').notNull().default(''),
+    /** Display order in the editor. Client-managed. */
+    position: integer('position').notNull().default(0),
+    createdAt: createdAt(),
+    updatedAt: updatedAt(),
+  },
+  (t) => [index('scorecard_queries_agent_idx').on(t.agentId)],
+)
+
 // ─── mcp_connections ──────────────────────────────────────────────────────
 // Global (single-operator). Per-agent selection happens in `agent_mcp_tools`.
 
@@ -1067,6 +1101,9 @@ export type AgentFileInsert = typeof agentFiles.$inferInsert
 export type ThreadFileRow = typeof threadFiles.$inferSelect
 export type ThreadFileInsert = typeof threadFiles.$inferInsert
 
+export type ScorecardQueryDbRow = typeof scorecardQueries.$inferSelect
+export type ScorecardQueryDbInsert = typeof scorecardQueries.$inferInsert
+
 export type McpConnectionRow = typeof mcpConnections.$inferSelect
 export type McpConnectionInsert = typeof mcpConnections.$inferInsert
 
@@ -1115,6 +1152,7 @@ export const allTables = [
   fileChunks,
   agentFiles,
   threadFiles,
+  scorecardQueries,
   mcpConnections,
   mcpOauthState,
   agentMcpTools,

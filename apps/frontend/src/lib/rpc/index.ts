@@ -35,6 +35,10 @@ import type {
   RepoGraphMode,
   RepoGraphNeighborsResponse,
   RepoProcessListResponse,
+  ScorecardQueryInput,
+  ScorecardQueryRow,
+  ScorecardRunInput,
+  ScorecardRunResult,
 } from '@agent-bridge/shared'
 
 const DEV_DEFAULT_BASE_URL = 'http://127.0.0.1:3001'
@@ -323,6 +327,57 @@ export async function listRepoProcesses(
     ),
   )
   return res.processes
+}
+
+// ─── Retrieval Scorecard ─────────────────────────────────────────────────
+
+/** The agent's saved golden set (test questions + expected answers). */
+export async function getScorecardQueries(
+  agentId: string,
+): Promise<ScorecardQueryRow[]> {
+  const res = await callApi<{ ok: true; queries: ScorecardQueryRow[] }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/scorecard/queries`,
+      { method: 'GET' },
+    ),
+  )
+  return res.queries
+}
+
+/** Replace the whole golden set (the editor saves the full list). */
+export async function saveScorecardQueries(
+  agentId: string,
+  queries: ScorecardQueryInput[],
+): Promise<ScorecardQueryRow[]> {
+  const res = await callApi<{ ok: true; queries: ScorecardQueryRow[] }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/scorecard/queries`,
+      {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ queries }),
+      },
+    ),
+  )
+  return res.queries
+}
+
+/** Run the scorecard. Pass `queries` to score unsaved edits; omit to use
+ *  the saved set. Returns per-strategy aggregates + per-query breakdown. */
+export async function runScorecard(
+  agentId: string,
+  input: ScorecardRunInput,
+): Promise<ScorecardRunResult> {
+  return callApi<ScorecardRunResult>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/scorecard/run`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      },
+    ),
+  )
 }
 
 /**

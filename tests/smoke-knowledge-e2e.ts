@@ -303,6 +303,29 @@ async function runSmoke(): Promise<void> {
     `fingerprints=${[...fingerprints].join(',')}`,
   )
 
+  // ── 5b. Page numbers stamped on every PDF chunk ───────────────────
+  // Regression guard: the extractor used to flatten pages into one
+  // string, leaving every chunk's page null.
+  const pageRows = await db.db
+    .select({ page: schema.fileChunks.page })
+    .from(schema.fileChunks)
+    .where(eq(schema.fileChunks.fileId, fileId))
+  const pages = pageRows
+    .map((r) => r.page)
+    .filter((p): p is number => p !== null)
+  check(
+    'every PDF chunk carries a page number',
+    pageRows.length > 0 && pages.length === pageRows.length,
+    `${pages.length}/${pageRows.length} chunks have a page`,
+  )
+  check(
+    'chunk pages fall within 1..page_count',
+    pages.length > 0 &&
+      Math.min(...pages) >= 1 &&
+      Math.max(...pages) <= (ingested?.pageCount ?? 0),
+    `range=${pages.length ? `${Math.min(...pages)}..${Math.max(...pages)}` : '-'}, page_count=${ingested?.pageCount}`,
+  )
+
   // ── 6. Auto-description ───────────────────────────────────────────
   // Best-effort. If no chat provider is configured, the description
   // stays empty and we skip this check.

@@ -141,6 +141,13 @@
       "when": 1780125625633,
       "tag": "0019_omniscient_magneto",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1780740467796,
+      "tag": "0020_yellow_amphibian",
+      "breakpoints": true
     }
   ]
 }

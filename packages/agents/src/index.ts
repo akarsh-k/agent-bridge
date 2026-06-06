@@ -29,6 +29,10 @@ export { buildReadSkillTool } from './skills-tool.js'
 // search tool when an agent has files attached.
 export { ingestKnowledgeFile } from './knowledge-ingest.js'
 export type { IngestKnowledgeFileInput } from './knowledge-ingest.js'
+// Chunker internals exposed for the pure-function smoke
+// (`tests/smoke-knowledge-tool.ts`) — page-aware PDF chunking. Production
+// callers reach these through `ingestKnowledgeFile`.
+export { chunkDocument, stripPdfChrome } from './knowledge-ingest.js'
 export {
   ensureFileChunksDim,
   FileChunksDimMismatch,
@@ -54,6 +58,10 @@ export type {
   ChunkHit,
   FusedChunk,
 } from './knowledge-tool.js'
+// Retrieval Scorecard engine: scores the hybrid-retrieval pipeline against
+// an operator-authored golden set. Consumed by the scorecard route + tab.
+export { runScorecard, ScorecardError } from './knowledge-eval.js'
+export type { RunScorecardInput } from './knowledge-eval.js'
 // Per-run async-context primitive — exported for smoke tests that
 // need to drive the search tool with thread-scoped or reference-
 // scoped state. Production callers reach this via `dispatchRun`.

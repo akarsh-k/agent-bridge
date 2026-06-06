@@ -161,6 +161,20 @@ export function BridgeTabSkeleton() {
   )
 }
 
+export function ScorecardTabSkeleton() {
+  return (
+    <div
+      className="ab-tab-skeleton"
+      role="status"
+      aria-label="Loading scorecard"
+    >
+      <SectionCardSkeleton rows={1} />
+      <SectionCardSkeleton rows={3} subLines={2} footerWidth={120} />
+      <SectionCardSkeleton rows={2} />
+    </div>
+  )
+}
+
 /* ---- Chat ----------------------------------------------------------------- */
 
 function BotMsgSkeleton({ lines }: { lines: string[] }) {

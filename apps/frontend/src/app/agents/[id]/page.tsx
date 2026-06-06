@@ -29,6 +29,7 @@ import {
   ChatTabSkeleton,
   ConfigureTabSkeleton,
   ResourcesTabSkeleton,
+  ScorecardTabSkeleton,
 } from './tab-skeletons'
 // Code-split the heavier tabs: configure pulls in the build / memory
 // forms, resources pulls in the attached-resources panel + tools tab,
@@ -53,12 +54,18 @@ const BridgeToolsTab = lazy(() =>
     default: m.BridgeToolsTab,
   })),
 )
-type TabId = 'configure' | 'resources' | 'chat' | 'bridge'
+const ScorecardTab = lazy(() =>
+  import('../../../features/agent-scorecard/scorecard-tab').then((m) => ({
+    default: m.ScorecardTab,
+  })),
+)
+type TabId = 'configure' | 'resources' | 'chat' | 'scorecard' | 'bridge'
 
 const TABS: ReadonlyArray<TabSpec<TabId>> = [
   { value: 'configure', label: 'Configure' },
   { value: 'resources', label: 'Resources' },
   { value: 'chat', label: 'Chat' },
+  { value: 'scorecard', label: 'Scorecard' },
   { value: 'bridge', label: 'Bridge' },
 ]
 
@@ -372,6 +379,11 @@ export function AgentDetailPage({
       {tab === 'chat' && (
         <Suspense fallback={<ChatTabSkeleton />}>
           <ChatTab agentId={agent.id} initialThreadId={initialThreadId} />
+        </Suspense>
+      )}
+      {tab === 'scorecard' && (
+        <Suspense fallback={<ScorecardTabSkeleton />}>
+          <ScorecardTab agentId={agent.id} />
         </Suspense>
       )}
       {tab === 'bridge' && (

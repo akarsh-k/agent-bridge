@@ -421,7 +421,7 @@ export interface FusedChunk extends ChunkHit {
   readonly score: number
 }
 
-async function runVectorSearch(args: {
+export async function runVectorSearch(args: {
   db: AgentBridgeDb
   scope: ReadonlyArray<string>
   fingerprint: string
@@ -479,7 +479,7 @@ async function runVectorSearch(args: {
   }))
 }
 
-async function runBm25Search(args: {
+export async function runBm25Search(args: {
   db: AgentBridgeDb
   scope: ReadonlyArray<string>
   fingerprint: string
@@ -563,7 +563,7 @@ export function rrfFuse(
 
 // ─── LLM-as-judge reranker ──────────────────────────────────────────────
 
-function buildRerankerAgent(model: MastraModelConfig): Agent {
+export function buildRerankerAgent(model: MastraModelConfig): Agent {
   return new Agent({
     id: 'search-knowledge-reranker',
     name: 'search-knowledge-reranker',
@@ -580,7 +580,7 @@ function buildRerankerAgent(model: MastraModelConfig): Agent {
  * hallucinates fall through to the original RRF order. Never throws
  * — a failed rerank just degrades to layer-1 RRF.
  */
-async function rerankWithLlm(args: {
+export async function rerankWithLlm(args: {
   rerankerAgent: Agent
   query: string
   candidates: ReadonlyArray<FusedChunk>
@@ -655,7 +655,7 @@ export function parseRerankResponse(
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
-function buildEmbedder(provider: LlmProviderRow): ModelRouterEmbeddingModel {
+export function buildEmbedder(provider: LlmProviderRow): ModelRouterEmbeddingModel {
   const apiKey = provider.apiKeyEnvelope
     ? decryptSecret(provider.apiKeyEnvelope)
     : undefined
@@ -672,7 +672,7 @@ function buildEmbedder(provider: LlmProviderRow): ModelRouterEmbeddingModel {
   })
 }
 
-function embeddingFingerprint(provider: LlmProviderRow): string {
+export function embeddingFingerprint(provider: LlmProviderRow): string {
   const dim = provider.embeddingDims ?? 1024
   return `${provider.kind}:${provider.defaultModel}:${dim}`
 }

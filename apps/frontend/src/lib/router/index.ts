@@ -85,7 +85,7 @@ const UUID_RE =
  * Recognised sub-tabs for the agent detail page. Anything else
  * after the id falls through to "not found".
  */
-// Active tabs: configure, resources, chat, bridge, logs.
+// Active tabs: configure, resources, chat, scorecard, bridge.
 // Legacy aliases (build, memory, tools, test) still match here so
 // existing bookmarks resolve; the page-level dispatch redirects them
 // to the new tab they were folded into.
@@ -93,6 +93,7 @@ const AGENT_TABS = [
   'configure',
   'resources',
   'chat',
+  'scorecard',
   'bridge',
   // legacy aliases — kept so old bookmarks resolve. 'logs' redirects
   // to the global /logs page (handled in the AgentDetailPage effect);

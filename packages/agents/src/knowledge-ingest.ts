@@ -243,6 +243,7 @@ async function ingestInner(input: IngestKnowledgeFileInput): Promise<void> {
       kind: file.kind,
       fileName: file.name,
       mode,
+      pageBoundaries: extracted.pageBoundaries,
     })
     const planCount =
       plan.mode === 'flat' ? plan.flat.length : plan.children.length
@@ -440,6 +441,10 @@ interface ExtractedDocument {
   /** Non-null only for paginated kinds (PDF). Backfilled onto
    *  `files.page_count` by the caller. */
   readonly pageCount: number | null
+  /** PDF only: char offset in `text` where each surviving source page
+   *  begins, with its 1-based page number, so the chunker can stamp
+   *  chunks with their page. Ascending by `start`; absent for md / txt. */
+  readonly pageBoundaries?: ReadonlyArray<{ start: number; page: number }>
 }
 
 async function extractText(file: FileRow): Promise<ExtractedDocument> {
@@ -473,10 +478,15 @@ async function extractPdfText(file: FileRow): Promise<ExtractedDocument> {
   try {
     const result = await parser.getText()
     const pages = result.pages ?? []
-    const cleaned = stripPdfChrome(pages.map((p) => p.text ?? ''))
+    // Strip NUL per page before joining so page-boundary offsets match
+    // the text the chunker sees (the caller's stripNul then no-ops here).
+    const { text, boundaries } = stripPdfChrome(
+      pages.map((p) => stripNul(p.text ?? '')),
+    )
     return {
-      text: cleaned,
+      text,
       pageCount: pages.length || null,
+      pageBoundaries: boundaries,
     }
   } finally {
     await parser.destroy().catch(() => {
@@ -502,17 +512,20 @@ async function extractPdfText(file: FileRow): Promise<ExtractedDocument> {
  * (25-40%) and stays in. Below the threshold we err toward keeping
  * the line.
  *
- * Pages don't need to be returned individually — the chunker treats
- * the joined string as one document; chunk-level page numbers are
- * NOT preserved in v1 (they'd require per-line page tracking which
- * pdf-parse doesn't expose cleanly). Page numbers on chunks land in
- * Phase 4 via layout-aware extraction.
+ * Returns the joined text plus per-page start offsets (`boundaries`) so
+ * the chunker can stamp each chunk with the source page it began on.
  */
-function stripPdfChrome(pages: ReadonlyArray<string>): string {
-  if (pages.length === 0) return ''
+export function stripPdfChrome(pages: ReadonlyArray<string>): {
+  text: string
+  boundaries: Array<{ start: number; page: number }>
+} {
+  if (pages.length === 0) return { text: '', boundaries: [] }
   if (pages.length === 1) {
     // No "repeating" to detect; just kill page-number lines.
-    return removePageNumberLines(pages[0] ?? '')
+    return {
+      text: removePageNumberLines(pages[0] ?? ''),
+      boundaries: [{ start: 0, page: 1 }],
+    }
   }
   const SHORT_LINE_CHARS = 80
   const REPEAT_THRESHOLD = 0.8
@@ -547,7 +560,22 @@ function stripPdfChrome(pages: ReadonlyArray<string>): string {
       )
       .join('\n'),
   )
-  return cleanedPages.filter((p) => p.length > 0).join('\n\n')
+  // Join surviving pages with a blank line, recording where each starts
+  // (its ORIGINAL 1-based page number). The '\n\n' join is the chunker's
+  // paragraph delimiter, so chunks attribute cleanly to their page.
+  const SEP = '\n\n'
+  const parts: string[] = []
+  const boundaries: Array<{ start: number; page: number }> = []
+  let offset = 0
+  for (let i = 0; i < cleanedPages.length; i++) {
+    const pageText = cleanedPages[i] ?? ''
+    if (pageText.length === 0) continue
+    if (parts.length > 0) offset += SEP.length
+    boundaries.push({ start: offset, page: i + 1 })
+    parts.push(pageText)
+    offset += pageText.length
+  }
+  return { text: parts.join(SEP), boundaries }
 }
 
 function removePageNumberLines(text: string): string {
@@ -574,7 +602,7 @@ interface RawChunk {
   readonly text: string
   /** Heading trail at the point this chunk was emitted, e.g. "Intro > Setup". */
   readonly sectionPath: string | null
-  /** Always null for v1 (PDF lands in Phase 2). */
+  /** 1-based source page for PDFs; null for plain text / markdown. */
   readonly page: number | null
 }
 
@@ -615,18 +643,41 @@ const EMPTY_PLAN: ChunkPlan = {
  * the ingest pipeline can stitch up `file_chunks.parent_id` after
  * inserting parents.
  */
-function chunkDocument(input: {
+export function chunkDocument(input: {
   text: string
   kind: string
   fileName: string
   mode: 'flat' | 'hierarchical'
+  /** PDF page offsets from extraction; lets the chunker tag each chunk
+   *  with its page. Omitted for md / txt (no pages). */
+  pageBoundaries?: ReadonlyArray<{ start: number; page: number }>
 }): ChunkPlan {
-  const { text, kind, mode } = input
-  const flat = kind === 'md' ? chunkMarkdown(text) : chunkPlainText(text)
+  const { text, kind, mode, pageBoundaries } = input
+  const pageAt =
+    pageBoundaries && pageBoundaries.length > 0
+      ? makePageAt(pageBoundaries)
+      : undefined
+  const flat =
+    kind === 'md' ? chunkMarkdown(text) : chunkPlainText(text, pageAt)
   if (mode === 'flat') {
     return { mode: 'flat', flat, parents: [], children: [] }
   }
   return hierarchicalize(flat)
+}
+
+/** Build an offset → 1-based page lookup from ascending boundaries:
+ *  the page whose start is the greatest one not after `offset`. */
+function makePageAt(
+  boundaries: ReadonlyArray<{ start: number; page: number }>,
+): (offset: number) => number | null {
+  return (offset) => {
+    let page: number | null = boundaries[0]?.page ?? null
+    for (const b of boundaries) {
+      if (b.start <= offset) page = b.page
+      else break
+    }
+    return page
+  }
 }
 
 /**
@@ -756,24 +807,47 @@ function chunkMarkdown(source: string): RawChunk[] {
   return out
 }
 
-function chunkPlainText(source: string): RawChunk[] {
+function chunkPlainText(
+  source: string,
+  pageAt?: (offset: number) => number | null,
+): RawChunk[] {
   const out: RawChunk[] = []
-  const paragraphs = source.split(/\r?\n\s*\r?\n+/)
   let buffer = ''
+  // Source offset of the current buffer's first paragraph, used to
+  // attribute the flushed chunk to its page.
+  let bufferStart = 0
   const flush = (): void => {
     const trimmed = buffer.trim()
     if (trimmed.length >= CHUNK_CHAR_MIN) {
-      out.push({ text: trimmed, sectionPath: null, page: null })
+      out.push({
+        text: trimmed,
+        sectionPath: null,
+        page: pageAt ? pageAt(bufferStart) : null,
+      })
     }
     buffer = ''
   }
-  for (const p of paragraphs) {
-    const piece = p.trim()
-    if (!piece) continue
+  const addParagraph = (rawStart: number, raw: string): void => {
+    const piece = raw.trim()
+    if (!piece) return
     if (buffer.length + piece.length + 2 > CHUNK_CHAR_HARD_MAX) flush()
+    if (buffer.length === 0) {
+      bufferStart = rawStart + (raw.length - raw.trimStart().length)
+    }
     buffer += (buffer.length > 0 ? '\n\n' : '') + piece
     if (buffer.length >= CHUNK_CHAR_TARGET) flush()
   }
+  // Walk blank-line-separated paragraphs while tracking each one's
+  // offset in `source` (equivalent to `source.split(/\r?\n\s*\r?\n+/)`,
+  // but offset-aware so the page lookup stays exact).
+  const sep = /\r?\n\s*\r?\n+/g
+  let cursor = 0
+  let m: RegExpExecArray | null
+  while ((m = sep.exec(source)) !== null) {
+    addParagraph(cursor, source.slice(cursor, m.index))
+    cursor = sep.lastIndex
+  }
+  addParagraph(cursor, source.slice(cursor))
   flush()
   return out
 }
