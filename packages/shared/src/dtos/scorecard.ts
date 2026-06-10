@@ -147,6 +147,11 @@ export const scorecardStrategyAggregateSchema = z.object({
   label: z.string(),
   /** Mean hit@k across judged queries (a.k.a. recall for single-answer). */
   hitRate: z.number(),
+  /** Mean coverage: average fraction of a question's expected snippets that
+   *  some retrieved chunk surfaced, treating each snippet as a distinct
+   *  required piece. Measures completeness for multi-hop (multi-snippet)
+   *  questions; equals hitRate for single-snippet ones. */
+  coverage: z.number(),
   /** Mean reciprocal rank. */
   mrr: z.number(),
   /** Mean nDCG@k (binary relevance). */

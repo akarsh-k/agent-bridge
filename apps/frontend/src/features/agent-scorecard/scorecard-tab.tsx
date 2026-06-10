@@ -34,6 +34,7 @@ import {
 } from '../../lib/rpc'
 import { Button } from '../../ui/button'
 import { Pill } from '../../ui/pill'
+import { Tooltip } from '../../ui/tooltip'
 
 import { QuestionCard, QuestionEditor } from './question-card'
 import {
@@ -53,8 +54,11 @@ const dropKey = (obj: Record<string, string>, key: string) => {
   return next
 }
 
-const pct = (x: number) => `${Math.round(x * 100)}%`
-const dec = (x: number) => x.toFixed(3)
+// Tolerate a missing metric (e.g. a run from before the metric existed, or a
+// backend still serving the old engine) — render "–" instead of "NaN".
+const pct = (x: number) =>
+  Number.isFinite(x) ? `${Math.round(x * 100)}%` : '–'
+const dec = (x: number) => (Number.isFinite(x) ? x.toFixed(3) : '–')
 
 /** Raw "180627ms" reads poorly; show "3m 1s" / "4.2s" / "850ms". */
 function fmtDuration(ms: number): string {
@@ -89,6 +93,31 @@ function CheckGlyph() {
     </svg>
   )
 }
+
+function InfoGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="8" cy="8" r="7" stroke="currentColor" strokeWidth="1.3" />
+      <circle cx="8" cy="4.7" r="0.95" fill="currentColor" />
+      <path
+        d="M8 7.2v4.6"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+    </svg>
+  )
+}
+
+/** Metric columns + a one-line plain-English tooltip for each. Order matches
+ *  the per-row cells in ScorecardResults. */
+const METRIC_HEADERS: ReadonlyArray<readonly [label: string, info: string]> = [
+  ['Hit-rate', 'Questions where a relevant chunk reached the top-K'],
+  ['Coverage', "Avg fraction of a question's answer pieces retrieved"],
+  ['MRR', '1 / rank of the first relevant chunk, averaged'],
+  ['nDCG', 'Rewards ranking the relevant chunks higher in the list'],
+  ['Precision', 'Fraction of the returned chunks that were relevant'],
+]
 
 export function ScorecardTab({ agentId }: { agentId: string }) {
   const [load, setLoad] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -483,6 +512,7 @@ function ScorecardResults({
 }) {
   const best = {
     hitRate: Math.max(...result.aggregates.map((a) => a.hitRate), 0),
+    coverage: Math.max(...result.aggregates.map((a) => a.coverage), 0),
     mrr: Math.max(...result.aggregates.map((a) => a.mrr), 0),
     ndcg: Math.max(...result.aggregates.map((a) => a.ndcg), 0),
     precision: Math.max(...result.aggregates.map((a) => a.precision), 0),
@@ -582,10 +612,22 @@ function ScorecardResults({
           <thead>
             <tr>
               <th scope="col">Strategy</th>
-              <th scope="col">Hit-rate</th>
-              <th scope="col">MRR</th>
-              <th scope="col">nDCG</th>
-              <th scope="col">Precision</th>
+              {METRIC_HEADERS.map(([label, info]) => (
+                <th scope="col" key={label}>
+                  <span className="ab-sc-th">
+                    {label}
+                    <Tooltip label={info} side="top">
+                      <button
+                        type="button"
+                        className="ab-sc-info"
+                        aria-label={`What ${label} measures`}
+                      >
+                        <InfoGlyph />
+                      </button>
+                    </Tooltip>
+                  </span>
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
@@ -599,6 +641,13 @@ function ScorecardResults({
                     best.hitRate,
                     pct(a.hitRate),
                     b?.hitRate,
+                    'pct',
+                  )}
+                  {metricCell(
+                    a.coverage,
+                    best.coverage,
+                    pct(a.coverage),
+                    b?.coverage,
                     'pct',
                   )}
                   {metricCell(a.mrr, best.mrr, dec(a.mrr), b?.mrr, 'dec')}

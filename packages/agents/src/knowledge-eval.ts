@@ -21,6 +21,10 @@
  * Relevance is judged by substring match against `expectedSnippets`
  * (case/whitespace-insensitive), with an `expectedPage` fallback. A
  * query with no ground truth is reported but excluded from aggregates.
+ * `coverage` additionally treats each snippet as a distinct required
+ * piece (the fraction of them retrieval surfaced): for a multi-snippet /
+ * multi-hop question it measures completeness; for a single-snippet one
+ * it equals hit-rate.
  */
 
 import type { MastraModelConfig } from '@mastra/core/llm'
@@ -160,10 +164,17 @@ export async function runScorecard(
   // strategyId → running sums over judged queries, for the aggregates.
   const acc = new Map<
     ScorecardStrategyId,
-    { hit: number; rr: number; ndcg: number; prec: number; n: number }
+    {
+      hit: number
+      rr: number
+      ndcg: number
+      prec: number
+      cov: number
+      n: number
+    }
   >()
   for (const id of strategyIds) {
-    acc.set(id, { hit: 0, rr: 0, ndcg: 0, prec: 0, n: 0 })
+    acc.set(id, { hit: 0, rr: 0, ndcg: 0, prec: 0, cov: 0, n: 0 })
   }
 
   for (const q of queries) {
@@ -214,6 +225,7 @@ export async function runScorecard(
       })
       const flags = ranked.map((c) => judge(c.text, c.page, gold))
       const metrics = scoreRanked(flags, ranked.length)
+      const cov = coverageOf(ranked, gold)
       byStrategy.push({
         strategyId,
         hit: metrics.hit,
@@ -235,6 +247,7 @@ export async function runScorecard(
         a.rr += metrics.rr
         a.ndcg += metrics.ndcg
         a.prec += metrics.prec
+        a.cov += cov
         a.n += 1
       }
     }
@@ -254,6 +267,7 @@ export async function runScorecard(
       strategyId,
       label: scorecardStrategyMeta[strategyId].label,
       hitRate: a.n ? a.hit / n : 0,
+      coverage: a.n ? a.cov / n : 0,
       mrr: a.n ? a.rr / n : 0,
       ndcg: a.n ? a.ndcg / n : 0,
       precision: a.n ? a.prec / n : 0,
@@ -349,6 +363,30 @@ function judge(
   }
   if (gold.page !== null && page !== null) return page === gold.page
   return false
+}
+
+/** Fraction of the gold snippets that at least one ranked chunk contains,
+ *  treating each snippet as a distinct required piece. Equals hit (0 or 1)
+ *  for a single-snippet query; drops below hit-rate only when a
+ *  multi-snippet (multi-hop) query is partially covered. Falls back to the
+ *  page check when no snippets are given. */
+function coverageOf(
+  ranked: ReadonlyArray<ChunkHit>,
+  gold: { snippets: ReadonlyArray<string>; page: number | null },
+): number {
+  if (gold.snippets.length > 0) {
+    const texts = ranked.map((c) => normalize(c.text))
+    let covered = 0
+    for (const s of gold.snippets) {
+      const ns = normalize(s)
+      if (texts.some((t) => t.includes(ns))) covered += 1
+    }
+    return covered / gold.snippets.length
+  }
+  if (gold.page !== null) {
+    return ranked.some((c) => c.page === gold.page) ? 1 : 0
+  }
+  return 0
 }
 
 function scoreRanked(

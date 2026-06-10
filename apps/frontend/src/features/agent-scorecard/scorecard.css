@@ -312,6 +312,37 @@
   border-bottom: 1px solid var(--border);
   white-space: nowrap;
 }
+/* Metric header: label + a hover/focus info button on the right edge. */
+.ab-sc-th {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.ab-sc-info {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-muted);
+  cursor: help;
+  border-radius: var(--radius-pill);
+  transition: color var(--dur-1) var(--ease-out);
+}
+.ab-sc-info:hover,
+.ab-sc-info:focus-visible {
+  color: var(--text);
+}
+.ab-sc-info:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-bg);
+}
+.ab-sc-info svg {
+  width: 13px;
+  height: 13px;
+  display: block;
+}
 .ab-sc-table th:first-child,
 .ab-sc-table td:first-child {
   text-align: left;
