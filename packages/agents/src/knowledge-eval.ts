@@ -12,7 +12,7 @@
  *   - bm25        : Postgres full-text only
  *   - rrf         : both, fused via RRF (no rerank)
  *   - rrf_rerank  : production path — RRF → per-file diversity cap →
- *                   top-8 → LLM-as-judge rerank
+ *                   `buildRerankPool` → LLM-as-judge rerank
  *
  * Faithfulness: vector/BM25/RRF/rerank are the exact functions the
  * production tool calls (imported, not re-implemented), so the
@@ -44,7 +44,9 @@ import { resolveBaseUrl } from './build-agent.js'
 import {
   buildEmbedder,
   buildRerankerAgent,
+  buildRerankPool,
   embeddingFingerprint,
+  PER_FILE_DIVERSITY_CAP,
   rerankWithLlm,
   rrfFuse,
   runBm25Search,
@@ -53,14 +55,21 @@ import {
   type FusedChunk,
 } from './knowledge-tool.js'
 
-// Mirror the production retrieval shape so the scorecard measures the real
-// thing: 20 candidates per arm, a per-file diversity cap, top-8 into the
-// reranker. See knowledge-tool.ts.
-const PER_FILE_CAP = 3
-const RERANK_CANDIDATE_CAP = 8
+function rerankUnavailable(failures: number): ScorecardError {
+  return new ScorecardError(
+    'rerank_unavailable',
+    `The rerank model failed ${failures} times during this run, so the ` +
+      '"Hybrid + rerank" numbers would not be trustworthy. Check the chat ' +
+      'provider, or deselect that strategy and run again.',
+  )
+}
 
 export class ScorecardError extends Error {
-  readonly code: 'no_embedding_provider' | 'no_files' | 'no_queries'
+  readonly code:
+    | 'no_embedding_provider'
+    | 'no_files'
+    | 'no_queries'
+    | 'rerank_unavailable'
   constructor(code: ScorecardError['code'], message: string) {
     super(message)
     this.code = code
@@ -74,6 +83,10 @@ export interface RunScorecardInput {
   readonly strategyIds: ReadonlyArray<ScorecardStrategyId>
   readonly topK: number
   readonly queries: ReadonlyArray<ScorecardQueryInput>
+  /** Called after each query finishes all strategies. Drives the
+   *  Scorecard tab's progress bar (each query costs one rerank LLM
+   *  call when `rrf_rerank` is selected, so runs take minutes). */
+  readonly onQueryDone?: (done: number, total: number) => Promise<void> | void
 }
 
 /**
@@ -85,7 +98,7 @@ export interface RunScorecardInput {
 export async function runScorecard(
   input: RunScorecardInput,
 ): Promise<Omit<ScorecardRunResult, 'ok'>> {
-  const { db, agentId, strategyIds, topK, queries } = input
+  const { db, agentId, strategyIds, topK, queries, onQueryDone } = input
   const startedAt = Date.now()
 
   if (queries.length === 0) {
@@ -177,6 +190,15 @@ export async function runScorecard(
     acc.set(id, { hit: 0, rr: 0, ndcg: 0, prec: 0, cov: 0, n: 0 })
   }
 
+  // Rerank circuit breaker. A down provider fails identically on every
+  // query; without this a 59-question run attempts (and logs) 59
+  // doomed LLM calls. The run FAILS rather than degrading: silently
+  // recording RRF-order results under the "Hybrid + rerank" label
+  // would poison every baseline comparison.
+  let rerankFailures = 0
+  let rerankAttempts = 0
+  const RERANK_BREAKER_LIMIT = 3
+
   for (const q of queries) {
     const gold = {
       snippets: q.expectedSnippets ?? [],
@@ -219,9 +241,15 @@ export async function runScorecard(
         bm25Hits,
         query: q.query,
         rerankerAgent,
+        onRerankAttempt: () => {
+          rerankAttempts += 1
+        },
+        onRerankFailure: () => {
+          rerankFailures += 1
+        },
         // Match production: no per-file cap for a single-file scope, else
         // the candidate pool caps at 3 and the reranker never runs.
-        perFileCap: scope.length === 1 ? Infinity : PER_FILE_CAP,
+        perFileCap: scope.length === 1 ? Infinity : PER_FILE_DIVERSITY_CAP,
       })
       const flags = ranked.map((c) => judge(c.text, c.page, gold))
       const metrics = scoreRanked(flags, ranked.length)
@@ -258,6 +286,18 @@ export async function runScorecard(
       judged,
       byStrategy,
     })
+    if (rerankFailures >= RERANK_BREAKER_LIMIT) {
+      throw rerankUnavailable(rerankFailures)
+    }
+    if (onQueryDone) await onQueryDone(perQuery.length, queries.length)
+  }
+
+  // Small-run floor: a 1-2 question run can fail every rerank without
+  // reaching the in-loop limit; all-attempts-failed is just as
+  // untrustworthy. Compared against attempts, not query count, since
+  // rerank is skipped for queries with 3 or fewer candidates.
+  if (rerankFailures > 0 && rerankFailures >= rerankAttempts) {
+    throw rerankUnavailable(rerankFailures)
   }
 
   const aggregates = strategyIds.map((strategyId) => {
@@ -296,6 +336,8 @@ async function rankForStrategy(args: {
   bm25Hits: ReadonlyArray<ChunkHit>
   query: string
   rerankerAgent: ReturnType<typeof buildRerankerAgent> | null
+  onRerankAttempt?: () => void
+  onRerankFailure?: (err: unknown) => void
   perFileCap: number
 }): Promise<ChunkHit[]> {
   const {
@@ -305,6 +347,8 @@ async function rankForStrategy(args: {
     bm25Hits,
     query,
     rerankerAgent,
+    onRerankAttempt,
+    onRerankFailure,
     perFileCap,
   } = args
   switch (strategyId) {
@@ -317,11 +361,17 @@ async function rankForStrategy(args: {
     case 'rrf_rerank': {
       const fused = rrfFuse(vectorHits, bm25Hits)
       const diverse = diversify(fused, perFileCap)
-      const candidates = diverse.slice(0, RERANK_CANDIDATE_CAP)
-      const ordered =
-        rerankerAgent && candidates.length > 3
-          ? await rerankWithLlm({ rerankerAgent, query, candidates })
-          : candidates
+      const candidates = buildRerankPool(diverse, bm25Hits)
+      let ordered: ReadonlyArray<FusedChunk> = candidates
+      if (rerankerAgent && candidates.length > 3) {
+        if (onRerankAttempt) onRerankAttempt()
+        ordered = await rerankWithLlm({
+          rerankerAgent,
+          query,
+          candidates,
+          onFailure: onRerankFailure,
+        })
+      }
       return ordered.slice(0, topK)
     }
   }

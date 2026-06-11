@@ -27,9 +27,11 @@ import {
   fileStreamId,
   type FileIngestStatus,
   type FileResponse,
+  type KnowledgeIngestProgressPayload,
 } from '@agent-bridge/shared'
 import { useWorkspace } from '../../../lib/workspace-context'
 import { useSSE } from '../../../lib/use-sse'
+import { formatEta } from '../../../lib/format-eta'
 import { PageHeader } from '../../_chrome/page-header'
 import { Button } from '../../../ui/button'
 import { Pill, type PillKind } from '../../../ui/pill'
@@ -41,7 +43,7 @@ import {
   RefreshIcon,
   SearchIcon,
 } from '../../../ui/icons'
-import { confirmDialog } from '../../../ui/dialog-store'
+import { confirmDialog, confirmDialogEx } from '../../../ui/dialog-store'
 import { LibraryAttachNote } from '../../../ui/library-attach-note'
 import { toast } from '../../../ui/toast-store'
 import { ApiError } from '../../../lib/rpc'
@@ -53,6 +55,7 @@ const STATUS_PILL: Record<
   pending: { kind: 'neutral', label: 'Pending', dot: true },
   extracting: { kind: 'warn', label: 'Extracting', dot: true },
   chunking: { kind: 'warn', label: 'Chunking', dot: true },
+  contextualizing: { kind: 'warn', label: 'Adding context', dot: true },
   embedding: { kind: 'warn', label: 'Embedding', dot: true },
   describing: { kind: 'warn', label: 'Describing', dot: true },
   ready: { kind: 'success', label: 'Ready' },
@@ -63,12 +66,15 @@ const IN_FLIGHT_STATUSES: ReadonlySet<FileIngestStatus> = new Set([
   'pending',
   'extracting',
   'chunking',
+  'contextualizing',
   'embedding',
   'describing',
 ])
 
 const ACCEPT_ATTR =
   FILE_KINDS.map((k) => `.${k}`).join(',') + ',text/plain,text/markdown'
+
+const CONTEXTUAL_UPLOAD_KEY = 'ab-files-contextual-upload'
 
 type FilterKey = 'all' | 'inflight' | 'ready' | 'error'
 
@@ -148,14 +154,54 @@ export function FilesPage() {
   }, [files, filter, query])
 
   // ─── Upload paths (button + drop) ──────────────────────────────────
+
+  // One options dialog per pick/drop; a multi-file drop is asked once
+  // and the choice applies to the whole batch. The checkbox default is
+  // sticky (localStorage) so repeat uploaders keep their choice.
+  // Returns null when the operator cancels.
+  const askUploadOptions = useCallback(
+    async (picked: ReadonlyArray<File>): Promise<boolean | null> => {
+      const names = picked.map((f) => f.name)
+      const shown = names.slice(0, 4).join(', ')
+      const extra = names.length > 4 ? ` and ${names.length - 4} more` : ''
+      const { ok, checked } = await confirmDialogEx({
+        title:
+          picked.length === 1
+            ? `Upload "${names[0]}"?`
+            : `Upload ${picked.length} files?`,
+        body: picked.length === 1 ? undefined : `${shown}${extra}`,
+        checkbox: {
+          label: 'Write context notes for better search',
+          hint:
+            'Each chunk gets a short AI-written note about where it sits in the document, so questions that use different words still find the right passage. Processing takes longer: one AI call per chunk.',
+          initial: localStorage.getItem(CONTEXTUAL_UPLOAD_KEY) === '1',
+        },
+        confirmLabel: 'Upload',
+      })
+      if (!ok) return null
+      localStorage.setItem(CONTEXTUAL_UPLOAD_KEY, checked ? '1' : '0')
+      return checked
+    },
+    [],
+  )
+
   const runUpload = useCallback(
-    async (file: File): Promise<void> => {
+    async (file: File, contextualRetrieval: boolean): Promise<void> => {
       setUploading(true)
       try {
-        const result = await uploadFile({ file })
+        const result = await uploadFile({
+          file,
+          contextualRetrieval,
+        })
         if (result.duplicate) {
+          // The dedupe path returns the existing row untouched, so a
+          // context-notes choice on the re-upload was not applied; say
+          // so instead of letting the operator assume it took effect.
+          const kept = result.file.contextualRetrieval
           toast.info(
-            `Already uploaded as "${result.file.name}" — surfacing the existing copy.`,
+            contextualRetrieval !== kept
+              ? `Already uploaded as "${result.file.name}". Context notes stay ${kept ? 'on' : 'off'} for it; use the file's menu to change that.`
+              : `Already uploaded as "${result.file.name}". Showing the existing file.`,
           )
         } else {
           toast.success(`Uploaded "${result.file.name}"`)
@@ -184,7 +230,9 @@ export function FilesPage() {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
-    await runUpload(file)
+    const contextual = await askUploadOptions([file])
+    if (contextual === null) return
+    await runUpload(file, contextual)
   }
 
   // ─── Page-wide drag-and-drop ───────────────────────────────────────
@@ -231,10 +279,13 @@ export function FilesPage() {
     setDragging(false)
     dragDepthRef.current = 0
     const dropped = Array.from(e.dataTransfer.files)
+    if (dropped.length === 0) return
+    const contextual = await askUploadOptions(dropped)
+    if (contextual === null) return
     // Multi-file drop: upload them sequentially so a single 429 from
     // the embedder doesn't burn through the whole batch in parallel.
     for (const file of dropped) {
-      await runUpload(file)
+      await runUpload(file, contextual)
     }
   }
 
@@ -588,7 +639,7 @@ function EmptyDropZone({
         </div>
         <div className="ab-files-empty-body">
           Upload a markdown, text, or PDF file to make it searchable by your
-          agents. We chunk it, embed it, and store everything locally — press{' '}
+          agents. We chunk it, embed it, and store everything locally. Press{' '}
           <kbd>Esc</kbd> to cancel a drag.
         </div>
       </div>
@@ -740,6 +791,7 @@ function FileRow({
     name?: string
     description?: string
     chunkingMode?: FileResponse['chunkingMode']
+    contextualRetrieval?: boolean
   }) => Promise<void>
 }) {
   const sp = STATUS_PILL[file.ingestStatus]
@@ -774,6 +826,22 @@ function FileRow({
     if (!latest) return
     if (!latest.kind.startsWith('knowledge.ingest.')) return
     if (latest.ts <= lastEventTsRef.current) return
+    // Counted progress events carry everything the row renders (the
+    // stepProgress memo reads them straight off the stream); skipping
+    // the refetch here avoids one GET per chunk during the per-chunk
+    // contextualizing step. Step transitions and start/ok/fail events
+    // still refetch, which is what moves the status pill. The ts
+    // watermark advances only on the refetch path: a skipped counted
+    // event must not swallow a same-millisecond transition behind it.
+    const payload = latest.data as
+      | Partial<KnowledgeIngestProgressPayload>
+      | null
+    if (
+      latest.kind === 'knowledge.ingest.progress' &&
+      typeof payload?.chunksDone === 'number'
+    ) {
+      return
+    }
     lastEventTsRef.current = latest.ts
     onRefreshRef.current()
   }, [ingestEvents])
@@ -794,27 +862,61 @@ function FileRow({
     return () => window.clearInterval(handle)
   }, [inFlight])
 
-  // ── Latest embedding-step counters from the SSE stream so the row
-  //    can show "12 / 45" instead of a vague spinner.
-  const embedProgress = useMemo(() => {
+  // ── Counted progress + time estimate (context notes or embedding),
+  //    driven straight off the SSE buffer rather than the row's
+  //    fetched status, which can lag a refetch behind the stream. The
+  //    newest progress event decides the step: when it carries no
+  //    counts (a transition into describing etc.) there is nothing
+  //    truthful to show, and the rate window is the newest run of
+  //    counted events, so a previous step never skews the estimate.
+  const stepProgress = useMemo(() => {
+    type Counted = { step: string; ts: number; done: number; total: number }
+    let last: Counted | null = null
+    let first: Counted | null = null
     for (let i = ingestEvents.length - 1; i >= 0; i--) {
       const ev = ingestEvents[i]
       if (!ev || ev.kind !== 'knowledge.ingest.progress') continue
-      const payload = ev.data as {
-        step?: string
-        chunksDone?: number
-        chunksTotal?: number
-      } | null
+      const payload = ev.data as
+        | Partial<KnowledgeIngestProgressPayload>
+        | null
       if (
-        payload?.step === 'embedding' &&
-        typeof payload.chunksDone === 'number' &&
-        typeof payload.chunksTotal === 'number'
+        !payload?.step ||
+        typeof payload.chunksDone !== 'number' ||
+        typeof payload.chunksTotal !== 'number'
       ) {
-        return { done: payload.chunksDone, total: payload.chunksTotal }
+        // Newest progress event is an uncounted transition → the
+        // counted step is over; older ones bound the rate window.
+        if (!last) return null
+        break
       }
+      const point = {
+        step: payload.step,
+        ts: ev.ts,
+        done: payload.chunksDone,
+        total: payload.chunksTotal,
+      }
+      if (!last) last = point
+      else if (point.step !== last.step) break
+      first = point
     }
-    return null
+    if (!last || !first) return null
+    const dDone = last.done - first.done
+    const dMs = last.ts - first.ts
+    const etaSeconds =
+      dDone > 0 && dMs > 0
+        ? ((last.total - last.done) * dMs) / dDone / 1000
+        : null
+    return { step: last.step, done: last.done, total: last.total, etaSeconds }
   }, [ingestEvents])
+
+  const progressLabel = stepProgress
+    ? (stepProgress.step === 'contextualizing'
+        ? `Writing context notes ${stepProgress.done} / ${stepProgress.total}`
+        : `Embedding ${stepProgress.done} / ${stepProgress.total} chunks`) +
+      (stepProgress.etaSeconds != null
+        ? ` · ${formatEta(stepProgress.etaSeconds)}`
+        : '')
+    : null
 
   // ── Description draft sync (when an external refresh changes
   //    persisted text while we're not actively editing).
@@ -845,8 +947,8 @@ function FileRow({
 
   // ── Progress bar fill width. Concrete % when we have counts, slim
   //    indeterminate slide for the early steps (extract/chunk).
-  const progressFill = embedProgress
-    ? (embedProgress.done / Math.max(embedProgress.total, 1)) * 100
+  const progressFill = stepProgress
+    ? (stepProgress.done / Math.max(stepProgress.total, 1)) * 100
     : null
 
   const rowClass = [
@@ -898,9 +1000,7 @@ function FileRow({
             title="Click to add a description"
           >
             {inFlight
-              ? embedProgress
-                ? `Embedding ${embedProgress.done} / ${embedProgress.total} chunks`
-                : `${capitalize(file.ingestStatus)}…`
+              ? (progressLabel ?? `${sp.label}…`)
               : 'Add a description so agents know when to search this file'}
           </div>
         )}
@@ -908,10 +1008,18 @@ function FileRow({
           file={file}
           inFlight={inFlight}
           failed={failed}
-          embedProgress={embedProgress}
+          stepProgress={stepProgress}
         />
       </div>
       <div className="ab-list-row-meta">
+        {file.contextualRetrieval && !inFlight && !failed && (
+          <span
+            title="Chunks carry AI-written context notes that improve search"
+            style={{ display: 'inline-flex' }}
+          >
+            <Pill kind="accent">Context notes</Pill>
+          </span>
+        )}
         <Pill kind={sp.kind} dot={sp.dot}>
           {sp.label}
         </Pill>
@@ -935,13 +1043,23 @@ function FileRow({
               onClick: () => setEditingDescription(true),
               disabled: editingDescription,
             },
-            { label: 'Reingest', onClick: onReingest },
+            {
+              label: 'Reingest',
+              onClick: () => void confirmReingest(file, onReingest),
+            },
             {
               label:
                 file.chunkingMode === 'hierarchical'
                   ? 'Switch to flat chunking'
                   : 'Switch to hierarchical chunking',
               onClick: () => void switchChunkingMode(file, onPatch, onReingest),
+            },
+            {
+              label: file.contextualRetrieval
+                ? 'Turn off context notes'
+                : 'Turn on context notes',
+              onClick: () =>
+                void switchContextualRetrieval(file, onPatch, onReingest),
             },
             {
               label: 'Delete file',
@@ -978,12 +1096,12 @@ function RowMeta({
   file,
   inFlight,
   failed,
-  embedProgress,
+  stepProgress,
 }: {
   file: FileResponse
   inFlight: boolean
   failed: boolean
-  embedProgress: { done: number; total: number } | null
+  stepProgress: { done: number; total: number } | null
 }) {
   const parts: string[] = []
   parts.push(file.kind.toUpperCase())
@@ -992,8 +1110,8 @@ function RowMeta({
   if (file.ingestStatus === 'ready' && file.chunksDone > 0) {
     parts.push(`${file.chunksDone} chunks`)
   }
-  if (inFlight && embedProgress) {
-    parts.push(`${embedProgress.done} / ${embedProgress.total}`)
+  if (inFlight && stepProgress) {
+    parts.push(`${stepProgress.done} / ${stepProgress.total}`)
   }
   // Only surface the chunking mode when it's non-default — operators
   // who haven't switched should see a clean meta line. Hierarchical
@@ -1064,6 +1182,60 @@ async function switchChunkingMode(
   await onReingest()
 }
 
+// ─── Reingest confirm ─────────────────────────────────────────────────
+
+/**
+ * Plain "Reingest" from the kebab. The confirm mostly exists to tell
+ * the operator which way the context-notes setting will run: reingest
+ * always follows the file's saved flag. The error-retry button and the
+ * two switch flows skip this dialog; they carry their own context.
+ */
+async function confirmReingest(
+  file: FileResponse,
+  onReingest: () => Promise<void>,
+): Promise<void> {
+  const ok = await confirmDialog({
+    title: `Reingest "${file.name}"?`,
+    body: file.contextualRetrieval
+      ? 'Rebuilds the chunks and embeddings for this file. Context notes are on for this file, so every chunk also gets a fresh AI-written note. Slower: one AI call per chunk.'
+      : 'Rebuilds the chunks and embeddings for this file. Context notes are off for this file, so search will match the chunk text alone.',
+    confirmLabel: 'Reingest',
+    kind: 'warning',
+  })
+  if (!ok) return
+  await onReingest()
+}
+
+// ─── Contextual retrieval switch ──────────────────────────────────────
+
+/**
+ * Flip contextual retrieval for a file that was already ingested. Same
+ * shape as `switchChunkingMode`: the flag only takes effect at ingest
+ * time, so we confirm, PATCH the row, then reingest. PATCH must land
+ * before the reingest POST (see the ordering note in
+ * `switchChunkingMode`).
+ */
+async function switchContextualRetrieval(
+  file: FileResponse,
+  onPatch: (patch: { contextualRetrieval?: boolean }) => Promise<void>,
+  onReingest: () => Promise<void>,
+): Promise<void> {
+  const next = !file.contextualRetrieval
+  const ok = await confirmDialog({
+    title: next
+      ? `Turn on context notes for "${file.name}"?`
+      : `Turn off context notes for "${file.name}"?`,
+    body: next
+      ? 'Each chunk gets a short AI-written note describing where it sits in the document and what it covers. Search matches against the note as well as the chunk text, so paraphrased questions find the right passage more often. Reingest is slower with this on: one AI call per chunk. The file will be reingested now.'
+      : 'Chunks will be stored without AI-written context notes and search will match against the chunk text alone. The file will be reingested now.',
+    confirmLabel: next ? 'Turn on + reingest' : 'Turn off + reingest',
+    kind: 'warning',
+  })
+  if (!ok) return
+  await onPatch({ contextualRetrieval: next })
+  await onReingest()
+}
+
 // ─── Utilities ─────────────────────────────────────────────────────────
 
 function hasFiles(e: DragEvent | React.DragEvent['nativeEvent']): boolean {
@@ -1101,8 +1273,4 @@ function formatRelative(ts: number): string {
   if (h < 24) return `${h}h ago`
   const d = Math.round(h / 24)
   return `${d}d ago`
-}
-
-function capitalize(s: string): string {
-  return s.length === 0 ? s : s[0]!.toUpperCase() + s.slice(1)
 }

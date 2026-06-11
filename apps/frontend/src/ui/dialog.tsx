@@ -5,7 +5,6 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
-// `useState` is used for the confirmText input value below.
 import {
   resolveDialog,
   subscribeDialogs,
@@ -17,9 +16,11 @@ export function DialogHost() {
   const [pending, setPending] = useState<readonly PendingConfirm[]>([])
   useEffect(() => subscribeDialogs(setPending), [])
 
-  // Show one at a time — newest last (queue).
+  // Show one at a time — newest last (queue). Keyed by id so a queued
+  // dialog mounts fresh instead of inheriting the previous dialog's
+  // checkbox / typed-confirm / countdown state.
   const top = pending[0]
-  return top ? <ConfirmModal entry={top} /> : null
+  return top ? <ConfirmModal key={top.id} entry={top} /> : null
 }
 
 function ConfirmModal({ entry }: { entry: PendingConfirm }) {
@@ -28,6 +29,7 @@ function ConfirmModal({ entry }: { entry: PendingConfirm }) {
   const confirmRef = useRef<HTMLButtonElement | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [typed, setTyped] = useState('')
+  const [checked, setChecked] = useState(req.checkbox?.initial ?? false)
   // Countdown for the confirmDelaySec safety hold. Ticks every 250ms
   // for smoother visual change; the button stays disabled while
   // `secondsLeft > 0`.
@@ -134,12 +136,55 @@ function ConfirmModal({ entry }: { entry: PendingConfirm }) {
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && confirmEnabled) {
                   e.preventDefault()
-                  resolveDialog(id, true)
+                  resolveDialog(id, true, checked)
                 }
               }}
               autoComplete="off"
               spellCheck={false}
             />
+          </div>
+        )}
+        {req.checkbox && (
+          <div style={{ marginBottom: 'var(--space-5)' }}>
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={checked}
+              aria-describedby={
+                req.checkbox.hint ? `ab-dialog-check-hint-${id}` : undefined
+              }
+              className="ab-dialog-check"
+              onClick={() => setChecked((v) => !v)}
+            >
+              <span
+                className={`ab-checkbox${checked ? ' is-on' : ''}`}
+                aria-hidden="true"
+              >
+                <svg viewBox="0 0 16 16" fill="none">
+                  <path
+                    d="M3 8.5l3 3 7-7"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </span>
+              {req.checkbox.label}
+            </button>
+            {req.checkbox.hint && (
+              <div
+                id={`ab-dialog-check-hint-${id}`}
+                className="ab-section-sub"
+                style={{
+                  marginTop: 'var(--space-1_5)',
+                  paddingLeft: 'calc(18px + var(--space-2_5))',
+                  lineHeight: 1.55,
+                }}
+              >
+                {req.checkbox.hint}
+              </div>
+            )}
           </div>
         )}
         <div
@@ -167,7 +212,7 @@ function ConfirmModal({ entry }: { entry: PendingConfirm }) {
             className={kind === 'warning' ? 'ab-btn-warning' : undefined}
             ref={confirmRef}
             disabled={!confirmEnabled}
-            onClick={() => resolveDialog(id, true)}
+            onClick={() => resolveDialog(id, true, checked)}
           >
             {(req.confirmLabel ??
               (kind === 'destructive'

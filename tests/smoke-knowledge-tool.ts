@@ -2,18 +2,25 @@
  * Knowledge tool retrieval smoke. Drives the pure-function pieces of
  * `search_knowledge` over synthetic inputs and asserts:
  *
- *   1. `rrfFuse` returns chunks in best-first order, k=60 constant
- *      applied to both arms.
+ *   1. `rrfFuse` returns chunks in best-first order, k=60 constant,
+ *      vector arm at weight 1 and BM25 at `RRF_BM25_WEIGHT`.
  *   2. A chunk appearing in both vector + BM25 lists scores higher
  *      than chunks appearing in only one (the whole point of RRF).
  *   3. Empty inputs → empty output (no NaN, no crash).
- *   4. `parseRerankResponse` tolerates prose-wrapped digit lists, both
+ *   4. `buildRerankPool`: top-cap slice, BM25 rescue slots (a
+ *      fusion-starved keyword hit still reaches the reranker), dedupe,
+ *      diversity-cut respect, and the CAP + SLOTS ceiling.
+ *   5. `rerankWithLlm` against a stub agent: applies the model's
+ *      ordering, appends omitted candidates in RRF order, falls back
+ *      to input order on garbage output, and fires `onFailure` exactly
+ *      once on a transport error.
+ *   6. `parseRerankResponse` tolerates prose-wrapped digit lists, both
  *      comma- and whitespace-separated, and rejects out-of-range
  *      numbers silently.
- *   5. `buildSearchKnowledgeTool` returns null when no attached files
+ *   7. `buildSearchKnowledgeTool` returns null when no attached files
  *      OR no embedding provider, and a Tool with id `search_knowledge`
  *      when both are present.
- *   6. Page-aware PDF chunking: `stripPdfChrome` emits page offsets and
+ *   8. Page-aware PDF chunking: `stripPdfChrome` emits page offsets and
  *      `chunkDocument` stamps each chunk with its source page (null for
  *      non-PDF). Guards the "PDF chunks had no page" regression.
  *
@@ -27,13 +34,19 @@
 /* eslint-disable no-console */
 
 import {
+  buildRerankPool,
   buildSearchKnowledgeTool,
   chunkDocument,
   parseRerankResponse,
+  RERANK_BM25_RESCUE_SLOTS,
+  RERANK_CANDIDATE_CAP,
+  rerankWithLlm,
   resolveBaseUrl,
   rrfFuse,
+  RRF_BM25_WEIGHT,
   stripPdfChrome,
   type ChunkHit,
+  type FusedChunk,
 } from '@agent-bridge/agents'
 import type { LlmProviderRow } from '@agent-bridge/db/schema'
 
@@ -104,11 +117,13 @@ check(
 const sharedScore = fused.find((c) => c.id === 'shared')?.score ?? 0
 const onlyVecScore = fused.find((c) => c.id === 'only-vec')?.score ?? 0
 const onlyBm25Score = fused.find((c) => c.id === 'only-bm25')?.score ?? 0
-const expectedSharedScore = 1 / (60 + 1) + 1 / (60 + 2)
+// Weighted RRF: vector arm at weight 1, BM25 down-weighted (rationale
+// on `RRF_BM25_WEIGHT` in knowledge-tool.ts).
+const expectedSharedScore = 1 / (60 + 1) + RRF_BM25_WEIGHT / (60 + 2)
 const expectedOnlyVecScore = 1 / (60 + 2)
-const expectedOnlyBm25Score = 1 / (60 + 1)
+const expectedOnlyBm25Score = RRF_BM25_WEIGHT / (60 + 1)
 check(
-  'shared chunk score = sum of both ranks (RRF k=60)',
+  'shared chunk score = weighted sum of both ranks (RRF k=60)',
   Math.abs(sharedScore - expectedSharedScore) < 1e-9,
   `got ${sharedScore.toFixed(6)}, expected ${expectedSharedScore.toFixed(6)}`,
 )
@@ -118,7 +133,7 @@ check(
   `got ${onlyVecScore.toFixed(6)}`,
 )
 check(
-  'only-bm25 chunk score = single 1/(60+rank)',
+  'only-bm25 chunk score = weighted 1/(60+rank)',
   Math.abs(onlyBm25Score - expectedOnlyBm25Score) < 1e-9,
   `got ${onlyBm25Score.toFixed(6)}`,
 )
@@ -143,6 +158,145 @@ check(
     )
   })(),
   'vector-only fusion preserves order',
+)
+
+// ── buildRerankPool ────────────────────────────────────────────────────
+
+// The regression this guards: with the BM25 arm down-weighted, a
+// keyword-only hit (max score 0.35/61) fuses below a full 20-hit
+// vector arm (min score 1/80) and would be sliced out of the rerank
+// pool entirely. The rescue slots must pull it back in.
+const vec20: ChunkHit[] = Array.from({ length: 20 }, (_, i) => mkHit(`v${i}`))
+const bmWithExclusive: ChunkHit[] = [mkHit('kw-hit'), mkHit('v0')]
+const fusedStarved = rrfFuse(vec20, bmWithExclusive)
+const rescuePool = buildRerankPool(fusedStarved, bmWithExclusive)
+check(
+  'rescue slot pulls a fusion-starved bm25-only hit into the pool',
+  rescuePool.some((c) => c.id === 'kw-hit'),
+  `pool=${rescuePool.map((c) => c.id).join(',')}`,
+)
+check(
+  'rescue appends instead of displacing the fused slice',
+  rescuePool.length === RERANK_CANDIDATE_CAP + 1 &&
+    rescuePool[RERANK_CANDIDATE_CAP]?.id === 'kw-hit',
+  `len=${rescuePool.length}`,
+)
+check(
+  'a bm25 hit already in the pool is not duplicated',
+  rescuePool.filter((c) => c.id === 'v0').length === 1,
+)
+
+const bmTwoExclusive: ChunkHit[] = [mkHit('kw-a'), mkHit('kw-b')]
+const poolCapped = buildRerankPool(
+  rrfFuse(vec20, bmTwoExclusive),
+  bmTwoExclusive,
+)
+check(
+  'pool caps at RERANK_CANDIDATE_CAP + RERANK_BM25_RESCUE_SLOTS',
+  poolCapped.length === RERANK_CANDIDATE_CAP + RERANK_BM25_RESCUE_SLOTS &&
+    poolCapped.some((c) => c.id === 'kw-a') &&
+    poolCapped.some((c) => c.id === 'kw-b'),
+  `len=${poolCapped.length}`,
+)
+
+check(
+  'rescue respects the diversity cut (hit absent from fused list is skipped)',
+  !buildRerankPool(
+    fusedStarved.filter((c) => c.id !== 'kw-hit'),
+    bmWithExclusive,
+  ).some((c) => c.id === 'kw-hit'),
+)
+
+const bmDeep: ChunkHit[] = [mkHit('v0'), mkHit('v1'), mkHit('kw-deep')]
+check(
+  'rescue only considers the top bm25 ranks, not the whole arm',
+  !buildRerankPool(rrfFuse(vec20, bmDeep), bmDeep).some(
+    (c) => c.id === 'kw-deep',
+  ),
+)
+
+check(
+  'a small fused list passes through unchanged',
+  (() => {
+    const small = rrfFuse([mkHit('a'), mkHit('b')], [mkHit('b')])
+    const out = buildRerankPool(small, [mkHit('b')])
+    return (
+      out.length === 2 && new Set(out.map((c) => c.id)).size === out.length
+    )
+  })(),
+)
+
+// ── rerankWithLlm (fake agent) ─────────────────────────────────────────
+
+type RerankerArg = Parameters<typeof rerankWithLlm>[0]['rerankerAgent']
+function fakeReranker(respond: () => Promise<{ text: string }>): RerankerArg {
+  return { generate: respond } as unknown as RerankerArg
+}
+const fusedTrio: FusedChunk[] = [
+  { ...mkHit('c1'), score: 0.03 },
+  { ...mkHit('c2'), score: 0.02 },
+  { ...mkHit('c3'), score: 0.01 },
+]
+
+check(
+  'rerankWithLlm applies the model ordering',
+  JSON.stringify(
+    (
+      await rerankWithLlm({
+        rerankerAgent: fakeReranker(async () => ({ text: '3,1,2' })),
+        query: 'q',
+        candidates: fusedTrio,
+      })
+    ).map((c) => c.id),
+  ) === JSON.stringify(['c3', 'c1', 'c2']),
+)
+
+check(
+  'omitted candidates are appended in original order',
+  JSON.stringify(
+    (
+      await rerankWithLlm({
+        rerankerAgent: fakeReranker(async () => ({ text: '2' })),
+        query: 'q',
+        candidates: fusedTrio,
+      })
+    ).map((c) => c.id),
+  ) === JSON.stringify(['c2', 'c1', 'c3']),
+)
+
+check(
+  'garbage output falls back to the input order',
+  JSON.stringify(
+    (
+      await rerankWithLlm({
+        rerankerAgent: fakeReranker(async () => ({ text: 'no digits here!' })),
+        query: 'q',
+        candidates: fusedTrio,
+      })
+    ).map((c) => c.id),
+  ) === JSON.stringify(['c1', 'c2', 'c3']),
+)
+
+check(
+  'a transport failure falls back to input order and fires onFailure once',
+  await (async () => {
+    let failures = 0
+    const out = await rerankWithLlm({
+      rerankerAgent: fakeReranker(async () => {
+        throw new Error('Loading model')
+      }),
+      query: 'q',
+      candidates: fusedTrio,
+      onFailure: () => {
+        failures += 1
+      },
+    })
+    return (
+      failures === 1 &&
+      JSON.stringify(out.map((c) => c.id)) ===
+        JSON.stringify(['c1', 'c2', 'c3'])
+    )
+  })(),
 )
 
 // ── parseRerankResponse ────────────────────────────────────────────────

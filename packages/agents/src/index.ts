@@ -43,14 +43,23 @@ export type {
   DimSyncResult,
   FileChunksDimSnapshot,
 } from './knowledge-dim.js'
-// Hybrid-retrieval pure-function helpers exposed for smoke tests
-// (`tests/smoke-knowledge-tool.ts`). Production callers should reach
-// the retrieval path through `buildSearchKnowledgeTool` only.
+// Hybrid-retrieval internals exposed for the knowledge smokes
+// (`tests/smoke-knowledge-tool.ts`, `tests/smoke-knowledge-e2e.ts`);
+// some touch the DB (`runBm25Search`) or an LLM (`rerankWithLlm`).
+// Production callers reach retrieval through `buildSearchKnowledgeTool`
+// / `eagerPrefetchKnowledge` only.
 export {
+  buildRerankPool,
   buildSearchKnowledgeTool,
   eagerPrefetchKnowledge,
   parseRerankResponse,
+  PER_FILE_DIVERSITY_CAP,
+  RERANK_BM25_RESCUE_SLOTS,
+  RERANK_CANDIDATE_CAP,
+  rerankWithLlm,
   rrfFuse,
+  RRF_BM25_WEIGHT,
+  runBm25Search,
 } from './knowledge-tool.js'
 export type {
   AttachedKnowledgeFile,

@@ -42,6 +42,7 @@ export function toFileResponse(row: FileRow): FileResponse {
     // strict; an unrecognised value would surface as a Zod parse
     // error here rather than silently flowing to the UI.
     chunkingMode: row.chunkingMode as FileResponse['chunkingMode'],
+    contextualRetrieval: row.contextualRetrieval,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   })

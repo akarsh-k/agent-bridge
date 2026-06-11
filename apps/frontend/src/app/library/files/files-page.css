@@ -656,3 +656,16 @@
 .ab-list-row.is-files-row.is-files-editing .ab-list-row-meta {
   display: none;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .ab-files-progress-fill {
+    transition: none;
+  }
+  /* Static dimmed bar instead of the slide. The status pill text next
+   * to it still says which step is running, so no signal is lost. */
+  .ab-files-progress-fill.is-indeterminate {
+    animation: none;
+    width: 100%;
+    opacity: 0.4;
+  }
+}

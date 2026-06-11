@@ -17,8 +17,10 @@ import { zValidator } from '@hono/zod-validator'
 import {
   scorecardQueriesSaveInputSchema,
   scorecardRunInputSchema,
+  scorecardStreamId,
   type ScorecardQueryInput,
   type ScorecardQueryRow,
+  type ScorecardRunProgressPayload,
   type ScorecardRunRecord,
   type ScorecardStrategyAggregate,
   type ScorecardStrategyId,
@@ -26,6 +28,7 @@ import {
 import { scorecardsRepo } from '@agent-bridge/db'
 import { runScorecard, ScorecardError } from '@agent-bridge/agents'
 import { getDb } from '../db.js'
+import { getEventBus } from '../event-bus.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 
 const paramSchema = z.object({ agentId: z.uuid() })
@@ -140,12 +143,33 @@ export const agentScorecardRouter = new Hono()
       }
 
       try {
+        // Per-query progress on `scorecard:<agentId>` so the Scorecard
+        // tab can show a live bar (the rerank strategy costs one LLM
+        // call per query; full runs take minutes). Publish failures
+        // must not fail the run.
+        const bus = getEventBus()
         const result = await runScorecard({
           db,
           agentId,
           strategyIds: body.strategyIds,
           topK: body.topK,
           queries,
+          onQueryDone: async (done, total) => {
+            try {
+              await bus.publish({
+                kind: 'scorecard.run.progress',
+                ts: Date.now(),
+                streamId: scorecardStreamId(agentId),
+                data: {
+                  agentId,
+                  queriesDone: done,
+                  queriesTotal: total,
+                } satisfies ScorecardRunProgressPayload,
+              })
+            } catch (err) {
+              console.warn('[scorecard] progress publish failed:', err)
+            }
+          },
         })
         // Persist the run's scores so later runs can show a before/after
         // delta, then resolve what to compare against (pinned baseline, else
@@ -175,6 +199,11 @@ export const agentScorecardRouter = new Hono()
         if (err instanceof ScorecardError) {
           return httpError(c, {
             code: err.code === 'no_queries' ? 'validation_failed' : 'conflict',
+            // A dead rerank provider is an upstream outage; 503 marks
+            // it retryable. The envelope keeps `conflict` because the
+            // ErrorCode enum has no "unavailable" member and the UI
+            // only renders the message.
+            ...(err.code === 'rerank_unavailable' ? { status: 503 } : {}),
             message: err.message,
           })
         }

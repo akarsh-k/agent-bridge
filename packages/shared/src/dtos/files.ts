@@ -14,8 +14,9 @@
  *
  * Worker-owned fields (`ingest_status`, `chunks_done`, `ingest_error`)
  * are write-only from the ingest pipeline. The HTTP PATCH surface
- * deliberately only exposes `name` + `description` — letting the UI
- * mutate ingest state would let it lie about pipeline progress.
+ * exposes only operator-owned fields (`name`, `description`, and the
+ * reingest-gated `chunkingMode` / `contextualRetrieval`) — letting the
+ * UI mutate ingest state would let it lie about pipeline progress.
  */
 
 import { z } from 'zod'
@@ -43,6 +44,7 @@ export const FILE_INGEST_STATUSES = [
   'pending',
   'extracting',
   'chunking',
+  'contextualizing',
   'embedding',
   'describing',
   'ready',
@@ -158,6 +160,7 @@ export const fileUpdateInputSchema = z
     name: fileNameSchema.optional(),
     description: fileDescriptionSchema.optional(),
     chunkingMode: fileChunkingModeSchema.optional(),
+    contextualRetrieval: z.boolean().optional(),
   })
   .strict()
   .refine((v) => Object.keys(v).length > 0, {
@@ -186,6 +189,10 @@ export const fileResponseSchema = z.object({
    *  simple per-chunk retrieval; `hierarchical` for parent-expansion
    *  retrieval. Switching takes effect on the NEXT reingest. */
   chunkingMode: fileChunkingModeSchema,
+  /** Contextual Retrieval opt-in. When true, ingest writes a per-chunk
+   *  LLM context blurb that boosts both embedding and keyword search.
+   *  Switching takes effect on the NEXT reingest. */
+  contextualRetrieval: z.boolean(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 })

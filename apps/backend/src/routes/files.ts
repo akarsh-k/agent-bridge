@@ -14,8 +14,9 @@
  *      `ingest_status='pending'`, kicks off `ingestFile(id)` in the
  *      background, returns the row immediately.
  *   2. Background `ingestFile` flips status through extracting →
- *      chunking → embedding → describing → ready (or error). Wired
- *      in Slice C; in Slice B the call is a stub that does nothing.
+ *      chunking → (contextualizing, when opted in) → embedding →
+ *      describing → ready (or error). Wired in Slice C; in Slice B
+ *      the call is a stub that does nothing.
  *   3. PATCH /api/files/:id — name / description edits only. Pipeline
  *      state is worker-owned.
  *   4. DELETE — cascades chunks via FK, removes attachment rows via
@@ -199,6 +200,10 @@ export const filesRouter = new Hono()
         : null
     const displayName = nameOverride ?? filename
 
+    // Contextual Retrieval opt-in from the upload toggle; persisted so
+    // ingest and any later reingest pick it up.
+    const contextualRetrieval = form['contextualRetrieval'] === 'true'
+
     // Allocate the row first so we have an `id` to thread into the
     // storage path. We do this BEFORE writing bytes so a partial
     // write (disk full, perms) doesn't leave us with on-disk bytes
@@ -213,6 +218,7 @@ export const filesRouter = new Hono()
           kind,
           bytes: buffer.byteLength,
           contentHash,
+          contextualRetrieval,
           // `storage_path` is NOT NULL; we UPDATE it to the real
           // resolved dir after we have the id. Using a sentinel
           // here is safe: ingest hasn't been scheduled yet, so no
@@ -371,12 +377,14 @@ export const filesRouter = new Hono()
       const patch: Partial<typeof schema.files.$inferInsert> = {}
       if ('name' in body) patch.name = body.name
       if ('description' in body) patch.description = body.description
-      // chunkingMode change only takes effect on the next reingest —
-      // existing chunks were sliced under the old mode. The UI
-      // surfaces this via the confirm dialog before flipping; we
-      // accept the patch unconditionally here and let the operator
-      // trigger the reingest separately.
+      // chunkingMode + contextualRetrieval changes only take effect on
+      // the next reingest — existing chunks were built under the old
+      // settings. The UI surfaces this via the confirm dialog before
+      // flipping; we accept the patch unconditionally here and let the
+      // operator trigger the reingest separately.
       if ('chunkingMode' in body) patch.chunkingMode = body.chunkingMode
+      if ('contextualRetrieval' in body)
+        patch.contextualRetrieval = body.contextualRetrieval
 
       const [row] = await db
         .update(schema.files)

@@ -260,7 +260,8 @@ export function buildSearchKnowledgeTool(
       // Skipped when only one file is in scope — a single-doc deep
       // dive shouldn't lose recall to a diversity rule that has
       // nothing to diversify across.
-      const PER_FILE_CAP = scope.length === 1 ? Infinity : 3
+      const PER_FILE_CAP =
+        scope.length === 1 ? Infinity : PER_FILE_DIVERSITY_CAP
       const perFileCount = new Map<string, number>()
       const diverse = fused.filter((c) => {
         const seen = perFileCount.get(c.fileId) ?? 0
@@ -269,10 +270,10 @@ export function buildSearchKnowledgeTool(
         return true
       })
 
-      // Layer-1 candidate cap. Reranker spends LLM tokens proportional
-      // to this — 8 is enough to keep room for a good top-3 to top-5
-      // and small enough to fit one batched rerank prompt.
-      const candidates = diverse.slice(0, 8)
+      // Rerank pool: wider than the returned top-k (fused recall@8 was
+      // 86% vs 93% @12 on the scorecard) plus guaranteed slots for the
+      // keyword arm's best hits. See `buildRerankPool`.
+      const candidates = buildRerankPool(diverse, bm25Hits)
 
       const ordered =
         rerankerAgent && candidates.length > 3
@@ -505,12 +506,26 @@ export async function runBm25Search(args: {
       page,
       section_path,
       text,
-      ts_rank_cd(tsv, q) AS rank
-    FROM file_chunks, plainto_tsquery('english', $1) q
+      ts_rank_cd(tsv, tq.q) AS rank
+    FROM file_chunks,
+      -- OR the lexemes instead of plainto_tsquery's implicit AND. Real
+      -- BM25 scores partial matches; requiring every term meant
+      -- natural-language questions matched almost nothing (13.6% hit
+      -- rate on the scorecard). plainto_tsquery still handles
+      -- tokenising/stemming/stopwords; lexemes are single quoted words,
+      -- so the ' & ' → ' | ' replace is safe, ts_rank_cd still ranks
+      -- many-term matches higher, and an all-stopword query yields the
+      -- empty tsquery (matches nothing, as before). Subselect because
+      -- a bare cast isn't a valid FROM item.
+      (
+        SELECT replace(
+          plainto_tsquery('english', $1)::text, ' & ', ' | '
+        )::tsquery AS q
+      ) tq
     WHERE file_id = ANY($2::uuid[])
       AND embedding_model = $3
       AND embedding IS NOT NULL
-      AND tsv @@ q
+      AND tsv @@ tq.q
     ORDER BY rank DESC
     LIMIT 20
     `,
@@ -528,12 +543,58 @@ export async function runBm25Search(args: {
   }))
 }
 
+// ─── Retrieval tuning knobs ─────────────────────────────────────────────
+// Scorecard-validated; `knowledge-eval.ts` imports these so the
+// scorecard always measures the same funnel as production.
+
+/** BM25's vote weight in `rrfFuse`. The OR-matched keyword arm is far
+ *  noisier than the vector arm; at equal weight it displaced good
+ *  vector candidates and hybrid scored below vector-only. */
+export const RRF_BM25_WEIGHT = 0.35
+
+/** Fused candidates fed to the LLM reranker (then cut to `top_k`). */
+export const RERANK_CANDIDATE_CAP = 12
+
+/** Top BM25 hits guaranteed a rerank slot (see `buildRerankPool`). */
+export const RERANK_BM25_RESCUE_SLOTS = 2
+
+/** Per-file diversity cap on the rerank pool (skipped for single-file
+ *  scopes). Shared with the scorecard so the measured funnel matches. */
+export const PER_FILE_DIVERSITY_CAP = 3
+
 /**
- * Reciprocal Rank Fusion. Standard k=60 constant from Cormack et al.
- * No tuning knobs — that's the point of RRF over weighted-sum
- * fusion. A chunk that appears at rank 1 in one list and rank 5 in
- * the other gets `1/(60+1) + 1/(60+5)` ≈ 0.032. Higher = better.
+ * Rerank pool selection: the top `RERANK_CANDIDATE_CAP` fused
+ * candidates, plus up to `RERANK_BM25_RESCUE_SLOTS` of the keyword
+ * arm's top hits appended when fusion left them below the cut.
  *
+ * The rescue slots exist because the down-weight makes BM25-only hits
+ * unable to out-fuse a full vector arm (max 0.35/61 vs 1/80 for the
+ * 20th vector hit), and a chunk the reranker never sees is an
+ * unrecoverable miss. Appending (rather than swapping into the top
+ * slice) keeps the fused slice's measured recall intact; an exact
+ * identifier match the embedder missed still reaches the judge. Hits
+ * cut by the diversity cap stay cut.
+ */
+export function buildRerankPool(
+  diverse: ReadonlyArray<FusedChunk>,
+  bm25List: ReadonlyArray<ChunkHit>,
+): FusedChunk[] {
+  const pool = diverse.slice(0, RERANK_CANDIDATE_CAP)
+  const inPool = new Set(pool.map((c) => c.id))
+  for (const hit of bm25List.slice(0, RERANK_BM25_RESCUE_SLOTS)) {
+    if (inPool.has(hit.id)) continue
+    const entry = diverse.find((c) => c.id === hit.id)
+    if (!entry) continue
+    pool.push(entry)
+    inPool.add(hit.id)
+  }
+  return pool
+}
+
+/**
+ * Weighted Reciprocal Rank Fusion. Standard k=60 constant from
+ * Cormack et al.: a chunk at rank r contributes `weight / (60 + r)`
+ * per arm (vector at 1, BM25 at `RRF_BM25_WEIGHT`); higher = better.
  * Dedupes by chunk id (the same chunk can appear in both lists).
  *
  * Exported for smoke tests (`tests/smoke-knowledge-tool.ts`); not part
@@ -545,9 +606,12 @@ export function rrfFuse(
 ): FusedChunk[] {
   const K = 60
   const byId = new Map<string, FusedChunk>()
-  const addRanked = (list: ReadonlyArray<ChunkHit>): void => {
+  const addRanked = (
+    list: ReadonlyArray<ChunkHit>,
+    weight: number,
+  ): void => {
     list.forEach((hit, idx) => {
-      const contribution = 1 / (K + (idx + 1))
+      const contribution = weight / (K + (idx + 1))
       const existing = byId.get(hit.id)
       if (existing) {
         byId.set(hit.id, { ...existing, score: existing.score + contribution })
@@ -556,8 +620,8 @@ export function rrfFuse(
       }
     })
   }
-  addRanked(vectorList)
-  addRanked(bm25List)
+  addRanked(vectorList, 1)
+  addRanked(bm25List, RRF_BM25_WEIGHT)
   return Array.from(byId.values()).sort((a, b) => b.score - a.score)
 }
 
@@ -584,10 +648,18 @@ export async function rerankWithLlm(args: {
   rerankerAgent: Agent
   query: string
   candidates: ReadonlyArray<FusedChunk>
+  /** Called when the rerank LLM call itself fails (transport/provider
+   *  errors, not parse fallbacks). Lets callers trip a circuit breaker
+   *  instead of re-attempting a dead provider per query. */
+  onFailure?: (err: unknown) => void
 }): Promise<FusedChunk[]> {
-  const { rerankerAgent, query, candidates } = args
+  const { rerankerAgent, query, candidates, onFailure } = args
+  // Substantial excerpts, not teasers: at 280 chars the judge ranked
+  // chunks on their opening sentence and scored worse than no rerank
+  // at all. 1200 chars ≈ 300 tokens; the full candidate list still
+  // fits one small prompt.
   const numbered = candidates
-    .map((c, i) => `${i + 1}. ${snippetOf(c.text, 280)}`)
+    .map((c, i) => `${i + 1}. ${snippetOf(c.text, 1200)}`)
     .join('\n\n')
   const prompt = `You are ranking search results for relevance.
 
@@ -600,12 +672,18 @@ Return ONLY the candidate numbers in best-first order, comma-separated. Example:
 
   let text: string
   try {
-    const result = await rerankerAgent.generate(prompt, {})
+    // No retries: reranking is best-effort with an RRF fallback, and
+    // the SDK default (2 retries) triples the doomed calls and the
+    // wait per query when the provider is down.
+    const result = await rerankerAgent.generate(prompt, {
+      modelSettings: { maxRetries: 0 },
+    })
     text = (result.text ?? '').trim()
   } catch (err) {
     console.warn(
       `[knowledge-tool] rerank failed; falling back to RRF order: ${err instanceof Error ? err.message : String(err)}`,
     )
+    if (onFailure) onFailure(err)
     return [...candidates]
   }
 

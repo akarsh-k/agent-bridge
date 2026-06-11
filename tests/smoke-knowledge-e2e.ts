@@ -50,6 +50,7 @@ import {
   ingestKnowledgeFile,
   readFileChunksDim,
   rebuildFileChunksAtDim,
+  runBm25Search,
   withRunContext,
 } from '@agent-bridge/agents'
 import { loadRootDotenv } from '@agent-bridge/shared/env'
@@ -980,6 +981,29 @@ pharmacological intervention for elevated LDL.
       )
     }
 
+    // ── 9j-b. BM25 OR-semantics: a query mixing one real term with
+    //          words the document never contains must still match.
+    //          Real BM25 scores partial matches; the old
+    //          plainto_tsquery AND form returned nothing here.
+    {
+      const fpRow = await db.pool.query<{ embedding_model: string }>(
+        `SELECT embedding_model FROM file_chunks
+         WHERE file_id = $1 AND embedding IS NOT NULL LIMIT 1`,
+        [hFile.id],
+      )
+      const orHits = await runBm25Search({
+        db,
+        scope: [hFile.id],
+        fingerprint: fpRow.rows[0]?.embedding_model ?? '',
+        query: 'cholesterol zzqx unknownterm reading',
+      })
+      check(
+        'BM25 matches on partial terms (OR-semantics)',
+        orHits.length > 0,
+        `${orHits.length} hits for a 1-of-4-terms query`,
+      )
+    }
+
     // ── 9k. Contextual Retrieval round-trip (only when env enabled).
     //          Skip silently otherwise — the feature is opt-in and
     //          enabling it slows the smoke noticeably (one LLM call
@@ -998,6 +1022,24 @@ pharmacological intervention for elevated LDL.
         'Contextual Retrieval populates context_blurb on children',
         withBlurbs.length > 0,
         `${withBlurbs.length}/${blurbRows.rows.length} chunks have blurbs`,
+      )
+
+      // Contextual BM25 (migration 0022): every chunk's tsv must match
+      // its own blurb's lexemes, proving the blurb feeds the keyword
+      // index, not just the embedding input. All-stopword blurbs
+      // (empty tsquery) are excluded rather than failed.
+      const folded = await db.pool.query<{ folded: boolean | null }>(
+        `SELECT bool_and(
+           plainto_tsquery('english', context_blurb)::text = ''
+           OR tsv @@ plainto_tsquery('english', context_blurb)
+         ) AS folded
+         FROM file_chunks
+         WHERE file_id = $1 AND coalesce(context_blurb, '') <> ''`,
+        [hFile.id],
+      )
+      check(
+        'contextual BM25: tsv folds in the blurb text',
+        folded.rows[0]?.folded === true,
       )
     }
 

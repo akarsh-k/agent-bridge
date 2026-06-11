@@ -176,6 +176,9 @@ export interface WorkspaceContextValue {
       name?: string
       threadId?: string
       ephemeral?: boolean
+      /** Contextual Retrieval opt-in for the new file: ingest writes a
+       *  per-chunk AI context note that both search arms match on. */
+      contextualRetrieval?: boolean
     },
   ) => Promise<{ file: FileResponse; duplicate: boolean }>
   patchFile: (id: string, patch: FileUpdateInput) => Promise<FileResponse>

@@ -15,12 +15,14 @@
  * Styling: colocated scorecard.css (imported via styles/index.css).
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   scorecardStrategyIds,
   scorecardStrategyMeta,
+  scorecardStreamId,
   type ScorecardQueryInput,
+  type ScorecardRunProgressPayload,
   type ScorecardRunResponse,
   type ScorecardStrategyId,
 } from '@agent-bridge/shared'
@@ -32,6 +34,8 @@ import {
   saveScorecardQueries,
   setScorecardBaseline,
 } from '../../lib/rpc'
+import { useSSE } from '../../lib/use-sse'
+import { formatEta } from '../../lib/format-eta'
 import { Button } from '../../ui/button'
 import { Pill } from '../../ui/pill'
 import { Tooltip } from '../../ui/tooltip'
@@ -142,6 +146,47 @@ export function ScorecardTab({ agentId }: { agentId: string }) {
   const [pinnedRunId, setPinnedRunId] = useState<string | null>(null)
   const [pinMsg, setPinMsg] = useState('')
 
+  // ── Live run progress over SSE. Subscribed only while a run is in
+  //    flight; the backend publishes one event per finished question,
+  //    so the bar and estimate track the rerank model's real pace.
+  const { events: runEvents } = useSSE(
+    running ? scorecardStreamId(agentId) : null,
+    { cap: 16 },
+  )
+  const runProgress = useMemo(() => {
+    let first: { ts: number; done: number } | null = null
+    let last: { ts: number; done: number; total: number } | null = null
+    for (let i = runEvents.length - 1; i >= 0; i--) {
+      const ev = runEvents[i]
+      if (!ev || ev.kind !== 'scorecard.run.progress') continue
+      const p = ev.data as Partial<ScorecardRunProgressPayload> | null
+      if (
+        typeof p?.queriesDone !== 'number' ||
+        typeof p.queriesTotal !== 'number'
+      ) {
+        continue
+      }
+      if (!last) {
+        last = { ts: ev.ts, done: p.queriesDone, total: p.queriesTotal }
+      }
+      first = { ts: ev.ts, done: p.queriesDone }
+    }
+    if (!last || !first) return null
+    const dDone = last.done - first.done
+    const dMs = last.ts - first.ts
+    const etaSeconds =
+      dDone > 0 && dMs > 0
+        ? ((last.total - last.done) * dMs) / dDone / 1000
+        : null
+    return { done: last.done, total: last.total, etaSeconds }
+  }, [runEvents])
+
+  // Run token for async guards: `onRun` captures the token it started
+  // with and applies nothing once a newer run (or an agent switch)
+  // bumps it. Comparing agent ids is not enough: switching A → B → A
+  // would re-arm a stale closure.
+  const runSeqRef = useRef(0)
+
   // Reset per-agent state when the agent prop changes (adjust-state-on-
   // prop-change, the same pattern the agent detail page uses for tabs).
   const [activeAgent, setActiveAgent] = useState(agentId)
@@ -155,6 +200,12 @@ export function ScorecardTab({ agentId }: { agentId: string }) {
     setPendingId(null)
     setPinnedRunId(null)
     setPinMsg('')
+    // Also drop `running`: it gates the progress SSE subscription, and
+    // carrying it across agents would subscribe to the NEW agent's
+    // stream for a run this tab never started. Bumping the run token
+    // orphans the in-flight request (see `onRun`).
+    setRunning(false)
+    runSeqRef.current += 1
   }
 
   useEffect(() => {
@@ -304,14 +355,17 @@ export function ScorecardTab({ agentId }: { agentId: string }) {
     setRunError('')
     setPinnedRunId(null)
     setPinMsg('')
+    const runSeq = ++runSeqRef.current
     try {
       const res = await runScorecard(agentId, {
         strategyIds: scorecardStrategyIds.filter((id) => selected.has(id)),
         topK,
         queries,
       })
+      if (runSeqRef.current !== runSeq) return
       setResult(res)
     } catch (err) {
+      if (runSeqRef.current !== runSeq) return
       setRunError(
         err instanceof ApiError
           ? err.message
@@ -320,7 +374,7 @@ export function ScorecardTab({ agentId }: { agentId: string }) {
             : 'Run failed',
       )
     } finally {
-      setRunning(false)
+      if (runSeqRef.current === runSeq) setRunning(false)
     }
   }
 
@@ -482,6 +536,22 @@ export function ScorecardTab({ agentId }: { agentId: string }) {
           <Button variant="primary" onClick={onRun} disabled={running}>
             {running ? 'Running…' : 'Run scorecard'}
           </Button>
+          {running && runProgress && (
+            <span className="ab-sc-run-progress">
+              <span className="ab-sc-run-progress-track" aria-hidden="true">
+                <span
+                  className="ab-sc-run-progress-fill"
+                  style={{
+                    width: `${(runProgress.done / Math.max(runProgress.total, 1)) * 100}%`,
+                  }}
+                />
+              </span>
+              {runProgress.done} / {runProgress.total} questions
+              {runProgress.etaSeconds != null
+                ? ` · ${formatEta(runProgress.etaSeconds)}`
+                : ''}
+            </span>
+          )}
           {runError && <span className="ab-sc-run-error">{runError}</span>}
         </div>
       </div>

@@ -508,6 +508,22 @@
   }
 }
 
+/* The dialog applies this animation via an inline style, so the
+ * reduced-motion fallback redefines the keyframes (a pure crossfade)
+ * rather than trying to out-specify the inline property. */
+@media (prefers-reduced-motion: reduce) {
+  @keyframes ab-dialog-in {
+    from {
+      opacity: 0;
+      transform: translate(-50%, -50%);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, -50%);
+    }
+  }
+}
+
 /* Same idea for elements horizontally-centred (translateX(-50%) only,
    eg. the command palette which docks 12vh from the top). */
 @keyframes ab-popover-in {
@@ -599,6 +615,7 @@
 .ab-cmdk:focus-visible,
 .ab-nav-link:focus-visible,
 .ab-list-row:focus-visible,
+.ab-dialog-check:focus-visible,
 .ab-card-link:focus-visible {
   outline: none;
   box-shadow:
@@ -1652,7 +1669,26 @@ button.ab-list-row {
   opacity: 1;
   transform: scale(1);
 }
-.ab-list-row:hover .ab-checkbox:not(.is-on) {
+/* Checkbox row inside the confirm dialog (`checkbox` option on
+ * confirmDialogEx). Button-based like the sheet checkbox rows so it
+ * keyboard-toggles with Space; the focus ring comes from the shared
+ * focus-visible group. */
+.ab-dialog-check {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2_5);
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
+.ab-list-row:hover .ab-checkbox:not(.is-on),
+.ab-dialog-check:hover .ab-checkbox:not(.is-on) {
   border-color: var(--accent-border);
 }
 

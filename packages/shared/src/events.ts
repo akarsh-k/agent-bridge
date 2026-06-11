@@ -222,6 +222,7 @@ export const runEventKinds = [
   'knowledge.ingest.progress',
   'knowledge.ingest.ok',
   'knowledge.ingest.fail',
+  'scorecard.run.progress',
   'ping',
 ] as const
 
@@ -451,10 +452,24 @@ export function repoStreamId(repoId: string): string {
   return `repo:${repoId}`
 }
 
+/** Build the SSE `streamId` for scorecard-run progress (per agent).
+ *  The Scorecard tab subscribes while a run is in flight; the run's
+ *  per-query loop publishes one `scorecard.run.progress` per finished
+ *  query (the rerank LLM call makes each one seconds-slow). */
+export function scorecardStreamId(agentId: string): string {
+  return `scorecard:${agentId}`
+}
+
+export interface ScorecardRunProgressPayload {
+  readonly agentId: string
+  readonly queriesDone: number
+  readonly queriesTotal: number
+}
+
 /** Build the SSE `streamId` for per-file ingest progress (knowledge files).
  *  The Library files page subscribes to this stream to render live
- *  extracting → chunking → embedding → describing → ready transitions
- *  in place of (or alongside) the existing 2s status poll. */
+ *  extracting → chunking → (contextualizing, opt-in) → embedding →
+ *  describing → ready transitions, alongside an 8s backstop poll. */
 export function fileStreamId(fileId: string): string {
   return `file:${fileId}`
 }
@@ -1185,6 +1200,7 @@ export interface KnowledgePrefetchResultPayload {
 export type KnowledgeIngestStep =
   | 'extracting'
   | 'chunking'
+  | 'contextualizing'
   | 'embedding'
   | 'describing'
 
@@ -1198,8 +1214,8 @@ export interface KnowledgeIngestStartedPayload {
 export interface KnowledgeIngestProgressPayload {
   readonly fileId: string
   readonly step: KnowledgeIngestStep
-  /** Populated on the `embedding` step — chunks finished so far +
-   *  total expected. Omitted on the other steps. */
+  /** Populated on the `contextualizing` + `embedding` steps — chunks
+   *  finished so far + total expected. Omitted on the other steps. */
   readonly chunksDone?: number
   readonly chunksTotal?: number
 }

@@ -848,6 +848,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       name?: string
       threadId?: string
       ephemeral?: boolean
+      contextualRetrieval?: boolean
     }): Promise<{ file: FileResponse; duplicate: boolean }> => {
       // Hono's typed RPC doesn't expose a multipart helper; build the
       // FormData by hand and route through `callApi` (which handles the
@@ -857,6 +858,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
       if (args.name) formData.append('name', args.name)
       if (args.threadId) formData.append('threadId', args.threadId)
       if (args.ephemeral) formData.append('ephemeral', 'true')
+      if (args.contextualRetrieval)
+        formData.append('contextualRetrieval', 'true')
       const result = await callApi<{
         ok: true
         file: FileResponse

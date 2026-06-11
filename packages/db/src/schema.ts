@@ -471,8 +471,10 @@ export const files = pgTable(
      *  delete can locate the bytes without reconstructing the path. */
     storagePath: text('storage_path').notNull(),
     /** Ingestion lifecycle:
-     *    'pending' | 'extracting' | 'chunking' | 'embedding' |
-     *    'describing' | 'ready' | 'error'.
+     *    'pending' | 'extracting' | 'chunking' | 'contextualizing' |
+     *    'embedding' | 'describing' | 'ready' | 'error'.
+     *  'contextualizing' only occurs when `contextual_retrieval` is
+     *  on (per-chunk LLM blurbs).
      *  UI surfaces a pill keyed on this. `chunks_done` tracks
      *  progress within the embedding step for resumability. */
     ingestStatus: text('ingest_status').notNull().default('pending'),
@@ -488,6 +490,13 @@ export const files = pgTable(
      *  Phase 3. Switching modes for an existing file requires a
      *  reingest. */
     chunkingMode: text('chunking_mode').notNull().default('flat'),
+    /** Contextual Retrieval (Anthropic) opt-in: ingest writes a
+     *  per-chunk LLM blurb to `file_chunks.context_blurb`, which feeds
+     *  both the embedding input and the `tsv` BM25 column. One LLM
+     *  call per chunk; switching requires a reingest. */
+    contextualRetrieval: boolean('contextual_retrieval')
+      .notNull()
+      .default(false),
     /** Human-readable failure message when `ingest_status = 'error'`. */
     ingestError: text('ingest_error'),
     createdAt: createdAt(),
@@ -536,11 +545,15 @@ export const fileChunks = pgTable(
      *  snippet (server may further trim). */
     text: text('text').notNull(),
     // NOTE: `file_chunks` also has a `tsv tsvector GENERATED ALWAYS AS
-    // (to_tsvector('english', "text")) STORED` column for BM25, added by
-    // migration 0015. Drizzle doesn't model it because its DSL can't
-    // express STORED-generated columns; future `db:generate` runs may
-    // emit a `DROP COLUMN "tsv"` — strip that statement before applying.
-    /** Phase 3 "Contextual Retrieval" blurb (Anthropic). Empty in v1. */
+    // (to_tsvector('english', coalesce("context_blurb", '') || ' ' || "text"))
+    // STORED` column for BM25, added by migration 0015 and rebuilt in
+    // 0022 to fold in the Contextual Retrieval blurb. Drizzle doesn't
+    // model it because its DSL can't express STORED-generated columns;
+    // future `db:generate` runs may emit a `DROP COLUMN "tsv"` — strip
+    // that statement before applying.
+    /** "Contextual Retrieval" blurb (Anthropic). Populated when the
+     *  feature was on at ingest (row flag or env force-on); null
+     *  otherwise, and null per chunk when its blurb call failed. */
     contextBlurb: text('context_blurb'),
     /** Embedding-model fingerprint: `provider_kind:model_id:dim`. The
      *  retrieval path computes the current fingerprint from the active

@@ -268,17 +268,21 @@ async function ingestInner(input: IngestKnowledgeFileInput): Promise<void> {
 
     // ── Contextual Retrieval (opt-in) ─────────────────────────────────
     // Anthropic's "Contextual Retrieval": per-chunk LLM blurb that
-    // describes where the chunk sits in the document. Prepended to
-    // the embedding INPUT (not the stored text), so geometric
-    // placement encodes document-level context. Anthropic reports a
-    // 67% retrieval-failure reduction with this + reranking. Cost is
-    // ONE LLM CALL PER CHUNK at ingest time — material on big files.
-    //
-    // Opt-in via `AGENT_BRIDGE_CONTEXTUAL_RETRIEVAL=true`. Default off.
+    // describes where the chunk sits in the document. Prepended to the
+    // embedding INPUT (not the stored text) and persisted to
+    // `file_chunks.context_blurb`, which the `tsv` column folds into
+    // BM25. Costs one LLM call per chunk at ingest — hence opt-in per
+    // file via `files.contextual_retrieval` (upload toggle or
+    // Files-page action); the env var is a global force-on for tests.
     const contextualEnabled =
+      file.contextualRetrieval ||
       process.env['AGENT_BRIDGE_CONTEXTUAL_RETRIEVAL'] === 'true'
     let contextBlurbs: ReadonlyArray<string> = []
     if (contextualEnabled) {
+      // Own pipeline status + per-chunk progress events: one LLM call
+      // per chunk makes this the slowest step, and without counts the
+      // Library row would sit on an indeterminate bar for minutes.
+      await transition('contextualizing')
       const targets =
         plan.mode === 'flat'
           ? plan.flat
@@ -293,6 +297,24 @@ async function ingestInner(input: IngestKnowledgeFileInput): Promise<void> {
           fileName: file.name,
           docPreview: text.slice(0, 2000),
           chunks: targets,
+          // Operator opt-in must not silently no-op: with the row flag
+          // set and no chat provider, fail the ingest with a fix-it
+          // message instead of finishing "ready" with empty blurbs and
+          // a UI pill claiming notes exist. (The env force-on keeps
+          // the old soft-skip; it has no UI promise to break.)
+          required: file.contextualRetrieval,
+          // Resume: chunks below chunks_done are already inserted with
+          // their blurbs; regenerating them would re-spend one LLM
+          // call per chunk on output `embedAndStore` never reads.
+          skipCount: file.chunksDone,
+          onChunk: async (done, total) => {
+            await emit('knowledge.ingest.progress', {
+              fileId,
+              step: 'contextualizing',
+              chunksDone: done,
+              chunksTotal: total,
+            } satisfies KnowledgeIngestProgressPayload)
+          },
         })
       ).map(stripNul)
     }
@@ -1279,9 +1301,10 @@ ${head}`
  * sequential ingest pass produces nearly-identical retrieval gains
  * at lower load.
  *
- * Returns an empty array on any failure (no chat provider, LLM
- * call timeout, etc.). The caller treats empty as "feature off" —
- * embedding proceeds without blurbs.
+ * Returns [] only on the no-provider soft-skip (env force-on without
+ * `required`); otherwise one entry per chunk, '' for skipped or
+ * individually-failed chunks. Throws when `required` and either no
+ * chat provider is configured or every generation call failed.
  */
 async function maybeGenerateContextBlurbs(args: {
   db: AgentBridgeDb
@@ -1292,8 +1315,19 @@ async function maybeGenerateContextBlurbs(args: {
     sectionPath: string | null
     page: number | null
   }>
+  /** True when the FILE ROW requests blurbs (operator opt-in): the
+   *  feature failing wholesale then fails the ingest instead of
+   *  soft-skipping. */
+  required: boolean
+  /** Chunks below this index already have persisted rows + blurbs
+   *  (crash resume); they get '' placeholders without an LLM call. */
+  skipCount: number
+  /** Not called for skipped chunks, but `done` counts them, so resume
+   *  progress starts at skipCount + 1. Drives the progress bar. */
+  onChunk?: (done: number, total: number) => Promise<void> | void
 }): Promise<ReadonlyArray<string>> {
-  const { db, fileName, docPreview, chunks } = args
+  const { db, fileName, docPreview, chunks, required, skipCount, onChunk } =
+    args
   // Same oldest-first pick as `tryAutoDescribe` so an ingest's
   // describe step and its Contextual-Retrieval blurbs land on the
   // same chat provider.
@@ -1304,8 +1338,15 @@ async function maybeGenerateContextBlurbs(args: {
     .orderBy(asc(schema.llmProviders.createdAt))
     .limit(1)
   if (!chatProvider || !chatProvider.defaultModel) {
+    if (required) {
+      throw new Error(
+        'Context notes are turned on for this file, but no chat model ' +
+          'provider is configured. Add a chat provider under Library → ' +
+          'Providers, or turn off context notes for this file.',
+      )
+    }
     console.warn(
-      '[knowledge-ingest] AGENT_BRIDGE_CONTEXTUAL_RETRIEVAL=true but no chat ' +
+      '[knowledge-ingest] Contextual Retrieval enabled but no chat ' +
         'provider configured; skipping per-chunk blurb generation.',
     )
     return []
@@ -1332,7 +1373,20 @@ async function maybeGenerateContextBlurbs(args: {
   })
 
   const blurbs: string[] = []
+  let generated = 0
+  let failed = 0
+  let consecutiveFailures = 0
+  // Early abort: a run of consecutive failures means the provider is
+  // down (or died mid-file), not flaky. Stop hammering it instead of
+  // burning one doomed call per remaining chunk; the caller tolerates
+  // a short array (missing tail indexes read as '').
+  const BLURB_BREAKER_LIMIT = 5
   for (const chunk of chunks) {
+    if (blurbs.length < skipCount) {
+      blurbs.push('')
+      continue
+    }
+    if (consecutiveFailures >= BLURB_BREAKER_LIMIT) break
     const sectionLine = chunk.sectionPath
       ? `Section: ${chunk.sectionPath}\n`
       : ''
@@ -1355,12 +1409,44 @@ Write 1-2 short sentences (max 200 chars total) describing where this passage si
       const result = await agent.generate(prompt, {})
       const text = (result.text ?? '').trim().replace(/\s+/g, ' ').slice(0, 200)
       blurbs.push(text)
+      // An empty response is a failure in disguise (misrouted model,
+      // content filter): it must not reset the breaker or dodge the
+      // all-failed floor below.
+      if (text) {
+        generated += 1
+        consecutiveFailures = 0
+      } else {
+        failed += 1
+        consecutiveFailures += 1
+      }
     } catch (err) {
       console.warn(
         `[knowledge-ingest] context blurb failed for chunk; skipping: ${err instanceof Error ? err.message : String(err)}`,
       )
       blurbs.push('')
+      failed += 1
+      consecutiveFailures += 1
     }
+    if (onChunk) await onChunk(blurbs.length, chunks.length)
+  }
+  // Per-chunk failures degrade to "no note" (a flaky local model
+  // shouldn't kill a 90%-successful ingest), but the operator promise
+  // has a floor: if NO call succeeded, the feature did nothing and
+  // finishing "ready" would lie.
+  if (required && failed > 0 && generated === 0) {
+    throw new Error(
+      `Context notes are turned on for this file, but every note ` +
+        `generation call failed (${failed} attempts; ${chatProvider.kind} ` +
+        `model "${chatProvider.defaultModel}"). Check the chat provider, ` +
+        `then reingest.`,
+    )
+  }
+  if (failed > 0) {
+    console.warn(
+      `[knowledge-ingest] context notes degraded: ${failed} call(s) ` +
+        `failed; ${generated} of ${chunks.length - skipCount} chunks got ` +
+        `notes.`,
+    )
   }
   return blurbs
 }
@@ -1427,7 +1513,7 @@ function stripNul(value: string): string {
 async function setStatus(
   db: AgentBridgeDb,
   fileId: string,
-  status: 'extracting' | 'chunking' | 'embedding' | 'describing' | 'ready',
+  status: KnowledgeIngestStep | 'ready',
 ): Promise<void> {
   await db.db
     .update(schema.files)

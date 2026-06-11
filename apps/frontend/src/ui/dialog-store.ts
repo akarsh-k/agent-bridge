@@ -34,12 +34,24 @@ export interface ConfirmRequest {
    * reflexive double-clicks on destructive actions.
    */
   confirmDelaySec?: number
+  /**
+   * Optional checkbox rendered between the body and the buttons. Its
+   * final state comes back on `confirmDialogEx`'s result (`checked`
+   * is false when the dialog is cancelled). Used for "do X, and also
+   * Y?" choices like the upload dialog's context-notes opt-in.
+   */
+  checkbox?: { label: string; hint?: string; initial?: boolean }
+}
+
+export interface ConfirmResult {
+  ok: boolean
+  checked: boolean
 }
 
 interface PendingConfirm {
   id: number
   req: ConfirmRequest
-  resolve: (ok: boolean) => void
+  resolve: (result: ConfirmResult) => void
 }
 
 let nextId = 1
@@ -59,7 +71,7 @@ export function subscribeDialogs(
   }
 }
 
-export function resolveDialog(id: number, ok: boolean): void {
+export function resolveDialog(id: number, ok: boolean, checked = false): void {
   const entry = pending.find((p) => p.id === id)
   if (!entry) return
   // Replace `pending` with a fresh array reference (NOT splice) so
@@ -67,16 +79,21 @@ export function resolveDialog(id: number, ok: boolean): void {
   // listener seeing the same array identity and skipping the
   // re-render — the dialog never unmounted.
   pending = pending.filter((p) => p.id !== id)
-  entry.resolve(ok)
+  entry.resolve({ ok, checked })
   notify()
 }
 
-export function confirmDialog(req: ConfirmRequest): Promise<boolean> {
+/** Confirm dialog that also reports the `checkbox` state. */
+export function confirmDialogEx(req: ConfirmRequest): Promise<ConfirmResult> {
   return new Promise((resolve) => {
     const id = nextId++
     pending = [...pending, { id, req, resolve }]
     notify()
   })
+}
+
+export function confirmDialog(req: ConfirmRequest): Promise<boolean> {
+  return confirmDialogEx(req).then((r) => r.ok)
 }
 
 export type { PendingConfirm }
