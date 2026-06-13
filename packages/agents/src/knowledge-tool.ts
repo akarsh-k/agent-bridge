@@ -625,6 +625,83 @@ export function rrfFuse(
   return Array.from(byId.values()).sort((a, b) => b.score - a.score)
 }
 
+// ─── Rate-limit backoff ─────────────────────────────────────────────────
+
+/** Provider responses we treat as "slow down, retry later" rather than
+ *  "this call is broken". 429 = rate limited; 503/529 = overloaded. */
+const RATE_LIMIT_STATUSES = new Set([429, 503, 529])
+
+/** Duck-type a provider/transport error for rate-limit pushback. AI-SDK
+ *  errors expose `statusCode`, fetch-style ones `status`; `Retry-After`
+ *  (seconds) is surfaced when present. */
+function rateLimitInfo(err: unknown): {
+  retryable: boolean
+  retryAfterMs?: number
+} {
+  if (!err || typeof err !== 'object') return { retryable: false }
+  const e = err as Record<string, unknown>
+  const status =
+    typeof e.statusCode === 'number'
+      ? e.statusCode
+      : typeof e.status === 'number'
+        ? e.status
+        : undefined
+  if (status === undefined || !RATE_LIMIT_STATUSES.has(status)) {
+    return { retryable: false }
+  }
+  const headers = (e.responseHeaders ?? e.headers) as
+    | Record<string, string>
+    | undefined
+  const ra = headers?.['retry-after'] ?? headers?.['Retry-After']
+  const secs = ra !== undefined ? Number(ra) : NaN
+  return {
+    retryable: true,
+    ...(Number.isFinite(secs) && secs >= 0
+      ? { retryAfterMs: secs * 1000 }
+      : {}),
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+export interface RetryPolicy {
+  /** Retry attempts AFTER the first try (total tries = retries + 1). */
+  readonly retries: number
+  /** Base backoff in ms; doubles per attempt, capped at `capMs`. */
+  readonly baseMs?: number
+  readonly capMs?: number
+}
+
+/**
+ * Run `fn`, retrying ONLY rate-limit errors (429/503/529) with
+ * exponential backoff + jitter. Other errors throw immediately, so a
+ * dead provider still fails fast (and trips the scorecard breaker) while
+ * transient throttling just waits and retries. `Retry-After` is honored
+ * but clamped to `capMs` so a hostile value can't stall a worker.
+ */
+export async function retryOnRateLimit<T>(
+  fn: () => Promise<T>,
+  policy: RetryPolicy,
+): Promise<T> {
+  const { retries, baseMs = 500, capMs = 8000 } = policy
+  let attempt = 0
+  for (;;) {
+    try {
+      return await fn()
+    } catch (err) {
+      const info = rateLimitInfo(err)
+      if (!info.retryable || attempt >= retries) throw err
+      const backoff = baseMs * 2 ** attempt
+      const jittered = backoff * (0.5 + Math.random() * 0.5)
+      const waitMs = Math.min(capMs, Math.max(jittered, info.retryAfterMs ?? 0))
+      attempt += 1
+      await sleep(waitMs)
+    }
+  }
+}
+
 // ─── LLM-as-judge reranker ──────────────────────────────────────────────
 
 export function buildRerankerAgent(model: MastraModelConfig): Agent {
@@ -652,8 +729,13 @@ export async function rerankWithLlm(args: {
    *  errors, not parse fallbacks). Lets callers trip a circuit breaker
    *  instead of re-attempting a dead provider per query. */
   onFailure?: (err: unknown) => void
+  /** Opt-in backoff on rate-limit pushback, for the scorecard's parallel
+   *  fan-out. The per-turn production path omits it (a 429 there just
+   *  degrades to RRF). Non-rate-limit errors still fall through to
+   *  `onFailure` immediately. */
+  retry?: RetryPolicy
 }): Promise<FusedChunk[]> {
-  const { rerankerAgent, query, candidates, onFailure } = args
+  const { rerankerAgent, query, candidates, onFailure, retry } = args
   // Substantial excerpts, not teasers: at 280 chars the judge ranked
   // chunks on their opening sentence and scored worse than no rerank
   // at all. 1200 chars ≈ 300 tokens; the full candidate list still
@@ -672,12 +754,13 @@ Return ONLY the candidate numbers in best-first order, comma-separated. Example:
 
   let text: string
   try {
-    // No retries: reranking is best-effort with an RRF fallback, and
-    // the SDK default (2 retries) triples the doomed calls and the
-    // wait per query when the provider is down.
-    const result = await rerankerAgent.generate(prompt, {
-      modelSettings: { maxRetries: 0 },
-    })
+    // maxRetries: 0 — the SDK default (2) triples doomed calls when the
+    // provider is down; reranking degrades to RRF instead. The optional
+    // `retry` adds backoff for rate-limit pushback only, so a dead
+    // provider still fails fast.
+    const call = () =>
+      rerankerAgent.generate(prompt, { modelSettings: { maxRetries: 0 } })
+    const result = retry ? await retryOnRateLimit(call, retry) : await call()
     text = (result.text ?? '').trim()
   } catch (err) {
     console.warn(

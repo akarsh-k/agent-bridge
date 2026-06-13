@@ -22,6 +22,11 @@ const envSchema = baseEnvSchema.extend({
     ),
   /** Max Postgres pool size for the backend. */
   DATABASE_POOL_SIZE: z.coerce.number().int().min(1).max(100).default(10),
+  /** Retrieval scorecard: queries processed concurrently per run. Each
+   *  in-flight query holds ~2 DB connections and fires one embed + one
+   *  rerank call, so raising this past ~DATABASE_POOL_SIZE/2 needs a
+   *  bigger pool and a provider tier that tolerates the burst. */
+  SCORECARD_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
   /** Log every SQL query to stdout (DEV ONLY — will print PII). */
   DATABASE_DEBUG: z
     .union([z.literal('true'), z.literal('false')])

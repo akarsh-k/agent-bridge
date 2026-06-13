@@ -48,12 +48,19 @@ import {
   embeddingFingerprint,
   PER_FILE_DIVERSITY_CAP,
   rerankWithLlm,
+  retryOnRateLimit,
   rrfFuse,
   runBm25Search,
   runVectorSearch,
   type ChunkHit,
   type FusedChunk,
+  type RetryPolicy,
 } from './knowledge-tool.js'
+
+/** Rate-limit retries per provider call (embed + rerank) under parallel
+ *  fan-out: enough to ride out a throttling burst, few enough that a
+ *  dead provider still trips the breaker promptly. */
+const RATE_LIMIT_RETRIES = 4
 
 function rerankUnavailable(failures: number): ScorecardError {
   return new ScorecardError(
@@ -83,10 +90,47 @@ export interface RunScorecardInput {
   readonly strategyIds: ReadonlyArray<ScorecardStrategyId>
   readonly topK: number
   readonly queries: ReadonlyArray<ScorecardQueryInput>
-  /** Called after each query finishes all strategies. Drives the
-   *  Scorecard tab's progress bar (each query costs one rerank LLM
-   *  call when `rrf_rerank` is selected, so runs take minutes). */
+  /** Max queries processed concurrently. Each in-flight query holds ~2
+   *  DB connections (vector + BM25) and fires one embed + one rerank
+   *  call, so a high value needs a matching `DATABASE_POOL_SIZE` and a
+   *  tolerant provider tier. Defaults to 1 (sequential). */
+  readonly concurrency?: number
+  /** Called after each query finishes all strategies; drives the
+   *  Scorecard tab's progress bar. `done` is monotonic but increments in
+   *  finish order under concurrency > 1. */
   readonly onQueryDone?: (done: number, total: number) => Promise<void> | void
+}
+
+/**
+ * Run `worker` over `[0, count)` with at most `limit` in flight, pulling
+ * the next index per runner until drained. On the first worker error it
+ * stops scheduling and rethrows that error, so a tripped breaker or
+ * failed embed aborts the run promptly.
+ */
+async function mapWithConcurrency(
+  count: number,
+  limit: number,
+  worker: (index: number) => Promise<void>,
+): Promise<void> {
+  let next = 0
+  let aborted = false
+  let firstError: unknown
+  const runnerCount = Math.max(1, Math.min(limit, count))
+  const runner = async (): Promise<void> => {
+    while (!aborted) {
+      const index = next++
+      if (index >= count) return
+      try {
+        await worker(index)
+      } catch (err) {
+        aborted = true
+        firstError = err
+        return
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: runnerCount }, () => runner()))
+  if (aborted) throw firstError
 }
 
 /**
@@ -99,6 +143,7 @@ export async function runScorecard(
   input: RunScorecardInput,
 ): Promise<Omit<ScorecardRunResult, 'ok'>> {
   const { db, agentId, strategyIds, topK, queries, onQueryDone } = input
+  const concurrency = Math.max(1, input.concurrency ?? 1)
   const startedAt = Date.now()
 
   if (queries.length === 0) {
@@ -173,7 +218,9 @@ export async function runScorecard(
   // ── Per-query retrieval + scoring ──
   // Vector + BM25 are computed ONCE per query and shared across
   // strategies (embedding is the expensive part; don't pay it 4×).
-  const perQuery: ScorecardRunResult['perQuery'] = []
+  // Written by index (not push) so output order is deterministic even
+  // when queries finish out of order under concurrency > 1.
+  const perQuery: ScorecardRunResult['perQuery'] = new Array(queries.length)
   // strategyId → running sums over judged queries, for the aggregates.
   const acc = new Map<
     ScorecardStrategyId,
@@ -194,12 +241,19 @@ export async function runScorecard(
   // query; without this a 59-question run attempts (and logs) 59
   // doomed LLM calls. The run FAILS rather than degrading: silently
   // recording RRF-order results under the "Hybrid + rerank" label
-  // would poison every baseline comparison.
+  // would poison every baseline comparison. Backoff (below) absorbs
+  // transient 429s first, so a tripped breaker means a real outage.
+  // Counters are shared across workers but safe: Node never preempts
+  // mid-statement, so `+= 1` can't interleave.
   let rerankFailures = 0
   let rerankAttempts = 0
   const RERANK_BREAKER_LIMIT = 3
+  const retryPolicy: RetryPolicy = { retries: RATE_LIMIT_RETRIES }
+  // Progress counter; increments in finish order under concurrency > 1.
+  let completed = 0
 
-  for (const q of queries) {
+  const processQuery = async (index: number): Promise<void> => {
+    const q = queries[index]!
     const gold = {
       snippets: q.expectedSnippets ?? [],
       page: q.expectedPage ?? null,
@@ -208,7 +262,10 @@ export async function runScorecard(
 
     let queryVector: ReadonlyArray<number> | undefined
     try {
-      const embed = await embedder.doEmbed({ values: [q.query] })
+      const embed = await retryOnRateLimit(
+        () => embedder.doEmbed({ values: [q.query] }),
+        retryPolicy,
+      )
       queryVector = embed.embeddings[0]
     } catch (err) {
       // Surface a transient embedder failure as a clear error rather than
@@ -247,6 +304,7 @@ export async function runScorecard(
         onRerankFailure: () => {
           rerankFailures += 1
         },
+        rerankRetry: retryPolicy,
         // Match production: no per-file cap for a single-file scope, else
         // the candidate pool caps at 3 and the reranker never runs.
         perFileCap: scope.length === 1 ? Infinity : PER_FILE_DIVERSITY_CAP,
@@ -280,17 +338,20 @@ export async function runScorecard(
       }
     }
 
-    perQuery.push({
+    perQuery[index] = {
       query: q.query,
       expectedSnippets: gold.snippets,
       judged,
       byStrategy,
-    })
+    }
     if (rerankFailures >= RERANK_BREAKER_LIMIT) {
       throw rerankUnavailable(rerankFailures)
     }
-    if (onQueryDone) await onQueryDone(perQuery.length, queries.length)
+    completed += 1
+    if (onQueryDone) await onQueryDone(completed, queries.length)
   }
+
+  await mapWithConcurrency(queries.length, concurrency, processQuery)
 
   // Small-run floor: a 1-2 question run can fail every rerank without
   // reaching the in-loop limit; all-attempts-failed is just as
@@ -314,7 +375,9 @@ export async function runScorecard(
     }
   })
 
-  const judgedCount = perQuery.filter((p) => p.judged).length
+  // Dense on the success path (any worker throw aborts the run before
+  // here); `?.` guards against a future sparse-hole regression.
+  const judgedCount = perQuery.filter((p) => p?.judged).length
   return {
     topK,
     fileCount: fileRows.length,
@@ -338,6 +401,7 @@ async function rankForStrategy(args: {
   rerankerAgent: ReturnType<typeof buildRerankerAgent> | null
   onRerankAttempt?: () => void
   onRerankFailure?: (err: unknown) => void
+  rerankRetry?: RetryPolicy
   perFileCap: number
 }): Promise<ChunkHit[]> {
   const {
@@ -349,6 +413,7 @@ async function rankForStrategy(args: {
     rerankerAgent,
     onRerankAttempt,
     onRerankFailure,
+    rerankRetry,
     perFileCap,
   } = args
   switch (strategyId) {
@@ -370,6 +435,7 @@ async function rankForStrategy(args: {
           query,
           candidates,
           onFailure: onRerankFailure,
+          retry: rerankRetry,
         })
       }
       return ordered.slice(0, topK)

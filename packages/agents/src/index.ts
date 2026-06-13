@@ -57,6 +57,7 @@ export {
   RERANK_BM25_RESCUE_SLOTS,
   RERANK_CANDIDATE_CAP,
   rerankWithLlm,
+  retryOnRateLimit,
   rrfFuse,
   RRF_BM25_WEIGHT,
   runBm25Search,
@@ -66,6 +67,7 @@ export type {
   BuildSearchKnowledgeToolInput,
   ChunkHit,
   FusedChunk,
+  RetryPolicy,
 } from './knowledge-tool.js'
 // Retrieval Scorecard engine: scores the hybrid-retrieval pipeline against
 // an operator-authored golden set. Consumed by the scorecard route + tab.

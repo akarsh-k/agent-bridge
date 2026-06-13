@@ -28,6 +28,7 @@ import {
 import { scorecardsRepo } from '@agent-bridge/db'
 import { runScorecard, ScorecardError } from '@agent-bridge/agents'
 import { getDb } from '../db.js'
+import { env } from '../env.js'
 import { getEventBus } from '../event-bus.js'
 import { httpError, httpValidationError } from '../lib/errors.js'
 
@@ -154,6 +155,7 @@ export const agentScorecardRouter = new Hono()
           strategyIds: body.strategyIds,
           topK: body.topK,
           queries,
+          concurrency: env.SCORECARD_CONCURRENCY,
           onQueryDone: async (done, total) => {
             try {
               await bus.publish({

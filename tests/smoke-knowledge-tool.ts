@@ -41,6 +41,7 @@ import {
   RERANK_BM25_RESCUE_SLOTS,
   RERANK_CANDIDATE_CAP,
   rerankWithLlm,
+  retryOnRateLimit,
   resolveBaseUrl,
   rrfFuse,
   RRF_BM25_WEIGHT,
@@ -295,6 +296,110 @@ check(
       failures === 1 &&
       JSON.stringify(out.map((c) => c.id)) ===
         JSON.stringify(['c1', 'c2', 'c3'])
+    )
+  })(),
+)
+
+// ── retryOnRateLimit + rerank backoff ──────────────────────────────────
+
+// A 429-style error (AI-SDK exposes `statusCode`); `baseMs:1` keeps the
+// backoff near-instant so the smoke stays sub-second.
+const rateLimited = () =>
+  Object.assign(new Error('Too Many Requests'), { statusCode: 429 })
+const fastRetry = { retries: 3, baseMs: 1, capMs: 4 }
+
+check(
+  'retryOnRateLimit retries a 429 then succeeds',
+  await (async () => {
+    let calls = 0
+    const out = await retryOnRateLimit(async () => {
+      calls += 1
+      if (calls < 3) throw rateLimited()
+      return 'ok'
+    }, fastRetry)
+    return out === 'ok' && calls === 3
+  })(),
+)
+
+check(
+  'retryOnRateLimit does NOT retry a non-rate-limit error',
+  await (async () => {
+    let calls = 0
+    try {
+      await retryOnRateLimit(async () => {
+        calls += 1
+        throw new Error('bad request')
+      }, fastRetry)
+      return false
+    } catch {
+      return calls === 1
+    }
+  })(),
+)
+
+check(
+  'retryOnRateLimit gives up after exhausting retries',
+  await (async () => {
+    let calls = 0
+    try {
+      await retryOnRateLimit(async () => {
+        calls += 1
+        throw rateLimited()
+      }, fastRetry)
+      return false
+    } catch {
+      // first try + 3 retries
+      return calls === 4
+    }
+  })(),
+)
+
+check(
+  'rerankWithLlm with retry rides out a 429 burst (no onFailure)',
+  await (async () => {
+    let calls = 0
+    let failures = 0
+    const out = await rerankWithLlm({
+      rerankerAgent: fakeReranker(async () => {
+        calls += 1
+        if (calls < 3) throw rateLimited()
+        return { text: '3,1,2' }
+      }),
+      query: 'q',
+      candidates: fusedTrio,
+      onFailure: () => {
+        failures += 1
+      },
+      retry: fastRetry,
+    })
+    return (
+      failures === 0 &&
+      JSON.stringify(out.map((c) => c.id)) === JSON.stringify(['c3', 'c1', 'c2'])
+    )
+  })(),
+)
+
+check(
+  'rerankWithLlm with retry still fails fast on a non-429 (breaker fires)',
+  await (async () => {
+    let calls = 0
+    let failures = 0
+    const out = await rerankWithLlm({
+      rerankerAgent: fakeReranker(async () => {
+        calls += 1
+        throw new Error('connection refused')
+      }),
+      query: 'q',
+      candidates: fusedTrio,
+      onFailure: () => {
+        failures += 1
+      },
+      retry: fastRetry,
+    })
+    return (
+      calls === 1 &&
+      failures === 1 &&
+      JSON.stringify(out.map((c) => c.id)) === JSON.stringify(['c1', 'c2', 'c3'])
     )
   })(),
 )
