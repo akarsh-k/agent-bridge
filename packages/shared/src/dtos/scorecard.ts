@@ -163,6 +163,27 @@ export type ScorecardStrategyAggregate = z.infer<
   typeof scorecardStrategyAggregateSchema
 >
 
+/**
+ * Oracle ("best case") hit-rates over each arm's FULL retrieved list (not
+ * the top-K slice), regardless of which strategies were selected. Every
+ * strategy draws its results from the vector and BM25 lists, so
+ * `unionHitRate` is a true ceiling no strategy can beat. The gap between
+ * it and a strategy's hitRate is pure ranking/fusion/truncation loss (a
+ * retrievable answer that never reached the top-K), versus a gap to 100%
+ * which is a genuine retrieval miss.
+ */
+export const scorecardOracleSchema = z.object({
+  /** Fraction of questions where the vector arm retrieved the answer somewhere. */
+  vectorHitRate: z.number(),
+  /** Fraction where the BM25 arm retrieved the answer somewhere. */
+  bm25HitRate: z.number(),
+  /** Fraction where EITHER arm retrieved it — the ceiling. */
+  unionHitRate: z.number(),
+  /** Coverage of the answer pieces across both arms' full lists. */
+  unionCoverage: z.number(),
+})
+export type ScorecardOracle = z.infer<typeof scorecardOracleSchema>
+
 export const scorecardRunResultSchema = z.object({
   ok: z.literal(true),
   topK: z.number(),
@@ -172,6 +193,8 @@ export const scorecardRunResultSchema = z.object({
   embeddingModel: z.string(),
   durationMs: z.number(),
   aggregates: z.array(scorecardStrategyAggregateSchema),
+  /** Optional so a response from an older engine still validates. */
+  oracle: scorecardOracleSchema.optional(),
   perQuery: z.array(scorecardQueryResultSchema),
 })
 export type ScorecardRunResult = z.infer<typeof scorecardRunResultSchema>

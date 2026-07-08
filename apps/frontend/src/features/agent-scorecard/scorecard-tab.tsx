@@ -21,14 +21,18 @@ import {
   scorecardStrategyIds,
   scorecardStrategyMeta,
   scorecardStreamId,
+  type ScorecardOracle,
   type ScorecardQueryInput,
   type ScorecardRunProgressPayload,
+  type ScorecardRunRecord,
   type ScorecardRunResponse,
+  type ScorecardStrategyAggregate,
   type ScorecardStrategyId,
 } from '@agent-bridge/shared'
 
 import {
   ApiError,
+  getScorecardBaseline,
   getScorecardQueries,
   runScorecard,
   saveScorecardQueries,
@@ -141,10 +145,27 @@ export function ScorecardTab({ agentId }: { agentId: string }) {
   const [running, setRunning] = useState(false)
   const [runError, setRunError] = useState('')
   const [result, setResult] = useState<ScorecardRunResponse | null>(null)
+  // The standing baseline (pinned, else most recent run), shown on load so
+  // the page isn't blank before a fresh run. Refetched after each run/pin.
+  const [baselineRun, setBaselineRun] = useState<ScorecardRunRecord | null>(
+    null,
+  )
   // Run id the operator pinned as baseline this session (so the button flips
   // to "baseline" without a refetch).
   const [pinnedRunId, setPinnedRunId] = useState<string | null>(null)
   const [pinMsg, setPinMsg] = useState('')
+
+  // Refetch the standing baseline, guarded by the run token so a late
+  // resolve can't land agent A's baseline in agent B after a switch (an
+  // agent switch or new run bumps `runSeqRef`).
+  const reloadBaseline = () => {
+    const seq = runSeqRef.current
+    void getScorecardBaseline(agentId)
+      .then((r) => {
+        if (runSeqRef.current === seq) setBaselineRun(r)
+      })
+      .catch(() => {})
+  }
 
   // ── Live run progress over SSE. Subscribed only while a run is in
   //    flight; the backend publishes one event per finished question,
@@ -194,6 +215,7 @@ export function ScorecardTab({ agentId }: { agentId: string }) {
     setActiveAgent(agentId)
     setLoad('loading')
     setResult(null)
+    setBaselineRun(null)
     setRunError('')
     setStatusMsg('')
     setRowErrors({})
@@ -212,9 +234,13 @@ export function ScorecardTab({ agentId }: { agentId: string }) {
     let alive = true
     void (async () => {
       try {
-        const saved = await getScorecardQueries(agentId)
+        const [saved, base] = await Promise.all([
+          getScorecardQueries(agentId),
+          getScorecardBaseline(agentId).catch(() => null),
+        ])
         if (!alive) return
         setRows(saved.map(rowFromSaved))
+        setBaselineRun(base)
         setLoad('ready')
       } catch (err) {
         if (!alive) return
@@ -364,6 +390,8 @@ export function ScorecardTab({ agentId }: { agentId: string }) {
       })
       if (runSeqRef.current !== runSeq) return
       setResult(res)
+      // This run may now be the most recent; keep the baseline card current.
+      reloadBaseline()
     } catch (err) {
       if (runSeqRef.current !== runSeq) return
       setRunError(
@@ -384,6 +412,7 @@ export function ScorecardTab({ agentId }: { agentId: string }) {
       await setScorecardBaseline(agentId, runId)
       setPinnedRunId(runId)
       setPinMsg('Saved as baseline. Future runs compare against this one.')
+      reloadBaseline()
     } catch (err) {
       setPinMsg(err instanceof Error ? err.message : 'Failed to set baseline')
     }
@@ -565,6 +594,13 @@ export function ScorecardTab({ agentId }: { agentId: string }) {
           pinMsg={pinMsg}
         />
       )}
+
+      {/* Standing baseline — visible on load and kept alongside fresh
+          results so there's always a reference to read against. Hidden when
+          it's the very run shown above (avoids showing the same run twice). */}
+      {baselineRun && baselineRun.id !== result?.runId && (
+        <BaselineCard run={baselineRun} />
+      )}
     </div>
   )
 }
@@ -580,50 +616,7 @@ function ScorecardResults({
   pinnedRunId: string | null
   pinMsg: string
 }) {
-  const best = {
-    hitRate: Math.max(...result.aggregates.map((a) => a.hitRate), 0),
-    coverage: Math.max(...result.aggregates.map((a) => a.coverage), 0),
-    mrr: Math.max(...result.aggregates.map((a) => a.mrr), 0),
-    ndcg: Math.max(...result.aggregates.map((a) => a.ndcg), 0),
-    precision: Math.max(...result.aggregates.map((a) => a.precision), 0),
-  }
-  // Baseline scores keyed by strategy, for the per-cell delta.
-  const baseMap = new Map(
-    (result.baseline?.aggregates ?? []).map((a) => [a.strategyId, a] as const),
-  )
   const isPinned = pinnedRunId === result.runId
-
-  // A metric cell: the value plus a small ▲/▼ delta vs the baseline. All
-  // four metrics are higher-is-better, so ▲ (green) means improvement.
-  const metricCell = (
-    cur: number,
-    top: number,
-    text: string,
-    baseVal: number | undefined,
-    kind: 'pct' | 'dec',
-  ) => {
-    let delta = null
-    if (baseVal != null) {
-      const d = cur - baseVal
-      const up = d > 0.0005
-      const down = d < -0.0005
-      const mag =
-        kind === 'pct'
-          ? `${Math.abs(Math.round(d * 100))}`
-          : Math.abs(d).toFixed(3)
-      delta = (
-        <span className={`ab-sc-delta${up ? ' up' : down ? ' down' : ''}`}>
-          {up ? `▲ ${mag}` : down ? `▼ ${mag}` : '·'}
-        </span>
-      )
-    }
-    return (
-      <td className={cur > 0 && cur === top ? 'ab-sc-cell-best' : undefined}>
-        {text}
-        {delta}
-      </td>
-    )
-  }
 
   return (
     <div className="ab-card ab-card-pad ab-form-section">
@@ -677,64 +670,11 @@ function ScorecardResults({
         {pinMsg}
       </span>
 
-      <div className="ab-sc-table-wrap">
-        <table className="ab-sc-table">
-          <thead>
-            <tr>
-              <th scope="col">Strategy</th>
-              {METRIC_HEADERS.map(([label, info]) => (
-                <th scope="col" key={label}>
-                  <span className="ab-sc-th">
-                    {label}
-                    <Tooltip label={info} side="top">
-                      <button
-                        type="button"
-                        className="ab-sc-info"
-                        aria-label={`What ${label} measures`}
-                      >
-                        <InfoGlyph />
-                      </button>
-                    </Tooltip>
-                  </span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {result.aggregates.map((a) => {
-              const b = baseMap.get(a.strategyId)
-              return (
-                <tr key={a.strategyId}>
-                  <td className="ab-sc-strategy-name">{a.label}</td>
-                  {metricCell(
-                    a.hitRate,
-                    best.hitRate,
-                    pct(a.hitRate),
-                    b?.hitRate,
-                    'pct',
-                  )}
-                  {metricCell(
-                    a.coverage,
-                    best.coverage,
-                    pct(a.coverage),
-                    b?.coverage,
-                    'pct',
-                  )}
-                  {metricCell(a.mrr, best.mrr, dec(a.mrr), b?.mrr, 'dec')}
-                  {metricCell(a.ndcg, best.ndcg, dec(a.ndcg), b?.ndcg, 'dec')}
-                  {metricCell(
-                    a.precision,
-                    best.precision,
-                    pct(a.precision),
-                    b?.precision,
-                    'pct',
-                  )}
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-      </div>
+      <AggregateTable
+        aggregates={result.aggregates}
+        baseline={result.baseline?.aggregates}
+        oracle={result.oracle}
+      />
 
       <div className="ab-sc-perq">
         {result.perQuery.map((q, i) => (
@@ -801,6 +741,182 @@ function ScorecardResults({
           </details>
         ))}
       </div>
+    </div>
+  )
+}
+
+/**
+ * The per-strategy metrics table. Shared by the fresh-run results and the
+ * standing baseline card. Pass `baseline` for per-cell ▲/▼ deltas, and
+ * `oracle` to append the "best case" ceiling row.
+ */
+function AggregateTable({
+  aggregates,
+  baseline,
+  oracle,
+}: {
+  aggregates: ScorecardStrategyAggregate[]
+  baseline?: ScorecardStrategyAggregate[]
+  oracle?: ScorecardOracle
+}) {
+  const best = {
+    hitRate: Math.max(...aggregates.map((a) => a.hitRate), 0),
+    coverage: Math.max(...aggregates.map((a) => a.coverage), 0),
+    mrr: Math.max(...aggregates.map((a) => a.mrr), 0),
+    ndcg: Math.max(...aggregates.map((a) => a.ndcg), 0),
+    precision: Math.max(...aggregates.map((a) => a.precision), 0),
+  }
+  // Baseline scores keyed by strategy, for the per-cell delta.
+  const baseMap = new Map(
+    (baseline ?? []).map((a) => [a.strategyId, a] as const),
+  )
+
+  // A metric cell: the value plus a small ▲/▼ delta vs the baseline. All
+  // metrics are higher-is-better, so ▲ (green) means improvement.
+  const metricCell = (
+    cur: number,
+    top: number,
+    text: string,
+    baseVal: number | undefined,
+    kind: 'pct' | 'dec',
+  ) => {
+    let delta = null
+    if (baseVal != null) {
+      const d = cur - baseVal
+      const up = d > 0.0005
+      const down = d < -0.0005
+      const mag =
+        kind === 'pct'
+          ? `${Math.abs(Math.round(d * 100))}`
+          : Math.abs(d).toFixed(3)
+      delta = (
+        <span className={`ab-sc-delta${up ? ' up' : down ? ' down' : ''}`}>
+          {up ? `▲ ${mag}` : down ? `▼ ${mag}` : '·'}
+        </span>
+      )
+    }
+    return (
+      <td className={cur > 0 && cur === top ? 'ab-sc-cell-best' : undefined}>
+        {text}
+        {delta}
+      </td>
+    )
+  }
+
+  return (
+    <div className="ab-sc-table-wrap">
+      <table className="ab-sc-table">
+        <thead>
+          <tr>
+            <th scope="col">Strategy</th>
+            {METRIC_HEADERS.map(([label, info]) => (
+              <th scope="col" key={label}>
+                <span className="ab-sc-th">
+                  {label}
+                  <Tooltip label={info} side="top">
+                    <button
+                      type="button"
+                      className="ab-sc-info"
+                      aria-label={`What ${label} measures`}
+                    >
+                      <InfoGlyph />
+                    </button>
+                  </Tooltip>
+                </span>
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {aggregates.map((a) => {
+            const b = baseMap.get(a.strategyId)
+            return (
+              <tr key={a.strategyId}>
+                <td className="ab-sc-strategy-name">{a.label}</td>
+                {metricCell(a.hitRate, best.hitRate, pct(a.hitRate), b?.hitRate, 'pct')}
+                {metricCell(
+                  a.coverage,
+                  best.coverage,
+                  pct(a.coverage),
+                  b?.coverage,
+                  'pct',
+                )}
+                {metricCell(a.mrr, best.mrr, dec(a.mrr), b?.mrr, 'dec')}
+                {metricCell(a.ndcg, best.ndcg, dec(a.ndcg), b?.ndcg, 'dec')}
+                {metricCell(
+                  a.precision,
+                  best.precision,
+                  pct(a.precision),
+                  b?.precision,
+                  'pct',
+                )}
+              </tr>
+            )
+          })}
+          {oracle && (
+            <tr className="ab-sc-oracle-row">
+              <td className="ab-sc-strategy-name">
+                Either arm (ceiling){' '}
+                <Tooltip
+                  label="Answer retrieved somewhere by either arm; the gap below it is ranking loss."
+                  side="top"
+                >
+                  <button
+                    type="button"
+                    className="ab-sc-info"
+                    aria-label="What the ceiling row means"
+                  >
+                    <InfoGlyph />
+                  </button>
+                </Tooltip>
+                <span className="ab-sc-oracle-sub">
+                  vector {pct(oracle.vectorHitRate)}
+                  {' · '}keyword {pct(oracle.bm25HitRate)} retrieved it
+                </span>
+              </td>
+              <td>{pct(oracle.unionHitRate)}</td>
+              <td>{pct(oracle.unionCoverage)}</td>
+              <td className="ab-sc-na">·</td>
+              <td className="ab-sc-na">·</td>
+              <td className="ab-sc-na">·</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+/**
+ * The standing baseline (pinned, else most recent run), shown on load and
+ * kept alongside fresh results so there's always a reference. Read-only:
+ * aggregate scores only, no per-question drill-down or oracle row (those
+ * aren't persisted with the run).
+ */
+function BaselineCard({ run }: { run: ScorecardRunRecord }) {
+  return (
+    <div className="ab-card ab-card-pad ab-form-section">
+      <div className="ab-sc-results-head">
+        <div className="ab-section-title">
+          {run.isBaseline ? 'Baseline' : 'Most recent run'}
+        </div>
+        {run.isBaseline && (
+          <Pill kind="accent" dot>
+            baseline
+          </Pill>
+        )}
+      </div>
+      <div className="ab-sc-meta">
+        <div className="ab-sc-summary">
+          {run.judgedCount}/{run.queryCount} questions scored
+          {' · '}top-{run.topK}
+          {' · '}
+          {fmtRunDate(run.createdAt)}
+          {' · '}
+          <code>{run.embeddingModel}</code>
+        </div>
+      </div>
+      <AggregateTable aggregates={run.aggregates} />
     </div>
   )
 }

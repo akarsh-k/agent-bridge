@@ -38,6 +38,7 @@ import type {
   ScorecardQueryInput,
   ScorecardQueryRow,
   ScorecardRunInput,
+  ScorecardRunRecord,
   ScorecardRunResponse,
 } from '@agent-bridge/shared'
 
@@ -378,6 +379,21 @@ export async function runScorecard(
       },
     ),
   )
+}
+
+/** The agent's standing baseline (pinned, else most recent run), shown on
+ *  page load so the scorecard isn't blank before a fresh run. Null when the
+ *  agent has never been scored. */
+export async function getScorecardBaseline(
+  agentId: string,
+): Promise<ScorecardRunRecord | null> {
+  const res = await callApi<{ ok: true; run: ScorecardRunRecord | null }>(
+    fetch(
+      `${apiBaseUrl}/api/agents/${encodeURIComponent(agentId)}/scorecard/runs/baseline`,
+      { method: 'GET' },
+    ),
+  )
+  return res.run
 }
 
 /** Pin a run as the baseline that future runs compare against. */

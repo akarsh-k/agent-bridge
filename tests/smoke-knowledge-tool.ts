@@ -10,13 +10,13 @@
  *   4. `buildRerankPool`: top-cap slice, BM25 rescue slots (a
  *      fusion-starved keyword hit still reaches the reranker), dedupe,
  *      diversity-cut respect, and the CAP + SLOTS ceiling.
- *   5. `rerankWithLlm` against a stub agent: applies the model's
- *      ordering, appends omitted candidates in RRF order, falls back
- *      to input order on garbage output, and fires `onFailure` exactly
- *      once on a transport error.
- *   6. `parseRerankResponse` tolerates prose-wrapped digit lists, both
- *      comma- and whitespace-separated, and rejects out-of-range
- *      numbers silently.
+ *   5. `rerankWithLlm` against a stub agent: pointwise 0-10 scoring sorts
+ *      highest-rated first (RRF tiebreak), unrated/unparseable input falls
+ *      back to RRF order, batches a wide pool and merges, and fires
+ *      `onFailure` once when every batch fails.
+ *   6. `parseRelevanceScores` reads "<n>: <score>" pairs (0-10), tolerates
+ *      brackets/separators, defaults unrated to 0, and rejects
+ *      out-of-range scores.
  *   7. `buildSearchKnowledgeTool` returns null when no attached files
  *      OR no embedding provider, and a Tool with id `search_knowledge`
  *      when both are present.
@@ -37,7 +37,8 @@ import {
   buildRerankPool,
   buildSearchKnowledgeTool,
   chunkDocument,
-  parseRerankResponse,
+  parseRelevanceScores,
+  RERANK_BATCH_SIZE,
   RERANK_BM25_RESCUE_SLOTS,
   RERANK_CANDIDATE_CAP,
   rerankWithLlm,
@@ -164,12 +165,16 @@ check(
 // ── buildRerankPool ────────────────────────────────────────────────────
 
 // The regression this guards: with the BM25 arm down-weighted, a
-// keyword-only hit (max score 0.35/61) fuses below a full 20-hit
-// vector arm (min score 1/80) and would be sliced out of the rerank
-// pool entirely. The rescue slots must pull it back in.
-const vec20: ChunkHit[] = Array.from({ length: 20 }, (_, i) => mkHit(`v${i}`))
+// keyword-only hit fuses below a vector arm that more than fills the
+// pool, and would be sliced out of the rerank pool entirely. The rescue
+// slots must pull it back in. Size the arm past the cap so the slice +
+// rescue path is exercised regardless of the cap's value.
+const vecArm: ChunkHit[] = Array.from(
+  { length: RERANK_CANDIDATE_CAP + 8 },
+  (_, i) => mkHit(`v${i}`),
+)
 const bmWithExclusive: ChunkHit[] = [mkHit('kw-hit'), mkHit('v0')]
-const fusedStarved = rrfFuse(vec20, bmWithExclusive)
+const fusedStarved = rrfFuse(vecArm, bmWithExclusive)
 const rescuePool = buildRerankPool(fusedStarved, bmWithExclusive)
 check(
   'rescue slot pulls a fusion-starved bm25-only hit into the pool',
@@ -189,7 +194,7 @@ check(
 
 const bmTwoExclusive: ChunkHit[] = [mkHit('kw-a'), mkHit('kw-b')]
 const poolCapped = buildRerankPool(
-  rrfFuse(vec20, bmTwoExclusive),
+  rrfFuse(vecArm, bmTwoExclusive),
   bmTwoExclusive,
 )
 check(
@@ -211,7 +216,7 @@ check(
 const bmDeep: ChunkHit[] = [mkHit('v0'), mkHit('v1'), mkHit('kw-deep')]
 check(
   'rescue only considers the top bm25 ranks, not the whole arm',
-  !buildRerankPool(rrfFuse(vec20, bmDeep), bmDeep).some(
+  !buildRerankPool(rrfFuse(vecArm, bmDeep), bmDeep).some(
     (c) => c.id === 'kw-deep',
   ),
 )
@@ -240,24 +245,27 @@ const fusedTrio: FusedChunk[] = [
 ]
 
 check(
-  'rerankWithLlm applies the model ordering',
+  'rerankWithLlm sorts by pointwise score (desc), highest-rated first',
   JSON.stringify(
     (
       await rerankWithLlm({
-        rerankerAgent: fakeReranker(async () => ({ text: '3,1,2' })),
+        // c1=1, c2=3, c3=2 → ordered c2, c3, c1.
+        rerankerAgent: fakeReranker(async () => ({ text: '1: 1\n2: 3\n3: 2' })),
         query: 'q',
         candidates: fusedTrio,
       })
     ).map((c) => c.id),
-  ) === JSON.stringify(['c3', 'c1', 'c2']),
+  ) === JSON.stringify(['c2', 'c3', 'c1']),
 )
 
 check(
-  'omitted candidates are appended in original order',
+  'unrated candidates default to 0 and keep RRF tiebreak order',
   JSON.stringify(
     (
       await rerankWithLlm({
-        rerankerAgent: fakeReranker(async () => ({ text: '2' })),
+        // Only c2 rated (3); c1 & c3 default 0 → broken by RRF score
+        // (c1 0.03 > c3 0.01).
+        rerankerAgent: fakeReranker(async () => ({ text: '2: 3' })),
         query: 'q',
         candidates: fusedTrio,
       })
@@ -266,16 +274,93 @@ check(
 )
 
 check(
-  'garbage output falls back to the input order',
+  'unparseable output falls back to the input (RRF) order',
   JSON.stringify(
     (
       await rerankWithLlm({
-        rerankerAgent: fakeReranker(async () => ({ text: 'no digits here!' })),
+        rerankerAgent: fakeReranker(async () => ({ text: 'no scores here!' })),
         query: 'q',
         candidates: fusedTrio,
       })
     ).map((c) => c.id),
   ) === JSON.stringify(['c1', 'c2', 'c3']),
+)
+
+check(
+  'an all-zero rating preserves the RRF order (never below baseline)',
+  JSON.stringify(
+    (
+      await rerankWithLlm({
+        rerankerAgent: fakeReranker(async () => ({ text: '1: 0\n2: 0\n3: 0' })),
+        query: 'q',
+        candidates: fusedTrio,
+      })
+    ).map((c) => c.id),
+  ) === JSON.stringify(['c1', 'c2', 'c3']),
+)
+
+// Batched scoring: a pool wider than RERANK_BATCH_SIZE is split into
+// multiple LLM calls and merged. Each fake call rates ITS first candidate
+// top (10) and the rest 0; with the batch's own first candidate promoted,
+// the merged order should lead with the first item of each batch.
+check(
+  'rerankWithLlm splits a wide pool into batches and merges scores',
+  await (async () => {
+    const wide: FusedChunk[] = Array.from({ length: RERANK_BATCH_SIZE + 5 }, (_, i) => ({
+      ...mkHit(`w${i}`),
+      score: 1 / (i + 1), // strictly decreasing RRF prior
+    }))
+    let calls = 0
+    const batchSizes: number[] = []
+    const out = await rerankWithLlm({
+      rerankerAgent: fakeReranker(async () => {
+        calls += 1
+        // Rate candidate #1 of whatever batch a 10, the rest 0.
+        return { text: '1: 10' }
+      }),
+      query: 'q',
+      candidates: wide,
+    })
+    // Two batches expected for BATCH_SIZE+5 candidates.
+    const expectedCalls = Math.ceil(wide.length / RERANK_BATCH_SIZE)
+    void batchSizes
+    return (
+      calls === expectedCalls &&
+      out.length === wide.length &&
+      // First candidate of batch 1 (w0) and batch 2 (w{BATCH_SIZE}) both
+      // scored 10 → they lead; w0 first (better RRF tiebreak).
+      out[0]!.id === 'w0' &&
+      out[1]!.id === `w${RERANK_BATCH_SIZE}` &&
+      new Set(out.map((c) => c.id)).size === wide.length
+    )
+  })(),
+)
+
+check(
+  'rerankWithLlm degrades to RRF order when every batch fails',
+  await (async () => {
+    const wide: FusedChunk[] = Array.from({ length: RERANK_BATCH_SIZE + 3 }, (_, i) => ({
+      ...mkHit(`f${i}`),
+      score: 1 / (i + 1),
+    }))
+    let failures = 0
+    const out = await rerankWithLlm({
+      rerankerAgent: fakeReranker(async () => {
+        throw new Error('connection refused')
+      }),
+      query: 'q',
+      candidates: wide,
+      onFailure: () => {
+        failures += 1
+      },
+    })
+    // onFailure fires once (not once per batch) and order is unchanged.
+    return (
+      failures === 1 &&
+      JSON.stringify(out.map((c) => c.id)) ===
+        JSON.stringify(wide.map((c) => c.id))
+    )
+  })(),
 )
 
 check(
@@ -363,7 +448,7 @@ check(
       rerankerAgent: fakeReranker(async () => {
         calls += 1
         if (calls < 3) throw rateLimited()
-        return { text: '3,1,2' }
+        return { text: '1: 1\n2: 3\n3: 2' }
       }),
       query: 'q',
       candidates: fusedTrio,
@@ -374,7 +459,7 @@ check(
     })
     return (
       failures === 0 &&
-      JSON.stringify(out.map((c) => c.id)) === JSON.stringify(['c3', 'c1', 'c2'])
+      JSON.stringify(out.map((c) => c.id)) === JSON.stringify(['c2', 'c3', 'c1'])
     )
   })(),
 )
@@ -404,33 +489,54 @@ check(
   })(),
 )
 
-// ── parseRerankResponse ────────────────────────────────────────────────
+// ── parseRelevanceScores ───────────────────────────────────────────────
 
 check(
-  'parseRerankResponse handles comma-separated digits',
-  JSON.stringify(parseRerankResponse('3,1,4,2', 4)) === JSON.stringify([2, 0, 3, 1]),
+  'parseRelevanceScores reads one "n: score" pair per line (0-10 scale)',
+  JSON.stringify(parseRelevanceScores('1: 9\n2: 0\n3: 4', 3)) ===
+    JSON.stringify([9, 0, 4]),
 )
 check(
-  'parseRerankResponse handles whitespace-separated digits',
-  JSON.stringify(parseRerankResponse('3 1 4 2', 4)) === JSON.stringify([2, 0, 3, 1]),
+  'parseRelevanceScores parses two-digit score 10',
+  JSON.stringify(parseRelevanceScores('1: 10\n2: 3', 2)) ===
+    JSON.stringify([10, 3]),
 )
 check(
-  'parseRerankResponse tolerates surrounding prose',
-  JSON.stringify(parseRerankResponse('Sure, here you go: 2, 1, 3.', 3)) ===
-    JSON.stringify([1, 0, 2]),
+  'parseRelevanceScores ignores reasoning before a SCORES: marker',
+  // Reasoning mentions "candidate 2" and a stray "1: irrelevant" — only the
+  // lines after SCORES: count.
+  JSON.stringify(
+    parseRelevanceScores(
+      'Candidate 2 looks close but candidate 3 answers it.\nSCORES:\n1: 2\n2: 4\n3: 9',
+      3,
+    ),
+  ) === JSON.stringify([2, 4, 9]),
 )
 check(
-  'parseRerankResponse drops out-of-range numbers silently',
-  JSON.stringify(parseRerankResponse('2, 99, 1', 3)) ===
-    JSON.stringify([1, 0]),
+  'parseRelevanceScores tolerates [n] brackets and "-"/")"separators',
+  JSON.stringify(parseRelevanceScores('[1] - 2\n[2]) 8', 2)) ===
+    JSON.stringify([2, 8]),
 )
 check(
-  'parseRerankResponse returns null on empty input',
-  parseRerankResponse('', 3) === null,
+  'parseRelevanceScores defaults unrated candidates to 0',
+  JSON.stringify(parseRelevanceScores('2: 7', 3)) === JSON.stringify([0, 7, 0]),
 )
 check(
-  'parseRerankResponse returns null on no-digit input',
-  parseRerankResponse('nothing useful here', 3) === null,
+  'parseRelevanceScores drops out-of-range candidate numbers',
+  JSON.stringify(parseRelevanceScores('1: 9\n99: 2', 3)) ===
+    JSON.stringify([9, 0, 0]),
+)
+check(
+  'parseRelevanceScores ignores scores above the scale max (no pair parsed)',
+  parseRelevanceScores('1: 17', 3) === null,
+)
+check(
+  'parseRelevanceScores returns null on empty input',
+  parseRelevanceScores('', 3) === null,
+)
+check(
+  'parseRelevanceScores returns null when no pair parses',
+  parseRelevanceScores('nothing useful here', 3) === null,
 )
 
 // ── buildSearchKnowledgeTool ───────────────────────────────────────────

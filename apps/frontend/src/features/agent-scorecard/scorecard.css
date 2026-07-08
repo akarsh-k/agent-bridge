@@ -368,6 +368,24 @@
   font-weight: var(--fw-semibold);
 }
 
+/* Oracle "ceiling" row: the best a perfect fusion could do (vector ∪ keyword).
+   Set apart with a heavier top border and a muted treatment so it reads as a
+   reference line, not another strategy. */
+.ab-sc-oracle-row td {
+  border-top: 1px solid var(--border-strong);
+  background: var(--surface-hi);
+}
+.ab-sc-oracle-sub {
+  display: block;
+  margin-top: var(--space-0_5);
+  font-size: var(--text-xs);
+  font-weight: var(--fw-regular);
+  color: var(--text-muted);
+}
+.ab-sc-na {
+  color: var(--text-muted);
+}
+
 /* Comparison line: which run the deltas are measured against, plus a
    ▲/▼ legend colored to match the per-cell deltas. */
 .ab-sc-compare-label {

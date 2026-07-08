@@ -270,9 +270,12 @@ export function buildSearchKnowledgeTool(
         return true
       })
 
-      // Rerank pool: wider than the returned top-k (fused recall@8 was
-      // 86% vs 93% @12 on the scorecard) plus guaranteed slots for the
-      // keyword arm's best hits. See `buildRerankPool`.
+      // Rerank pool: wider than the returned top-k so a gold passage the
+      // embedder ranked deep (as far as ~rank 40 on the scorecard) still
+      // reaches the judge, plus guaranteed slots for the keyword arm's best
+      // hits. `rerankWithLlm` scores this pool in focused batches so the
+      // width doesn't overload the local judge. See `buildRerankPool`,
+      // `RERANK_CANDIDATE_CAP`, `RERANK_BATCH_SIZE`.
       const candidates = buildRerankPool(diverse, bm25Hits)
 
       const ordered =
@@ -427,8 +430,10 @@ export async function runVectorSearch(args: {
   scope: ReadonlyArray<string>
   fingerprint: string
   queryVector: ReadonlyArray<number>
+  /** Retrieval depth. Defaults to `RETRIEVAL_DEPTH`. */
+  limit?: number
 }): Promise<ChunkHit[]> {
-  const { db, scope, fingerprint, queryVector } = args
+  const { db, scope, fingerprint, queryVector, limit = RETRIEVAL_DEPTH } = args
   // pgvector expects the literal `[1.0,2.0,...]` form for the parameter.
   // Build it here so the parameter is a plain string Postgres knows how
   // to cast — drizzle's `sql` template doesn't auto-stringify numeric
@@ -463,9 +468,9 @@ export async function runVectorSearch(args: {
       AND embedding_model = $3
       AND embedding IS NOT NULL
     ORDER BY embedding <=> $1::vector ASC
-    LIMIT 20
+    LIMIT $4
     `,
-    [vectorLiteral, scope.slice(), fingerprint],
+    [vectorLiteral, scope.slice(), fingerprint, limit],
   )
   return rows.rows.map((r) => ({
     id: r.id,
@@ -485,8 +490,10 @@ export async function runBm25Search(args: {
   scope: ReadonlyArray<string>
   fingerprint: string
   query: string
+  /** Retrieval depth. Defaults to `RETRIEVAL_DEPTH`. */
+  limit?: number
 }): Promise<ChunkHit[]> {
-  const { db, scope, fingerprint, query } = args
+  const { db, scope, fingerprint, query, limit = RETRIEVAL_DEPTH } = args
   const rows = await db.pool.query<{
     id: string
     file_id: string
@@ -527,9 +534,9 @@ export async function runBm25Search(args: {
       AND embedding IS NOT NULL
       AND tsv @@ tq.q
     ORDER BY rank DESC
-    LIMIT 20
+    LIMIT $4
     `,
-    [query, scope.slice(), fingerprint],
+    [query, scope.slice(), fingerprint, limit],
   )
   return rows.rows.map((r) => ({
     id: r.id,
@@ -547,13 +554,41 @@ export async function runBm25Search(args: {
 // Scorecard-validated; `knowledge-eval.ts` imports these so the
 // scorecard always measures the same funnel as production.
 
+/** How deep each arm (vector + BM25) retrieves before fusion. The
+ *  oracle recall ceiling rises with depth: gold sat at vector rank
+ *  17-50 on enough scorecard queries that a depth-20 pool capped the
+ *  reachable hit-rate at ~95%. Going deeper lifts the ceiling and feeds
+ *  more true candidates to the reranker, at the cost of a longer rerank
+ *  prompt — bounded downstream by `RERANK_CANDIDATE_CAP`. */
+export const RETRIEVAL_DEPTH = 50
+
 /** BM25's vote weight in `rrfFuse`. The OR-matched keyword arm is far
  *  noisier than the vector arm; at equal weight it displaced good
  *  vector candidates and hybrid scored below vector-only. */
 export const RRF_BM25_WEIGHT = 0.35
 
-/** Fused candidates fed to the LLM reranker (then cut to `top_k`). */
-export const RERANK_CANDIDATE_CAP = 12
+/** Fused candidates fed to the LLM reranker (then cut to `top_k`). Wider
+ *  than a tight pool so relevant-but-deep chunks (gold sat as deep as
+ *  vector rank ~40 on the scorecard) reach the judge and lift the pool's
+ *  recall ceiling. Scoring all of them in ONE prompt hurt the local judge,
+ *  so `rerankWithLlm` splits the pool into `RERANK_BATCH_SIZE` chunks and
+ *  scores each independently — the cap can be wide without the focus-loss
+ *  penalty. Only affects the reranker's side-call, never the agent's chat
+ *  context. */
+export const RERANK_CANDIDATE_CAP = 40
+
+/** Candidates scored per LLM call inside `rerankWithLlm`. The pointwise
+ *  judge stays accurate over a focused set but degrades over a long one
+ *  (scoring 40 at once fell below scoring ~16-24); batching keeps each
+ *  prompt small while the cap stays wide. Pointwise scores are per-passage,
+ *  so splitting and merging is sound. A pool of `RERANK_CANDIDATE_CAP`
+ *  becomes ceil(cap / batch) concurrent calls per search. */
+export const RERANK_BATCH_SIZE = 20
+
+/** Chars of each candidate the reranker judges on. Covers most of a
+ *  typical chunk (chunker target ~3200) so the judge isn't ranking on the
+ *  opening alone, while keeping the prompt small enough to stay fast. */
+export const RERANK_EXCERPT_CHARS = 2600
 
 /** Top BM25 hits guaranteed a rerank slot (see `buildRerankPool`). */
 export const RERANK_BM25_RESCUE_SLOTS = 2
@@ -716,10 +751,22 @@ export function buildRerankerAgent(model: MastraModelConfig): Agent {
 }
 
 /**
- * Single LLM call that returns the candidate ids in best-first order.
- * Hardened against partial output: any ids the model omits or
- * hallucinates fall through to the original RRF order. Never throws
- * — a failed rerank just degrades to layer-1 RRF.
+ * Pointwise LLM rerank. Rather than ask the model for a full best-first
+ * permutation of N candidates — unreliable past a handful of items on
+ * smaller/local models, where it demoted gold the vector arm already had
+ * in the top-k and dropped hit-rate BELOW plain RRF — we ask it to RATE
+ * each candidate's relevance to the query on a 0-3 scale.
+ *
+ * We then sort by `(llmScore desc, RRF score desc)`: the score promotes a
+ * deep-but-relevant chunk up into the returned top-k, while the RRF prior
+ * breaks ties so a strong vector hit is never displaced by a distractor
+ * the model happened to rate equally. The worst case is "model rates
+ * everything 0" → pure RRF order, i.e. rerank can no longer score below
+ * the RRF baseline.
+ *
+ * Never throws: a transport failure or unparseable output degrades to the
+ * input (RRF) order. Transport failures fire `onFailure` (breaker); a
+ * parse miss does not (the provider is alive, just terse).
  */
 export async function rerankWithLlm(args: {
   rerankerAgent: Agent
@@ -727,7 +774,10 @@ export async function rerankWithLlm(args: {
   candidates: ReadonlyArray<FusedChunk>
   /** Called when the rerank LLM call itself fails (transport/provider
    *  errors, not parse fallbacks). Lets callers trip a circuit breaker
-   *  instead of re-attempting a dead provider per query. */
+   *  instead of re-attempting a dead provider per query. Fired once per
+   *  rerank only when EVERY batch failed at the transport layer (a genuine
+   *  outage); a partial-batch failure degrades those candidates to RRF
+   *  order without tripping the breaker. */
   onFailure?: (err: unknown) => void
   /** Opt-in backoff on rate-limit pushback, for the scorecard's parallel
    *  fan-out. The per-turn production path omits it (a 429 there just
@@ -736,82 +786,196 @@ export async function rerankWithLlm(args: {
   retry?: RetryPolicy
 }): Promise<FusedChunk[]> {
   const { rerankerAgent, query, candidates, onFailure, retry } = args
-  // Substantial excerpts, not teasers: at 280 chars the judge ranked
-  // chunks on their opening sentence and scored worse than no rerank
-  // at all. 1200 chars ≈ 300 tokens; the full candidate list still
-  // fits one small prompt.
-  const numbered = candidates
-    .map((c, i) => `${i + 1}. ${snippetOf(c.text, 1200)}`)
-    .join('\n\n')
-  const prompt = `You are ranking search results for relevance.
+  if (candidates.length === 0) return []
 
-QUERY: ${query}
+  // Score in focused batches rather than one big prompt. A local judge
+  // loses accuracy over a long candidate list — on the scorecard, scoring
+  // all 40 at once DROPPED hit-rate below scoring 24, even though 40 has
+  // the higher recall ceiling. Because scoring is POINTWISE (each passage
+  // rated on its own 0-10 merit, not ranked against the others), a wide
+  // pool can be split into `RERANK_BATCH_SIZE` chunks scored independently
+  // and merged — keeping each prompt small while still considering every
+  // candidate. Batches run concurrently; one batch failing just leaves its
+  // candidates at score 0 (RRF order) instead of sinking the whole rerank.
+  const batches: FusedChunk[][] = []
+  for (let i = 0; i < candidates.length; i += RERANK_BATCH_SIZE) {
+    batches.push(candidates.slice(i, i + RERANK_BATCH_SIZE))
+  }
 
-CANDIDATES (numbered):
-${numbered}
+  const batchResults = await Promise.all(
+    batches.map(async (batch) => {
+      try {
+        return {
+          ok: true as const,
+          scores: await scoreCandidateBatch({
+            rerankerAgent,
+            query,
+            batch,
+            retry,
+          }),
+        }
+      } catch (err) {
+        return { ok: false as const, err }
+      }
+    }),
+  )
 
-Return ONLY the candidate numbers in best-first order, comma-separated. Example: "3,1,4,2". No explanation, no other text.`
+  // Merge batch scores back onto the global candidate list (aligned by the
+  // batch offsets). Unscored candidates — failed batch or parse miss —
+  // stay 0 and fall to RRF order via the tiebreak.
+  const scores = new Array<number>(candidates.length).fill(0)
+  let offset = 0
+  let anyScored = false
+  let failedBatches = 0
+  batchResults.forEach((res, bi) => {
+    const len = batches[bi]!.length
+    if (!res.ok) {
+      failedBatches += 1
+    } else if (res.scores) {
+      for (let j = 0; j < len; j++) scores[offset + j] = res.scores[j] ?? 0
+      anyScored = true
+    }
+    offset += len
+  })
 
-  let text: string
-  try {
-    // maxRetries: 0 — the SDK default (2) triples doomed calls when the
-    // provider is down; reranking degrades to RRF instead. The optional
-    // `retry` adds backoff for rate-limit pushback only, so a dead
-    // provider still fails fast.
-    const call = () =>
-      rerankerAgent.generate(prompt, { modelSettings: { maxRetries: 0 } })
-    const result = retry ? await retryOnRateLimit(call, retry) : await call()
-    text = (result.text ?? '').trim()
-  } catch (err) {
+  // Every batch failed at the transport layer → the provider is down. Fire
+  // the breaker and degrade to RRF order (same contract as the old single
+  // call). A partial failure does NOT trip it.
+  if (failedBatches === batches.length) {
+    const firstErr = batchResults.find((r) => !r.ok && 'err' in r)
+    const err = firstErr && !firstErr.ok ? firstErr.err : undefined
     console.warn(
       `[knowledge-tool] rerank failed; falling back to RRF order: ${err instanceof Error ? err.message : String(err)}`,
     )
     if (onFailure) onFailure(err)
     return [...candidates]
   }
+  if (!anyScored) return [...candidates]
 
-  const ordering = parseRerankResponse(text, candidates.length)
-  if (!ordering) return [...candidates]
-
-  const seen = new Set<number>()
-  const out: FusedChunk[] = []
-  for (const idx of ordering) {
-    if (seen.has(idx)) continue
-    seen.add(idx)
-    const candidate = candidates[idx]
-    if (candidate) out.push(candidate)
-  }
-  // Append anything the model omitted, preserving RRF order. Saves
-  // us from a silently-truncated reorder hiding good results.
-  candidates.forEach((candidate, idx) => {
-    if (!seen.has(idx)) out.push(candidate)
+  // Stable reorder: higher LLM score first, RRF score breaks ties. Sort an
+  // index array so equal-keyed candidates keep their incoming (RRF) order.
+  const order = candidates.map((_, i) => i)
+  order.sort((a, b) => {
+    const sa = scores[a] ?? 0
+    const sb = scores[b] ?? 0
+    if (sb !== sa) return sb - sa
+    return (candidates[b]!.score ?? 0) - (candidates[a]!.score ?? 0)
   })
-  return out
+  return order.map((i) => candidates[i]!)
 }
 
 /**
- * Parse the LLM's rerank response into a 0-based ordering. Tolerant of
- * prose around the digits and of out-of-range numbers (silently
- * dropped). Returns `null` only when no parseable digit appears.
- * Exported for smoke tests.
+ * Score one batch of candidates 0-10 for relevance to the query, returning
+ * a score array aligned to `batch` (or null if the model's output didn't
+ * parse). Throws on a transport/provider error so the caller can count it
+ * toward the breaker. Decoded at `temperature: 0` for accurate, stable
+ * scores; `maxRetries: 0` so a dead provider fails fast (the optional
+ * `retry` only backs off on rate-limit pushback).
  */
-export function parseRerankResponse(
+async function scoreCandidateBatch(args: {
+  rerankerAgent: Agent
+  query: string
+  batch: ReadonlyArray<FusedChunk>
+  retry?: RetryPolicy
+}): Promise<number[] | null> {
+  const { rerankerAgent, query, batch, retry } = args
+  // Present the section heading (high-signal for structured docs like
+  // regulations/contracts) plus an excerpt. The section path keeps the
+  // judge oriented even when the answer sits past the excerpt cut.
+  const numbered = batch
+    .map((c, i) => {
+      const head = c.sectionPath ? `(section: ${c.sectionPath})\n` : ''
+      return `[${i + 1}] ${head}${snippetOf(c.text, RERANK_EXCERPT_CHARS)}`
+    })
+    .join('\n\n')
+  const prompt = `You score how well each candidate passage answers a search query.
+
+QUERY: ${query}
+
+A passage ANSWERS the query if it states the answer — even when it uses
+different words than the question (synonyms, legal or technical terms,
+paraphrase). A passage that only repeats the query's topic without giving the
+answer is NOT a good match.
+
+CANDIDATES:
+${numbered}
+
+First, in one or two short sentences, reason about which candidate numbers
+actually answer the query, looking past differences in wording. Then write a
+line containing only "SCORES:" and, after it, one line per candidate as
+"<number>: <score>" where score is 0 to 10:
+  9-10 = states the explicit answer to the query
+  6-8  = clearly relevant, contains most of the answer
+  3-5  = related but does not answer the query
+  1-2  = only mentions the topic in passing
+  0    = unrelated
+Use the FULL range; the single best passage gets the highest score.
+
+Example:
+Candidates 3 and 1 both answer it; 3 is the most direct.
+SCORES:
+1: 7
+2: 0
+3: 9`
+
+  const call = () =>
+    rerankerAgent.generate(prompt, {
+      modelSettings: { maxRetries: 0, temperature: 0 },
+    })
+  const result = retry ? await retryOnRateLimit(call, retry) : await call()
+  const text = (result.text ?? '').trim()
+  return parseRelevanceScores(text, batch.length)
+}
+
+/** Top of the pointwise relevance scale (0..`RELEVANCE_SCALE_MAX`). A
+ *  finer scale than 0-3 discriminates between several "clearly relevant"
+ *  passages so the single best one wins the top slot instead of tying and
+ *  being settled by the weaker retrieval-rank tiebreak. */
+export const RELEVANCE_SCALE_MAX = 10
+
+/**
+ * Parse pointwise relevance scores from the model's output into an array
+ * of length `total` (0-based by candidate index; unrated candidates
+ * default to 0). Accepts one `"<n>: <score>"` pair per line, tolerant of
+ * `[n]` brackets and `:`/`)`/`-`/`.` separators. Scores are clamped to
+ * 0..`RELEVANCE_SCALE_MAX`; candidate numbers outside 1..total are
+ * dropped. Returns `null` only when no pair parses, so the caller can
+ * fall back to RRF order. Exported for smoke tests.
+ *
+ * When the model is asked to reason first, it emits a `SCORES:` marker
+ * before the score lines; we parse only what follows the LAST such marker
+ * so the free-text reasoning (which may mention numbers) can't pollute the
+ * scores. Output without a marker is parsed whole (back-compat).
+ */
+export function parseRelevanceScores(
   raw: string,
   total: number,
 ): number[] | null {
   if (!raw) return null
-  // Accept comma- or whitespace-separated digits. Tolerant of
-  // stray prose around the list.
-  const matches = raw.match(/\d+/g)
-  if (!matches || matches.length === 0) return null
-  const out: number[] = []
-  for (const m of matches) {
-    const n = parseInt(m, 10)
-    if (Number.isFinite(n) && n >= 1 && n <= total) {
-      out.push(n - 1) // convert to 0-based
+  // Keep only the text after the final "SCORES:" marker, if present.
+  const marker = /SCORES:/gi
+  let lastMarkerEnd = -1
+  for (let m = marker.exec(raw); m; m = marker.exec(raw)) {
+    lastMarkerEnd = m.index + m[0].length
+  }
+  const body = lastMarkerEnd >= 0 ? raw.slice(lastMarkerEnd) : raw
+  const scores = new Array<number>(total).fill(0)
+  let any = false
+  // A leading optional "[", the candidate number, a separator, then the
+  // score (1-2 digits). Anchored per line so excerpt digits can't bleed
+  // in; the score is range-checked below rather than in the pattern.
+  const re = /^\s*\[?\s*(\d+)\s*\]?\s*[:)\].\-]\s*(\d{1,2})\b/
+  for (const line of body.split(/\r?\n/)) {
+    const m = line.match(re)
+    if (!m) continue
+    const n = parseInt(m[1]!, 10)
+    const s = parseInt(m[2]!, 10)
+    if (n >= 1 && n <= total && s >= 0 && s <= RELEVANCE_SCALE_MAX) {
+      scores[n - 1] = s
+      any = true
     }
   }
-  return out.length > 0 ? out : null
+  return any ? scores : null
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────

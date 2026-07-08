@@ -49,18 +49,23 @@ export type {
 // Production callers reach retrieval through `buildSearchKnowledgeTool`
 // / `eagerPrefetchKnowledge` only.
 export {
+  buildEmbedder,
   buildRerankPool,
   buildSearchKnowledgeTool,
   eagerPrefetchKnowledge,
-  parseRerankResponse,
+  embeddingFingerprint,
+  parseRelevanceScores,
   PER_FILE_DIVERSITY_CAP,
+  RERANK_BATCH_SIZE,
   RERANK_BM25_RESCUE_SLOTS,
   RERANK_CANDIDATE_CAP,
   rerankWithLlm,
   retryOnRateLimit,
+  RETRIEVAL_DEPTH,
   rrfFuse,
   RRF_BM25_WEIGHT,
   runBm25Search,
+  runVectorSearch,
 } from './knowledge-tool.js'
 export type {
   AttachedKnowledgeFile,

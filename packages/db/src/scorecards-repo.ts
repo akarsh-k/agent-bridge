@@ -116,6 +116,33 @@ export async function getComparisonRun(
   return prev ?? null
 }
 
+/**
+ * The run to show on page load: the pinned baseline if one exists, else
+ * the most recent run. Null when the agent has never been scored. Unlike
+ * `getComparisonRun` this excludes nothing — it's the standing reference,
+ * not a comparison target.
+ */
+export async function getBaselineOrLatest(
+  handle: AgentBridgeDb,
+  agentId: string,
+): Promise<ScorecardRunDbRow | null> {
+  const [baseline] = await handle.db
+    .select()
+    .from(scorecardRuns)
+    .where(
+      and(eq(scorecardRuns.agentId, agentId), eq(scorecardRuns.isBaseline, true)),
+    )
+    .limit(1)
+  if (baseline) return baseline
+  const [latest] = await handle.db
+    .select()
+    .from(scorecardRuns)
+    .where(eq(scorecardRuns.agentId, agentId))
+    .orderBy(desc(scorecardRuns.createdAt))
+    .limit(1)
+  return latest ?? null
+}
+
 /** Pin one run as the agent's baseline (clears the flag on the others). */
 export async function setBaseline(
   handle: AgentBridgeDb,

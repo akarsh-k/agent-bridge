@@ -237,6 +237,12 @@ export async function runScorecard(
     acc.set(id, { hit: 0, rr: 0, ndcg: 0, prec: 0, cov: 0, n: 0 })
   }
 
+  // Oracle ("best case") sums over judged queries, from each arm's full
+  // retrieved list regardless of selected strategies. The union is the
+  // ceiling: answers retrieval surfaced somewhere, that ranking may still
+  // bury below the top-K. (Computed below in the per-query worker.)
+  const oracleAcc = { v: 0, b: 0, u: 0, uCov: 0, n: 0 }
+
   // Rerank circuit breaker. A down provider fails identically on every
   // query; without this a 59-question run attempts (and logs) 59
   // doomed LLM calls. The run FAILS rather than degrading: silently
@@ -287,6 +293,21 @@ export async function runScorecard(
       ])
     } else {
       bm25Hits = await runBm25Search({ db, scope, fingerprint, query: q.query })
+    }
+
+    // Oracle: was the gold ANYWHERE in either arm's full retrieved list?
+    // Use the whole list, not the top-K slice: every strategy draws its
+    // results from these two lists (rrf fuses the full depth), so this is
+    // a true ceiling no strategy can beat. The gap to a strategy's
+    // hit-rate is pure ranking/fusion/truncation loss, not a retrieval miss.
+    if (judged) {
+      const vHit = vectorHits.some((c) => judge(c.text, c.page, gold))
+      const bHit = bm25Hits.some((c) => judge(c.text, c.page, gold))
+      oracleAcc.v += vHit ? 1 : 0
+      oracleAcc.b += bHit ? 1 : 0
+      oracleAcc.u += vHit || bHit ? 1 : 0
+      oracleAcc.uCov += coverageOf([...vectorHits, ...bm25Hits], gold)
+      oracleAcc.n += 1
     }
 
     const byStrategy: ScorecardQueryStrategyResult[] = []
@@ -375,6 +396,14 @@ export async function runScorecard(
     }
   })
 
+  const on = oracleAcc.n || 1
+  const oracle = {
+    vectorHitRate: oracleAcc.n ? oracleAcc.v / on : 0,
+    bm25HitRate: oracleAcc.n ? oracleAcc.b / on : 0,
+    unionHitRate: oracleAcc.n ? oracleAcc.u / on : 0,
+    unionCoverage: oracleAcc.n ? oracleAcc.uCov / on : 0,
+  }
+
   // Dense on the success path (any worker throw aborts the run before
   // here); `?.` guards against a future sparse-hole regression.
   const judgedCount = perQuery.filter((p) => p?.judged).length
@@ -386,6 +415,7 @@ export async function runScorecard(
     embeddingModel: fingerprint,
     durationMs: Date.now() - startedAt,
     aggregates,
+    oracle,
     perQuery,
   }
 }

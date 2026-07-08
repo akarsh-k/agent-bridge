@@ -213,6 +213,18 @@ export const agentScorecardRouter = new Hono()
       }
     },
   )
+  .get(
+    '/runs/baseline',
+    zValidator('param', paramSchema, (result, c) => {
+      if (!result.success) return httpValidationError(c, result.error)
+      return
+    }),
+    async (c) => {
+      const { agentId } = c.req.valid('param')
+      const run = await scorecardsRepo.getBaselineOrLatest(getDb(), agentId)
+      return c.json({ ok: true as const, run: run ? toRunDto(run) : null })
+    },
+  )
   .post(
     '/runs/:runId/baseline',
     zValidator('param', baselineParamSchema, (result, c) => {
